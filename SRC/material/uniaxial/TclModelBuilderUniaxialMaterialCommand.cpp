@@ -168,6 +168,7 @@ extern void *OPS_OOHystereticMaterial(void);
 extern void *OPS_ElasticPowerFunc(void);
 extern void *OPS_UVCuniaxial(void);
 extern void *OPS_DegradingPinchedBW(void);
+extern void *OPS_SLModel(void);
 
 //extern int TclCommand_ConfinedConcrete02(ClientData clientData, Tcl_Interp *interp, int argc, 
 //					 TCL_Char **argv, TclModelBuilder *theTclBuilder);
@@ -179,14 +180,6 @@ extern UniaxialMaterial *Tcl_addWrapperUniaxialMaterial(matObj *, ClientData cli
 							int argc, TCL_Char **argv);
 
 #include <packages.h>
-
-extern int OPS_ResetInputNoBuilder(ClientData clientData, 
-				   Tcl_Interp *interp,  
-				   int cArg, 
-				   int mArg, 
-				   TCL_Char **argv, 
-				   Domain *domain);
-
 
 typedef struct uniaxialPackageCommand {
   char *funcName;
@@ -509,6 +502,13 @@ TclModelBuilderUniaxialMaterialCommand (ClientData clientData, Tcl_Interp *inter
 */
     else if (strcmp(argv[1], "UVCuniaxial") == 0) {
       void *theMat = OPS_UVCuniaxial();
+      if (theMat != 0)
+        theMaterial = (UniaxialMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+    else if (strcmp(argv[1], "SLModel") == 0) {
+      void *theMat = OPS_SLModel();
       if (theMat != 0)
         theMaterial = (UniaxialMaterial *)theMat;
       else
