@@ -677,7 +677,7 @@ DataFileStreamAdd::sendSelf(int commitTag, Channel &theChannel)
   static ID idData(3);
   int fileNameLength = 0;
   if (fileName != 0)
-    fileNameLength = int(strlen(fileName));
+    fileNameLength = strlen(fileName);
 
   idData(0) = fileNameLength;
 

@@ -99,7 +99,7 @@ Beam2dPointLoad::recvSelf(int commitTag, Channel &theChannel,  FEM_ObjectBroker 
     return result;
   }
 
-  this->setTag((int)vectData(4));
+  this->setTag(vectData(4));
   Ptrans = vectData(0);
   Paxial = vectData(1);
   x      = vectData(2);  
@@ -111,11 +111,9 @@ Beam2dPointLoad::recvSelf(int commitTag, Channel &theChannel,  FEM_ObjectBroker 
 void 
 Beam2dPointLoad::Print(OPS_Stream &s, int flag)
 {
-    s << "Beam3dPointLoad - Reference load" << endln;
-    s << "  Transverse: " << Ptrans << endln;
-    s << "  Axial:      " << Paxial << endln;
-    s << "  Relative Distance: " << x << endln;
-    s << "  Element: " << eleTag << endln;;
+  s << "Beam2dPointLoad - reference load : (" << Ptrans
+    << ", " << Paxial << ") acting at : " << x << " relative to length\n";
+  s << "  element acted on: " << eleTag << endln;
 }
 
 int

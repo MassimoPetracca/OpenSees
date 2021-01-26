@@ -2401,7 +2401,7 @@ int OPS_sectionDisplacement()
     if (local)
       argvv[1] = "local";
     else
-      argvv[1] = "global";
+      argvv[2] = "global";
 
     DummyStream dummy;
 

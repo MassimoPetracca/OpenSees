@@ -59,25 +59,17 @@ void* OPS_NDFiberSection3d()
 
     numData = 1;
     int tag;
-    if (OPS_GetIntInput(&numData,&tag) < 0) return 0;
+    if(OPS_GetIntInput(&numData,&tag) < 0) return 0;
 
-    bool computeCentroid = true;
-    if (OPS_GetNumRemainingInputArgs() > 0) {
-      const char* opt = OPS_GetString();
-      if (strcmp(opt, "-noCentroid") == 0)
-	computeCentroid = false;
-    }
-    
     int num = 30;
-    return new NDFiberSection3d(tag, num, computeCentroid);
+    return new NDFiberSection3d(tag,num);
 }
 
 // constructors:
-NDFiberSection3d::NDFiberSection3d(int tag, int num, Fiber **fibers, double a, bool compCentroid): 
+NDFiberSection3d::NDFiberSection3d(int tag, int num, Fiber **fibers, double a): 
   SectionForceDeformation(tag, SEC_TAG_NDFiberSection3d),
   numFibers(num), sizeFibers(num), theMaterials(0), matData(0),
-  Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), computeCentroid(compCentroid),
-  alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
+  Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
   parameterID(0), dedh(6)
 {
   if (numFibers != 0) {
@@ -116,10 +108,8 @@ NDFiberSection3d::NDFiberSection3d(int tag, int num, Fiber **fibers, double a, b
       }
     }    
 
-    if (computeCentroid) {
-      yBar = QzBar/Abar;  
-      zBar = QyBar/Abar;
-    }
+    yBar = QzBar/Abar;  
+    zBar = QyBar/Abar;  
   }
 
   s = new Vector(sData, 6);
@@ -139,11 +129,10 @@ NDFiberSection3d::NDFiberSection3d(int tag, int num, Fiber **fibers, double a, b
   code(5) = SECTION_RESPONSE_T;
 }
 
-NDFiberSection3d::NDFiberSection3d(int tag, int num, double a, bool compCentroid): 
+NDFiberSection3d::NDFiberSection3d(int tag, int num, double a): 
     SectionForceDeformation(tag, SEC_TAG_NDFiberSection3d),
     numFibers(0), sizeFibers(num), theMaterials(0), matData(0),
-    Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), computeCentroid(compCentroid),
-    alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
+    Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
     parameterID(0), dedh(6)
 {
     if (sizeFibers != 0) {
@@ -188,11 +177,10 @@ NDFiberSection3d::NDFiberSection3d(int tag, int num, double a, bool compCentroid
 }
 
 NDFiberSection3d::NDFiberSection3d(int tag, int num, NDMaterial **mats,
-				   SectionIntegration &si, double a, bool compCentroid):
+				   SectionIntegration &si, double a):
   SectionForceDeformation(tag, SEC_TAG_NDFiberSection3d),
   numFibers(num), sizeFibers(num), theMaterials(0), matData(0),
-  Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), computeCentroid(compCentroid),
-  alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
+  Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
   parameterID(0), dedh(6)
 {
   if (numFibers != 0) {
@@ -236,11 +224,9 @@ NDFiberSection3d::NDFiberSection3d(int tag, int num, NDMaterial **mats,
       exit(-1);
     }
   }    
-
-  if (computeCentroid) {
-    yBar = QzBar/Abar;  
-    zBar = QyBar/Abar;
-  }
+  
+  yBar = QzBar/Abar;  
+  zBar = QyBar/Abar;  
 
   s = new Vector(sData, 6);
   ks = new Matrix(kData, 6, 6);
@@ -263,9 +249,8 @@ NDFiberSection3d::NDFiberSection3d(int tag, int num, NDMaterial **mats,
 NDFiberSection3d::NDFiberSection3d():
   SectionForceDeformation(0, SEC_TAG_NDFiberSection3d),
   numFibers(0), sizeFibers(0), theMaterials(0), matData(0),
-  Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), computeCentroid(true),
-  alpha(1.0), sectionIntegr(0), e(6), s(0), ks(0),
-  parameterID(0), dedh(6)
+  Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), alpha(1.0), sectionIntegr(0), 
+  e(6), s(0), ks(0), parameterID(0), dedh(6)
 {
   s = new Vector(sData, 6);
   ks = new Matrix(kData, 6, 6);
@@ -343,15 +328,13 @@ NDFiberSection3d::addFiber(Fiber &newFiber)
   numFibers++;
 
   // Recompute centroid
-  if (computeCentroid) {
-    Abar  += Area;
-    QzBar += yLoc*Area;
-    QyBar += zLoc*Area;
-    
-    yBar = QzBar/Abar;
-    zBar = QyBar/Abar;
-  }
-  
+  Abar  += Area;
+  QzBar += yLoc*Area;
+  QyBar += zLoc*Area;
+
+  yBar = QzBar/Abar;
+  zBar = QyBar/Abar;
+
   return 0;
 }
 
@@ -713,7 +696,6 @@ NDFiberSection3d::getCopy(void)
   theCopy->Abar = Abar;
   theCopy->yBar = yBar;
   theCopy->zBar = zBar;
-  theCopy->computeCentroid = computeCentroid;
   theCopy->alpha = alpha;
   theCopy->parameterID = parameterID;
 
@@ -1042,7 +1024,6 @@ NDFiberSection3d::sendSelf(int commitTag, Channel &theChannel)
   static ID data(3);
   data(0) = this->getTag();
   data(1) = numFibers;
-  data(2) = computeCentroid ? 1 : 0; // Now the ID data is really 3    
   int dbTag = this->getDbTag();
   res += theChannel.sendID(dbTag, commitTag, data);
   if (res < 0) {
@@ -1185,10 +1166,8 @@ NDFiberSection3d::recvSelf(int commitTag, Channel &theChannel,
     Abar  = 0.0;
     double yLoc, zLoc, Area;
 
-    computeCentroid = data(2) ? true : false;
-    
     // Recompute centroid
-    for (i = 0; computeCentroid && i < numFibers; i++) {
+    for (i = 0; i < numFibers; i++) {
       yLoc = matData[3*i];
       zLoc = matData[3*i+1];
       Area = matData[3*i+2];
@@ -1196,14 +1175,9 @@ NDFiberSection3d::recvSelf(int commitTag, Channel &theChannel,
       QzBar += yLoc*Area;
       QyBar += zLoc*Area;
     }
-
-    if (computeCentroid) {
-      yBar = QzBar/Abar;
-      zBar = QyBar/Abar;
-    } else {
-      yBar = 0.0;
-      zBar = 0.0;      
-    }
+    
+    yBar = QzBar/Abar;
+    zBar = QyBar/Abar;
   }    
 
   return res;

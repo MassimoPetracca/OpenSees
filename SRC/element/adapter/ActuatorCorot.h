@@ -59,8 +59,7 @@ class ActuatorCorot : public Element
 public:
     // constructors
     ActuatorCorot(int tag, int dim, int Nd1, int Nd2,
-        double EA, int ipPort, int ssl = 0, int udp = 0,
-        int addRayleigh = 0, double rho = 0.0);
+        double EA, int ipPort, int addRayleigh = 0, double rho = 0.0);
     ActuatorCorot();
     
     // destructor
@@ -117,8 +116,6 @@ private:
     
     double EA;          // section stiffness of actuator
     int ipPort;         // ipPort
-    int ssl;            // secure socket layer flag
-    int udp;            // udp socket flag
     int addRayleigh;    // flag to add Rayleigh damping
     double rho;         // rho: mass per unit length
     double L;           // undeformed actuator length

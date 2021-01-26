@@ -91,9 +91,6 @@ public :
 
 	void Print(OPS_Stream &s, int flag = 0);
 
-	int setParameter(const char** argv, int argc, Parameter& param);
-	int updateParameter(int parameterID, Information& info);
-
 protected:
 
 private:

@@ -14,7 +14,7 @@
 #include <Domain.h>
 #include <Node.h>
 #include <Element.h>
-#include <zeroLength/ZeroLength.h>
+#include <ZeroLength.h>
 
 #include <ElasticMaterial.h>
 #include <ElasticIsotropicThreeDimensional.h>
