@@ -73,7 +73,6 @@ public:
 
     DL_Interpreter* getInterpreter();
     Domain* getDomain();
-    AnalysisModel** getAnalysisModel();
 
     int getNDF() const {return ndf;}
     void setNDF(int n) {ndf = n;}

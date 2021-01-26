@@ -62,9 +62,6 @@
     <ClCompile Include="..\..\..\SRC\analysis\analysis\VariableTimeStepDirectIntegrationAnalysis.cpp">
       <Filter>analysis</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\SRC\analysis\analysis\ResponseSpectrumAnalysis.cpp">
-      <Filter>analysis</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\..\SRC\analysis\model\AnalysisModel.cpp">
       <Filter>model</Filter>
     </ClCompile>
@@ -401,9 +398,6 @@
       <Filter>analysis</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\analysis\analysis\VariableTimeStepDirectIntegrationAnalysis.h">
-      <Filter>analysis</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\..\SRC\analysis\analysis\ResponseSpectrumAnalysis.h">
       <Filter>analysis</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\analysis\model\AnalysisModel.h">
