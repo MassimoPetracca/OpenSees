@@ -1,11 +1,7 @@
-﻿  Macroelement3d.cpp
-  NoTensionSection3d.cpp
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.cpp(413,10): warning C4101: 'zeta2New': variabile locale senza riferimenti
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.cpp(412,10): warning C4101: 'zetaNew': variabile locale senza riferimenti
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.cpp(411,10): warning C4101: 'muNew': variabile locale senza riferimenti
-  Generazione del codice in corso...
+﻿  GenericDamagePlasticityShear.cpp
      Creazione della libreria C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\x64\Debug\Macroelement3d.lib e dell'oggetto C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\x64\Debug\Macroelement3d.exp
-Domain.obj : error LNK2019: riferimento al simbolo esterno "void __cdecl OPS_printCrdTransf(class OPS_Stream &,int)" (?OPS_printCrdTransf@@YAXAEAVOPS_Stream@@H@Z) non risolto nella funzione "public: virtual void __cdecl Domain::Print(class OPS_Stream &,int)" (?Print@Domain@@UEAAXAEAVOPS_Stream@@H@Z)
-Macroelement3d.obj : error LNK2019: riferimento al simbolo esterno "public: __cdecl GenericDamagePlasticityShear::GenericDamagePlasticityShear(int,double,int,class Vector,double,double,double,bool,double)" (??0GenericDamagePlasticityShear@@QEAA@HNHVVector@@NNN_NN@Z) non risolto nella funzione OPS_Macroelement3d
-Macroelement3d.obj : error LNK2019: riferimento al simbolo esterno "public: int __cdecl GenericDamagePlasticityShear::setTrialStrainExtraParams(class Vector const &,class Vector)" (?setTrialStrainExtraParams@GenericDamagePlasticityShear@@QEAAHAEBVVector@@V2@@Z) non risolto nella funzione "public: virtual int __cdecl Macroelement3d::update(void)" (?update@Macroelement3d@@UEAAHXZ)
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\x64\Debug\Macroelement3d.dll : fatal error LNK1120: 3 esterni non risolti
+  Macroelement3d.vcxproj -> C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\x64\Debug\Macroelement3d.dll
+  Impossibile trovare il percorso specificato.
+          0 file copiati.
+C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppCommon.targets(149,5): error MSB3073: uscita dal comando "copy /Y "C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\x64\Debug\Macroelement3d.dll" "C:\Users\vanin\Documents\GitHub\OpenSees\Win64\bin\Macroelement3d.dll"
+C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppCommon.targets(149,5): error MSB3073: :VCEnd" con codice 1.

@@ -33,6 +33,9 @@
     <ClInclude Include="WrappedMaterial.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="GenericDamagePlasticityShear.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CohesiveSurface.cpp">
@@ -310,6 +313,12 @@
     </ClCompile>
     <ClCompile Include="..\..\..\..\core\MatrixUtil.cpp">
       <Filter>Resource Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\core\CrdTransf.cpp">
+      <Filter>Resource Files</Filter>
+    </ClCompile>
+    <ClCompile Include="GenericDamagePlasticityShear.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

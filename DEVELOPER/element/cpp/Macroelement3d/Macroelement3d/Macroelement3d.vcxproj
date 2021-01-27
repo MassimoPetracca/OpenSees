@@ -166,6 +166,7 @@
     <ClInclude Include="CohesiveSurface.h" />
     <ClInclude Include="DamageShearInterface.h" />
     <ClInclude Include="GambarottaLagomarsinoModel.h" />
+    <ClInclude Include="GenericDamagePlasticityShear.h" />
     <ClInclude Include="Macroelement3d.h" />
     <ClInclude Include="NoTensionSection3d.h" />
     <ClInclude Include="WrappedMaterial.h" />
@@ -181,6 +182,7 @@
     <ClCompile Include="..\..\..\..\core\Channel.cpp" />
     <ClCompile Include="..\..\..\..\core\CompositeResponse.cpp" />
     <ClCompile Include="..\..\..\..\core\ConstraintHandler.cpp" />
+    <ClCompile Include="..\..\..\..\core\CrdTransf.cpp" />
     <ClCompile Include="..\..\..\..\core\DataFileStream.cpp" />
     <ClCompile Include="..\..\..\..\core\DOF_Group.cpp" />
     <ClCompile Include="..\..\..\..\core\DOF_GrpIter.cpp" />
@@ -260,6 +262,7 @@
     <ClCompile Include="CohesiveSurface.cpp" />
     <ClCompile Include="DamageShearInterface.cpp" />
     <ClCompile Include="GambarottaLagomarsinoModel.cpp" />
+    <ClCompile Include="GenericDamagePlasticityShear.cpp" />
     <ClCompile Include="Macroelement3d.cpp" />
     <ClCompile Include="NoTensionSection3d.cpp" />
     <ClCompile Include="WrappedMaterial.cpp" />
