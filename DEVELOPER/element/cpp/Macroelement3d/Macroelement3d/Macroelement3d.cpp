@@ -70,7 +70,11 @@ Last edit: 27 Feb 2019
 #include <typeinfo>
 #include <string>
 
-
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
 
 Matrix Macroelement3d::K(18,18);
 Vector Macroelement3d::P(18);
