@@ -153,6 +153,12 @@ macros
 #define TAG_InelasticYS2DGNL -1  
 #endif // !TAG_InelasticYS2DGNL
 
+// the Macroelement3d is and external element by dr. Vanin.
+// Now its tag is 0
+#ifndef ELE_TAG_Macroelement3d
+#define ELE_TAG_Macroelement3d 0
+#endif // !ELE_TAG_Macroelement3d
+
 #define OPS_STREAM_TAGS_MPCORecorder_ElementOutputDescriptorStream 1001 /** \todo should we move it to classTags file ? */
 
 #ifdef MPCO_HDF5_LOADED_AT_RUNTIME
@@ -3696,6 +3702,13 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_ForceBeamColumnWarping2d /* <- OK! this one defines everything ! good job*/
 					) {
 					geom_type = ElementGeometryType::Line_2N;
+					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
+				}
+				/*
+				3-node quadratic lines with custom rule (Vanin's)
+				*/
+				else if (elem_class_tag == ELE_TAG_Macroelement3d) {
+					geom_type = ElementGeometryType::Line_3N;
 					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
 				}
 				/*
