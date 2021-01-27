@@ -1,113 +1,20 @@
-﻿  Analysis.cpp
-  AnalysisModel.cpp
-  ArrayOfTaggedObjects.cpp
-  ArrayOfTaggedObjectsIter.cpp
-  BeamFiberMaterial.cpp
-  BeamFiberMaterial2d.cpp
-  BinaryFileStream.cpp
-  Channel.cpp
-  CompositeResponse.cpp
-c1xx : fatal error C1083: Non è possibile aprire il file origine: '..\..\..\..\core\CompositeResponse.cpp': No such file or directory
-  ConstraintHandler.cpp
-  DataFileStream.cpp
-  DOF_Group.cpp
-  DOF_GrpIter.cpp
-  Domain.cpp
-C:\Develop\OpenSees\DEVELOPER\core\Domain.cpp(71,10): fatal error C1083: Non è possibile aprire il file inclusione: 'SectionForceDeformation.h': No such file or directory
-  DomainComponent.cpp
-  DummyStream.cpp
-  EigenSOE.cpp
-C:\Develop\OpenSees\DEVELOPER\core\EigenSOE.h(24,10): fatal error C1083: Non è possibile aprire il file inclusione: 'bool.h': No such file or directory
+﻿  EigenSOE.cpp
   EigenSolver.cpp
-  Element.cpp
-  ElementalLoad.cpp
-  Generazione del codice in corso...
-  Compilazione in corso...
-  ElementalLoadIter.cpp
-  ElementResponse.cpp
-  FEM_ObjectBroker.cpp
-  FE_Datastore.cpp
-  FE_EleIter.cpp
-  FE_Element.cpp
-  FiberResponse.cpp
-  File.cpp
-  FileIter.cpp
-  FrictionModel.cpp
-  FrictionResponse.cpp
-  Graph.cpp
-  ID.cpp
   IncrementalIntegrator.cpp
-C:\Develop\OpenSees\DEVELOPER\core\EigenSOE.h(24,10): fatal error C1083: Non è possibile aprire il file inclusione: 'bool.h': No such file or directory
   Information.cpp
-  Integrator.cpp
-  LinearSOE.cpp
-  LinearSOESolver.cpp
-  Load.cpp
-  LoadPatternIter.cpp
-  Generazione del codice in corso...
-  Compilazione in corso...
-  MapOfTaggedObjects.cpp
-  MapOfTaggedObjectsIter.cpp
-  Material.cpp
-  MaterialResponse.cpp
-  Matrix.cpp
-C:\Develop\OpenSees\DEVELOPER\core\Matrix.cpp(47,1): warning C4005: '_DLL': ridefinizione macro
-C:\Develop\OpenSees\DEVELOPER\core\Matrix.cpp : message : vedere la precedente definizione di '_DLL'
   MatrixUtil.cpp
-c1xx : fatal error C1083: Non è possibile aprire il file origine: '..\..\..\..\core\MatrixUtil.cpp': No such file or directory
+C:\Develop\OpenSees\DEVELOPER\core\MatrixUtil.cpp(134,14): warning C4101: 'i0': variabile locale senza riferimenti
+C:\Develop\OpenSees\DEVELOPER\core\MatrixUtil.cpp(165,14): warning C4101: 'i0': variabile locale senza riferimenti
   Message.cpp
-  MovableObject.cpp
-  MP_Constraint.cpp
-  NDMaterial.cpp
-  NodalLoad.cpp
-  NodalLoadIter.cpp
-  Node.cpp
-  ObjectBroker.cpp
-  OPS_Stream.cpp
-  Parameter.cpp
-  PlaneStrainMaterial.cpp
-  PlaneStressMaterial.cpp
-  PlateFiberMaterial.cpp
-  Pressure_Constraint.cpp
-  Generazione del codice in corso...
-  Compilazione in corso...
-  Recorder.cpp
-  Renderer.cpp
-  Response.cpp
-  SectionForceDeformation.cpp
-c1xx : fatal error C1083: Non è possibile aprire il file origine: '..\..\..\..\core\SectionForceDeformation.cpp': No such file or directory
-  SimulationInformation.cpp
-  SingleDomAllSP_Iter.cpp
-  SingleDomEleIter.cpp
-  SingleDomMP_Iter.cpp
-  SingleDomNodIter.cpp
-  SingleDomParamIter.cpp
-  SingleDomPC_Iter.cpp
-  SingleDomSP_Iter.cpp
-  SolutionAlgorithm.cpp
-  SP_Constraint.cpp
-  StandardStream.cpp
-  StaticIntegrator.cpp
-  StringContainer.cpp
-  Subdomain.cpp
-  SubdomainNodIter.cpp
-  TaggedObject.cpp
-  Generazione del codice in corso...
-  Compilazione in corso...
-  TransientIntegrator.cpp
-  UniaxialMaterial.cpp
-  Vector.cpp
-  Vertex.cpp
-  VertexIter.cpp
-  win32Functions.cpp
-  CohesiveSurface.cpp
-  DamageShearInterface.cpp
-  GambarottaLagomarsinoModel.cpp
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\GambarottaLagomarsinoModel.cpp(551,10): warning C4101: 'mode': variabile locale senza riferimenti
   Macroelement3d.cpp
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.h(37,10): fatal error C1083: Non è possibile aprire il file inclusione: 'SectionForceDeformation.h': No such file or directory
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\Macroelement3d.cpp(1875,1): error C2589: '(': token non valido a destra di '::'
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\Macroelement3d.cpp(1876,1): error C2062: tipo 'unknown-type' imprevisto
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\Macroelement3d.cpp(1876,1): error C2059: errore di sintassi: ')'
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\Macroelement3d.cpp(1896,1): error C2589: '(': token non valido a destra di '::'
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\Macroelement3d.cpp(1897,1): error C2062: tipo 'unknown-type' imprevisto
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\Macroelement3d.cpp(1897,1): error C2059: errore di sintassi: ')'
   NoTensionSection3d.cpp
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.h(37,10): fatal error C1083: Non è possibile aprire il file inclusione: 'SectionForceDeformation.h': No such file or directory
-  WrappedMaterial.cpp
-C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\WrappedMaterial.cpp(348,10): warning C4101: 'mode': variabile locale senza riferimenti
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.cpp(413,10): warning C4101: 'zeta2New': variabile locale senza riferimenti
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.cpp(412,10): warning C4101: 'zetaNew': variabile locale senza riferimenti
+C:\Develop\OpenSees\DEVELOPER\element\cpp\Macroelement3d\Macroelement3d\NoTensionSection3d.cpp(411,10): warning C4101: 'muNew': variabile locale senza riferimenti
   Generazione del codice in corso...
