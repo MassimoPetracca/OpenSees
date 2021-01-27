@@ -75,6 +75,8 @@ class FEM_ObjectBroker;
 
 class TaggedObjectStorage;
 
+class DomainModalProperties;
+
 class Domain
 {
   public:
@@ -152,6 +154,7 @@ class Domain
 
     // methods to query the state of the domain
     virtual double  getCurrentTime(void) const;
+    virtual int getCreep(void) const;
     virtual int     getCommitTag(void) const;    	
     virtual int getNumElements(void) const;
     virtual int getNumNodes(void) const;
@@ -173,7 +176,8 @@ class Domain
     // methods to update the domain
     virtual  void setCommitTag(int newTag);    	
     virtual  void setCurrentTime(double newTime);    
-    virtual  void setCommittedTime(double newTime);        
+    virtual  void setCommittedTime(double newTime);
+    virtual void setCreep(int newCreep);
     virtual  void applyLoad(double pseudoTime);
     virtual  void setLoadConstant(void);
     virtual void  unsetLoadConstant(void);
@@ -195,7 +199,9 @@ class Domain
     virtual int setEigenvalues(const Vector &theEigenvalues);
     virtual const Vector &getEigenvalues(void);
     virtual double getTimeEigenvaluesSet(void);
-
+    void setModalProperties(const DomainModalProperties& dmp);
+    void unsetModalProperties(void);
+    const DomainModalProperties& getModalProperties(void) const;
     int setModalDampingFactors(Vector *, bool inclModalMatrix = false);
     const Vector *getModalDampingFactors(void);
     bool inclModalDampingMatrix(void);
@@ -231,6 +237,10 @@ class Domain
     virtual int setMass(const Matrix &mass, int nodeTag);
 
     virtual int calculateNodalReactions(int flag);
+	Recorder* getRecorder(int tag);	//by SAJalali
+
+    virtual int activateElements(const ID& elementList);
+    virtual int deactivateElements(const ID& elementList);
 
   protected:    
 
@@ -282,6 +292,7 @@ class Domain
     
     Vector *theEigenvalues;
     double theEigenvalueSetTime;
+    DomainModalProperties* theModalProperties;
     Vector *theModalDampingFactors;
     bool inclModalMatrix;
 

@@ -80,6 +80,8 @@
 #include <FE_Datastore.h>
 #include <FEM_ObjectBroker.h>
 
+#include <DomainModalProperties.h>
+
 //
 // global variables
 //
@@ -87,6 +89,7 @@
 Domain       *ops_TheActiveDomain = 0;
 double        ops_Dt = 0.0;
 bool          ops_InitialStateAnalysis = false;
+int           ops_Creep = 0;
 
 Domain::Domain()
 :theRecorders(0), numRecorders(0),
@@ -97,6 +100,7 @@ Domain::Domain()
  theElementGraph(0), 
  theRegions(0), numRegions(0), commitTag(0),
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
+ theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),
  paramIndex(0), paramSize(0), numParameters(0)
@@ -152,6 +156,7 @@ Domain::Domain(int numNodes, int numElements, int numSPs, int numMPs,
  theElementGraph(0),
  theRegions(0), numRegions(0), commitTag(0),
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
+ theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0), paramIndex(0), paramSize(0), numParameters(0)
 {
@@ -212,6 +217,7 @@ Domain::Domain(TaggedObjectStorage &theNodesStorage,
  theLoadPatterns(&theLoadPatternsStorage),
  theRegions(0), numRegions(0), commitTag(0),
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
+ theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0)
 {
@@ -270,6 +276,7 @@ Domain::Domain(TaggedObjectStorage &theStorage)
  theElementGraph(0), 
  theRegions(0), numRegions(0), commitTag(0),
  theBounds(6), theEigenvalues(0), theEigenvalueSetTime(0), 
+ theModalProperties(0),
  theModalDampingFactors(0), inclModalMatrix(false),
  lastChannel(0),paramIndex(0), paramSize(0), numParameters(0)
 {
@@ -375,6 +382,9 @@ Domain::~Domain()
 
   if (theEigenvalues != 0)
     delete theEigenvalues;
+
+  if (theModalProperties != 0)
+    delete theModalProperties;
 
   if (theLoadPatternIter != 0)
       delete theLoadPatternIter;
@@ -868,24 +878,24 @@ Domain::addNodalLoad(NodalLoad *load, int pattern)
     int nodTag = load->getNodeTag();
     Node *res = this->getNode(nodTag);
     if (res == 0) {
-      opserr << "Domain::addNodalLoad() HI - no node with tag " << nodTag << 
-	"exits in  the model, not adding the nodal load"  << *load << endln;
+      opserr << "Domain::addNodalLoad() - no node with tag " << nodTag << 
+	" exists in the model, not adding the nodal load "  << *load << endln;
 	return false;
     }
 
     // now add it to the pattern
     TaggedObject *thePattern = theLoadPatterns->getComponentPtr(pattern);
     if (thePattern == 0) {
-      opserr << "Domain::addNodalLoad() - no pattern with tag" << 
-	pattern << "in  the model, not adding the nodal load"  << *load << endln;
+      opserr << "Domain::addNodalLoad() - no pattern with tag " << 
+	pattern << " in the model, not adding the nodal load "  << *load << endln;
       
 	return false;
     }
     LoadPattern *theLoadPattern = (LoadPattern *)thePattern;
     bool result = theLoadPattern->addNodalLoad(load);
     if (result == false) {
-      opserr << "Domain::addNodalLoad() - pattern with tag" << 
-	pattern << "could not add the load" << *load << endln;
+      opserr << "Domain::addNodalLoad() - pattern with tag " << 
+	pattern << " could not add the load " << *load << endln;
 				
       return false;
     }
@@ -1751,6 +1761,17 @@ Domain::setCommittedTime(double newTime)
     dT = currentTime - committedTime;
 }
 
+void
+Domain::setCreep(int newCreep)
+{
+  ops_Creep = newCreep;
+}
+
+int
+Domain::getCreep(void) const
+{
+  return ops_Creep;
+}
 
 void
 Domain::applyLoad(double timeStep)
@@ -2102,6 +2123,33 @@ Domain::getTimeEigenvaluesSet(void)
   return theEigenvalueSetTime;
 }
 
+void Domain::setModalProperties(const DomainModalProperties& dmp)
+{
+    if (theModalProperties) {
+        *theModalProperties = dmp;
+    }
+    else {
+        theModalProperties = new DomainModalProperties(dmp);
+    }
+}
+
+void Domain::unsetModalProperties(void)
+{
+    if (theModalProperties) {
+        delete theModalProperties;
+        theModalProperties = nullptr;
+    }
+}
+
+const DomainModalProperties& Domain::getModalProperties(void) const
+{
+    if (theModalProperties == 0) {
+        opserr << "Domain::getModalProperties - DomainModalProperties were never set\n";
+        exit(-1);
+    }
+    return *theModalProperties;
+}
+
 int
 Domain::setModalDampingFactors(Vector *theValues, bool inclMatrix)
 {
@@ -2445,7 +2493,7 @@ Domain::buildEleGraph(Graph *theEleGraph)
       if (theEleToVertexMapEle == theEleToVertexMap.end()) {
         theEleToVertexMap.insert(MAP_INT_TYPE(eleTag, count));
 
-        // check if sucessfully added
+        // check if successfully added
         theEleToVertexMapEle = theEleToVertexMap.find(eleTag);
         if (theEleToVertexMapEle == theEleToVertexMap.end()) {
           opserr << "Domain::buildEleGraph - map STL failed to add object with tag : " << eleTag << endln;
@@ -2457,11 +2505,11 @@ Domain::buildEleGraph(Graph *theEleGraph)
     }
 
     //
-    // We now need to determine which elements are asssociated with each node.
+    // We now need to determine which elements are associated with each node.
     // As this info is not in the Node interface we must build it;
     //
     // again we will use an stl map, index will be nodeTag, object will be Vertex
-    // do using vertices for each node, when we addVertex at thes nodes we
+    // do using vertices for each node, when we addVertex at these nodes we
     // will not be adding vertices but element tags.
     //
 
@@ -2488,7 +2536,7 @@ Domain::buildEleGraph(Graph *theEleGraph)
       if (theNodeEle == theNodeToVertexMap.end()) {
         theNodeToVertexMap.insert(MAP_ID_TYPE(nodeTag, eleTags));
 
-        // check if sucessfully added
+        // check if successfully added
         theNodeEle = theNodeToVertexMap.find(nodeTag);
         if (theNodeEle == theNodeToVertexMap.end()) {
           opserr << "Domain::buildEleGraph - map STL failed to add object with tag : " << nodeTag << endln;
@@ -2752,7 +2800,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
     }
 
     // we do the same for elements as we did for nodes above .. see comments
-    // for nodes if you can't figure whats going on!
+    // for nodes if you can't figure what's going on!
 
     if (numEle != 0) {
       ID elementData(numEle*2);
@@ -2782,7 +2830,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
     }
 
     // we do the same for SP_Constraints as for Nodes above .. see comments
-    // for nodes if you can't figure whats going on!    
+    // for nodes if you can't figure what's going on!    
     
     if (numSPs != 0) {
       ID spData(numSPs*2);
@@ -2811,7 +2859,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
     }
 
     // we do the same for Pressure_Constraints as for Nodes above .. see comments
-    // for nodes if you can't figure whats going on!    
+    // for nodes if you can't figure what's going on!    
     
     if (numPCs != 0) {
         ID pData(numPCs*2);
@@ -2840,7 +2888,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
     }
 
     // we do the same for MP_Constraints as for Nodes above .. see comments
-    // for nodes if you can't figure whats going on!    
+    // for nodes if you can't figure what's going on!    
     
     if (numMPs != 0) {
       ID mpData(numMPs*2);
@@ -2869,7 +2917,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
     }
 
     // we do the same for LoadPatterns as we did for Nodes above .. see comments
-    // for nodes if you can't figure whats going on!    
+    // for nodes if you can't figure what's going on!    
 
 
     if (numLPs != 0) {
@@ -3009,7 +3057,7 @@ Domain::sendSelf(int cTag, Channel &theChannel)
     }
   }  
 
-  // if get here we were successfull
+  // if get here we were successful
   return commitTag;
 }
 
@@ -3039,7 +3087,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   committedTime = currentTime;
 
   // 
-  // now if the currentGeoTag does not agree with whats in the domain
+  // now if the currentGeoTag does not agree with what's in the domain
   // we must wipe everything in the domain and recreate the domain based on the info from the channel
   //
 
@@ -3442,7 +3490,7 @@ Domain::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // now set the domains lastGeoSendTag and currentDomainChangedFlag
   lastGeoSendTag = currentGeoTag;  
 
-  // if get here we were successfull
+  // if get here we were successful
   return 0;
 }
 
@@ -3494,4 +3542,62 @@ Domain::calculateNodalReactions(int flag)
     if (theElement->isSubdomain() == false)
       theElement->addResistingForceToNodalReaction(flag);
   return 0;
+}
+
+//added by SAJalali
+Recorder*
+Domain::getRecorder(int tag)
+{
+	Recorder* res = 0;
+
+	// invoke record on all recorders
+	for (int i = 0; i < numRecorders; i++)
+	{
+		if (theRecorders[i] == 0)
+			break;
+		if (theRecorders[i]->getTag() == tag)
+		{
+			res = theRecorders[i];
+			break;
+		}
+	}
+
+	return res;
+}
+
+
+
+
+int Domain::activateElements(const ID& elementList)
+{
+    ElementIter& iter = getElements();
+    Element* theElement;
+    for (int i = 0; i < elementList.Size(); ++i)
+    {
+        int eleTag = elementList(i);
+        Element* theElement = this->getElement(eleTag);
+        if (theElement != 0)
+        {
+            theElement->activate();
+        }
+    }
+    return 0;
+}
+
+
+
+int Domain::deactivateElements(const ID& elementList)
+{
+    // ElementIter& iter = getElements();
+    Element* theElement;
+    for (int i = 0; i < elementList.Size(); ++i)
+    {
+        int eleTag = elementList(i);
+        Element* theElement = this->getElement(eleTag);
+        if (theElement != 0)
+        {
+            theElement->deactivate();
+        }
+    }
+    return 0;
 }
