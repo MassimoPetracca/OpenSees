@@ -320,7 +320,7 @@ int PluginUniaxialMaterial::sendSelf(int commitTag, Channel& theChannel)
 	std::string msg_string = ser.str();
 	std::vector<char> msg_data(msg_string.size() + 1);
 	std::copy(msg_string.begin(), msg_string.end(), msg_data.begin());
-	msg_string.back() = '\0';
+	msg_data.back() = '\0';
 	int msg_data_size = static_cast<int>(msg_string.size());
 
 	// send message size
