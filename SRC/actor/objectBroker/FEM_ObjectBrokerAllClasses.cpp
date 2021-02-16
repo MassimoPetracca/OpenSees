@@ -96,6 +96,7 @@
 #include "Bond_SP01.h"
 #include "SimpleFractureMaterial.h"
 #include "ConfinedConcrete01.h"
+#include "PluginUniaxialMaterial.h"
 
 //PY springs: RWBoulanger and BJeremic
 #include "PY/PySimple1.h"
@@ -194,6 +195,7 @@
 #include "stressDensityModel/stressDensity.h"
 #endif
 #include "InitStressNDMaterial.h"
+#include "PluginNDMaterial.h"
 
 // Fibers
 #include "fiber/UniaxialFiber2d.h"
@@ -1292,6 +1294,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
         case MAT_TAG_ConfinedConcrete01:
             return new ConfinedConcrete01();
 
+		case MAT_TAG_PluginUniaxialMaterial:
+			return new PluginUniaxialMaterial();
+
 
 	default:
 
@@ -1509,6 +1514,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_InitStressNDMaterial:
       return new InitStressNDMaterial();
+
+  case ND_TAG_PluginNDMaterial:
+	  return new PluginNDMaterial();
     
   default:
     opserr << "FEM_ObjectBrokerAllClasses::getNewNDMaterial - ";
