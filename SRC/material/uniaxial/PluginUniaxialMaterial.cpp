@@ -458,6 +458,14 @@ int PluginUniaxialMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
 		ser >> dummy;
 	}
 
+	// call for initialization. Here the function must initialize the sate of the plugin material
+	rcode = 0;
+	m_data->proc(m_data, PF_MAT_INITIALIZE, &rcode);
+	if (rcode != 0) {
+		opserr << "PluginUniaxialMaterial Error: Failed in job = PF_MAT_INITIALIZE\n";
+		return -1;
+	}
+
 	// now we can get the remaining string from the stream and let the plugin material
 	// deserialize its custom data (instead of a standard initialization)
 	std::string plugin_message = ser.remaining();
