@@ -481,8 +481,8 @@ int PluginNDMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBro
 	ser >> plugin_library >> plugin_function;
 
 	// get plugin material descriptor
-	PluginMaterialDescriptor* descriptor = details::getDescriptor(plugin_library, plugin_function);
-	if (descriptor == 0)
+	m_descriptor = details::getDescriptor(plugin_library, plugin_function);
+	if (m_descriptor == 0)
 		return -1;
 
 	// get tag
@@ -492,7 +492,7 @@ int PluginNDMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBro
 
 	// allocate the PluginMaterialData. now material data has the tag, the pointer to
 	// the procedure, and all data properly inizialized to zero
-	m_data = PluginFramework::instance().makeMaterialData(descriptor->procedure, tag);
+	m_data = PluginFramework::instance().makeMaterialData(m_descriptor->procedure, tag);
 	if (m_data == 0) {
 		opserr << "PluginNDMaterial::recvSelf() - Error: Failed to initialize material data\n";
 		return -1;
@@ -526,7 +526,7 @@ int PluginNDMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBro
 			"Please you need to fill the message field to parse input arguments\n";
 		return -1;
 	}
-	if (descriptor->parseMessage(m_data->message) != 0) {
+	if (m_descriptor->parseMessage(m_data->message) != 0) {
 		opserr << "PluginNDMaterial Error: Failed to parse message.\n";
 		return -1;
 	}
@@ -536,7 +536,7 @@ int PluginNDMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBro
 	ser >> m_data->n_param;
 
 	// make sure they are the same as the number of arguments in message
-	if (m_data->n_param != static_cast<int>(descriptor->arguments.size())) {
+	if (m_data->n_param != static_cast<int>(m_descriptor->arguments.size())) {
 		opserr << "PluginNDMaterial Error: n_param obtained from the de-serialization is different "
 			"from the one in the info message\n";
 		return -1;
