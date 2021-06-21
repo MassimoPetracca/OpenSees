@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>15.0</VCProjectVersion>
+    <ProjectGuid>{38661B60-193A-4D18-8432-260036C582C3}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>Macroelement3d</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Command>copy /Y "$(TargetDir)$(ProjectName).dll" "V:\03_Projects\04_Basel_Project\19_Macroelement\00_files_and_images_for_wiki\examples\openseesAnalyses\$(ProjectName).dll"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_DEBUG;MACROELEMENT3D_EXPORTS;_WINDOWS;_USRDLL;</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\..\..\core;/Macroelement3d%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>-D__MS_VC_INSTALL_PATH="c:/Program files (x86)/Microsoft Visual Studio/2017/Community/VC/Tools/MSVC/14.11.25503" %(AdditionalOptions)</AdditionalOptions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Command>copy /Y "$(TargetDir)$(ProjectName).dll" "C:\Users\vanin\Documents\GitHub\OpenSees\Win64\bin\$(ProjectName).dll"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Command>copy /Y "$(TargetDir)$(ProjectName).dll" "V:\03_Projects\04_Basel_Project\19_Macroelement\00_files_and_images_for_wiki\examples\openseesAnalyses\$(ProjectName).dll"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;MACROELEMENT3D_EXPORTS;_WINDOWS;_USRDLL;</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\..\..\core;c:\Program Files\tcl85;c:\Program Files\tcl\include;C:\Develop\OpenSees\SRC\domain\domain;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>-D__MS_VC_INSTALL_PATH="c:/Program files (x86)/Microsoft Visual Studio/2017/Community/VC/Tools/MSVC/14.11.25503" %(AdditionalOptions)</AdditionalOptions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>C:\Develop\OpenSees\Win64\lib;C:\Develop\OpenSees\Win64\lib\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>blas.lib;lapack.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>copy /Y "$(TargetDir)$(ProjectName).dll" "..\..\..\..\..\Win64\bin\$(ProjectName).dll"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="CohesiveSurface.h" />
+    <ClInclude Include="DamageShearInterface.h" />
+    <ClInclude Include="GambarottaLagomarsinoModel.h" />
+    <ClInclude Include="GenericDamagePlasticityShear.h" />
+    <ClInclude Include="Macroelement3d.h" />
+    <ClInclude Include="NoTensionSection3d.h" />
+    <ClInclude Include="WrappedMaterial.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\..\..\core\Analysis.cpp" />
+    <ClCompile Include="..\..\..\..\core\AnalysisModel.cpp" />
+    <ClCompile Include="..\..\..\..\core\ArrayOfTaggedObjects.cpp" />
+    <ClCompile Include="..\..\..\..\core\ArrayOfTaggedObjectsIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\BeamFiberMaterial.cpp" />
+    <ClCompile Include="..\..\..\..\core\BeamFiberMaterial2d.cpp" />
+    <ClCompile Include="..\..\..\..\core\BinaryFileStream.cpp" />
+    <ClCompile Include="..\..\..\..\core\Channel.cpp" />
+    <ClCompile Include="..\..\..\..\core\CompositeResponse.cpp" />
+    <ClCompile Include="..\..\..\..\core\ConstraintHandler.cpp" />
+    <ClCompile Include="..\..\..\..\core\CrdTransf.cpp" />
+    <ClCompile Include="..\..\..\..\core\DataFileStream.cpp" />
+    <ClCompile Include="..\..\..\..\core\DOF_Group.cpp" />
+    <ClCompile Include="..\..\..\..\core\DOF_GrpIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\Domain.cpp" />
+    <ClCompile Include="..\..\..\..\core\DomainComponent.cpp" />
+    <ClCompile Include="..\..\..\..\core\DummyStream.cpp" />
+    <ClCompile Include="..\..\..\..\core\EigenSOE.cpp" />
+    <ClCompile Include="..\..\..\..\core\EigenSolver.cpp" />
+    <ClCompile Include="..\..\..\..\core\Element.cpp" />
+    <ClCompile Include="..\..\..\..\core\ElementalLoad.cpp" />
+    <ClCompile Include="..\..\..\..\core\ElementalLoadIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\ElementResponse.cpp" />
+    <ClCompile Include="..\..\..\..\core\FEM_ObjectBroker.cpp" />
+    <ClCompile Include="..\..\..\..\core\FE_Datastore.cpp" />
+    <ClCompile Include="..\..\..\..\core\FE_EleIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\FE_Element.cpp" />
+    <ClCompile Include="..\..\..\..\core\FiberResponse.cpp" />
+    <ClCompile Include="..\..\..\..\core\File.cpp" />
+    <ClCompile Include="..\..\..\..\core\FileIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\FrictionModel.cpp" />
+    <ClCompile Include="..\..\..\..\core\FrictionResponse.cpp" />
+    <ClCompile Include="..\..\..\..\core\Graph.cpp" />
+    <ClCompile Include="..\..\..\..\core\ID.cpp" />
+    <ClCompile Include="..\..\..\..\core\IncrementalIntegrator.cpp" />
+    <ClCompile Include="..\..\..\..\core\Information.cpp" />
+    <ClCompile Include="..\..\..\..\core\Integrator.cpp" />
+    <ClCompile Include="..\..\..\..\core\LinearSOE.cpp" />
+    <ClCompile Include="..\..\..\..\core\LinearSOESolver.cpp" />
+    <ClCompile Include="..\..\..\..\core\Load.cpp" />
+    <ClCompile Include="..\..\..\..\core\LoadPatternIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\MapOfTaggedObjects.cpp" />
+    <ClCompile Include="..\..\..\..\core\MapOfTaggedObjectsIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\Material.cpp" />
+    <ClCompile Include="..\..\..\..\core\MaterialResponse.cpp" />
+    <ClCompile Include="..\..\..\..\core\Matrix.cpp" />
+    <ClCompile Include="..\..\..\..\core\MatrixUtil.cpp" />
+    <ClCompile Include="..\..\..\..\core\Message.cpp" />
+    <ClCompile Include="..\..\..\..\core\MovableObject.cpp" />
+    <ClCompile Include="..\..\..\..\core\MP_Constraint.cpp" />
+    <ClCompile Include="..\..\..\..\core\NDMaterial.cpp" />
+    <ClCompile Include="..\..\..\..\core\NodalLoad.cpp" />
+    <ClCompile Include="..\..\..\..\core\NodalLoadIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\Node.cpp" />
+    <ClCompile Include="..\..\..\..\core\ObjectBroker.cpp" />
+    <ClCompile Include="..\..\..\..\core\OPS_Stream.cpp" />
+    <ClCompile Include="..\..\..\..\core\Parameter.cpp" />
+    <ClCompile Include="..\..\..\..\core\PlaneStrainMaterial.cpp" />
+    <ClCompile Include="..\..\..\..\core\PlaneStressMaterial.cpp" />
+    <ClCompile Include="..\..\..\..\core\PlateFiberMaterial.cpp" />
+    <ClCompile Include="..\..\..\..\core\Pressure_Constraint.cpp" />
+    <ClCompile Include="..\..\..\..\core\Recorder.cpp" />
+    <ClCompile Include="..\..\..\..\core\Renderer.cpp" />
+    <ClCompile Include="..\..\..\..\core\Response.cpp" />
+    <ClCompile Include="..\..\..\..\core\SectionForceDeformation.cpp" />
+    <ClCompile Include="..\..\..\..\core\SimulationInformation.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomAllSP_Iter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomEleIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomMP_Iter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomNodIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomParamIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomPC_Iter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SingleDomSP_Iter.cpp" />
+    <ClCompile Include="..\..\..\..\core\SolutionAlgorithm.cpp" />
+    <ClCompile Include="..\..\..\..\core\SP_Constraint.cpp" />
+    <ClCompile Include="..\..\..\..\core\StandardStream.cpp" />
+    <ClCompile Include="..\..\..\..\core\StaticIntegrator.cpp" />
+    <ClCompile Include="..\..\..\..\core\StringContainer.cpp" />
+    <ClCompile Include="..\..\..\..\core\Subdomain.cpp" />
+    <ClCompile Include="..\..\..\..\core\SubdomainNodIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\TaggedObject.cpp" />
+    <ClCompile Include="..\..\..\..\core\TransientIntegrator.cpp" />
+    <ClCompile Include="..\..\..\..\core\UniaxialMaterial.cpp" />
+    <ClCompile Include="..\..\..\..\core\Vector.cpp" />
+    <ClCompile Include="..\..\..\..\core\Vertex.cpp" />
+    <ClCompile Include="..\..\..\..\core\VertexIter.cpp" />
+    <ClCompile Include="..\..\..\..\core\win32Functions.cpp" />
+    <ClCompile Include="CohesiveSurface.cpp" />
+    <ClCompile Include="DamageShearInterface.cpp" />
+    <ClCompile Include="GambarottaLagomarsinoModel.cpp" />
+    <ClCompile Include="GenericDamagePlasticityShear.cpp" />
+    <ClCompile Include="Macroelement3d.cpp" />
+    <ClCompile Include="NoTensionSection3d.cpp" />
+    <ClCompile Include="WrappedMaterial.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

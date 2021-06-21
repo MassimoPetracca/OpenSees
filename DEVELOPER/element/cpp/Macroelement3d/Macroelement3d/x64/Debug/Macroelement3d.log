@@ -1,0 +1,158 @@
+﻿  Analysis.cpp
+  AnalysisModel.cpp
+  ArrayOfTaggedObjects.cpp
+  ArrayOfTaggedObjectsIter.cpp
+  BeamFiberMaterial.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  BeamFiberMaterial2d.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  BinaryFileStream.cpp
+  Channel.cpp
+  CompositeResponse.cpp
+  ConstraintHandler.cpp
+  CrdTransf.cpp
+  DOF_Group.cpp
+  DOF_GrpIter.cpp
+  DataFileStream.cpp
+  Domain.cpp
+C:\Develop\OpenSees\DEVELOPER\core\Domain.cpp(83,10): fatal error C1083: Non è possibile aprire il file inclusione: 'DomainModalProperties.h': No such file or directory
+  DomainComponent.cpp
+  DummyStream.cpp
+  EigenSOE.cpp
+  EigenSolver.cpp
+  Element.cpp
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(308,10): error C2039: 'getRayleighDampingForces': non è un membro di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Domain.h(42): message : vedere la dichiarazione di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(311,7): error C2065: 'index': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(312,5): error C2355: 'this': riferimento possibile solo all'interno di funzioni membro non statiche o inizializzatori di membri dati non statici
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(312,37): error C2065: 'alphaM': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(312,45): error C2065: 'betaK': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(312,52): error C2065: 'betaK0': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(312,60): error C2065: 'betaKc': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(315,23): error C2065: 'theMatrices': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(315,35): error C2065: 'index': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(316,23): error C2065: 'theVectors2': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(316,35): error C2065: 'index': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(317,24): error C2065: 'theVectors1': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(317,36): error C2065: 'index': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(325,21): error C2355: 'this': riferimento possibile solo all'interno di funzioni membro non statiche o inizializzatori di membri dati non statici
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(326,18): error C2355: 'this': riferimento possibile solo all'interno di funzioni membro non statiche o inizializzatori di membri dati non statici
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(337,7): error C2065: 'alphaM': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(338,31): error C2355: 'this': riferimento possibile solo all'interno di funzioni membro non statiche o inizializzatori di membri dati non statici
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(338,48): error C2065: 'alphaM': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(339,7): error C2065: 'betaK': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(340,31): error C2355: 'this': riferimento possibile solo all'interno di funzioni membro non statiche o inizializzatori di membri dati non statici
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(340,56): error C2065: 'betaK': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(341,7): error C2065: 'betaK0': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(342,31): error C2355: 'this': riferimento possibile solo all'interno di funzioni membro non statiche o inizializzatori di membri dati non statici
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(342,56): error C2065: 'betaK0': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(343,7): error C2065: 'betaKc': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(344,32): error C2065: 'Kc': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(344,36): error C2065: 'betaKc': identificatore non dichiarato
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(482,60): error C2039: 'getRayleighDampingForces': non è un membro di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Domain.h(42): message : vedere la dichiarazione di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(486,96): error C2039: 'getRayleighDampingForces': non è un membro di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Domain.h(42): message : vedere la dichiarazione di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Element.cpp(650,57): error C2039: 'getRayleighDampingForces': non è un membro di 'Element'
+C:\Develop\OpenSees\DEVELOPER\core\Domain.h(42): message : vedere la dichiarazione di 'Element'
+  Generazione del codice in corso...
+  Compilazione in corso...
+  ElementResponse.cpp
+  ElementalLoad.cpp
+  ElementalLoadIter.cpp
+  FEM_ObjectBroker.cpp
+  FE_Datastore.cpp
+  FE_EleIter.cpp
+  FE_Element.cpp
+  FiberResponse.cpp
+  File.cpp
+  FileIter.cpp
+  FrictionModel.cpp
+  FrictionResponse.cpp
+  Graph.cpp
+  ID.cpp
+  IncrementalIntegrator.cpp
+  Information.cpp
+  Integrator.cpp
+  LinearSOE.cpp
+  LinearSOESolver.cpp
+  Load.cpp
+  Generazione del codice in corso...
+  Compilazione in corso...
+  LoadPatternIter.cpp
+  MP_Constraint.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  MapOfTaggedObjects.cpp
+  MapOfTaggedObjectsIter.cpp
+  Material.cpp
+  MaterialResponse.cpp
+  Matrix.cpp
+C:\Develop\OpenSees\DEVELOPER\core\Matrix.cpp(47,1): warning C4005: '_DLL': ridefinizione macro
+C:\Develop\OpenSees\DEVELOPER\core\Matrix.cpp : message : vedere la precedente definizione di '_DLL'
+  MatrixUtil.cpp
+C:\Develop\OpenSees\DEVELOPER\core\MatrixUtil.cpp(134,14): warning C4101: 'i0': variabile locale senza riferimenti
+C:\Develop\OpenSees\DEVELOPER\core\MatrixUtil.cpp(165,14): warning C4101: 'i0': variabile locale senza riferimenti
+  Message.cpp
+  MovableObject.cpp
+  NDMaterial.cpp
+  NodalLoad.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  NodalLoadIter.cpp
+  Node.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  OPS_Stream.cpp
+  ObjectBroker.cpp
+  Parameter.cpp
+  PlaneStrainMaterial.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  PlaneStressMaterial.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  PlateFiberMaterial.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  Generazione del codice in corso...
+  Compilazione in corso...
+  Pressure_Constraint.cpp
+  Recorder.cpp
+  Renderer.cpp
+  Response.cpp
+  SP_Constraint.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  SectionForceDeformation.cpp
+  SimulationInformation.cpp
+  SingleDomAllSP_Iter.cpp
+  SingleDomEleIter.cpp
+  SingleDomMP_Iter.cpp
+  SingleDomNodIter.cpp
+  SingleDomPC_Iter.cpp
+  SingleDomParamIter.cpp
+  SingleDomSP_Iter.cpp
+  SolutionAlgorithm.cpp
+  StandardStream.cpp
+  StaticIntegrator.cpp
+  StringContainer.cpp
+  Subdomain.cpp
+  SubdomainNodIter.cpp
+  Generazione del codice in corso...
+  Compilazione in corso...
+  TaggedObject.cpp
+  TransientIntegrator.cpp
+  UniaxialMaterial.cpp
+  Vector.cpp
+  Vertex.cpp
+  VertexIter.cpp
+  win32Functions.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  CohesiveSurface.cpp
+  DamageShearInterface.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  GambarottaLagomarsinoModel.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  GenericDamagePlasticityShear.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  Macroelement3d.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  NoTensionSection3d.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  WrappedMaterial.cpp
+C:\Develop\OpenSees\DEVELOPER\core\elementAPI.h(169,10): fatal error C1083: Non è possibile aprire il file inclusione: 'tcl.h': No such file or directory
+  Generazione del codice in corso...
