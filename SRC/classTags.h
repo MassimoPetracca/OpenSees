@@ -782,6 +782,7 @@
 #define ELE_TAG_MVLEM_3D	          212 // Kristijan Kolozvari
 #define ELE_TAG_SFI_MVLEM_3D	          213 // Kristijan Kolozvari
 #define ELE_TAG_ASDEmbeddedNodeElement             214  // Massimo Petracca (ASDEA)
+#define ELE_TAG_ZeroLengthImplexContact   215  // Onur Deniz Akan (IUSS), Massimo Petracca (ASDEA)
 #define ELE_TAG_ExternalElement           99990
 
 

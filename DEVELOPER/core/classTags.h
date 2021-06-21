@@ -779,6 +779,7 @@
 
 
 #define ELE_TAG_ASDEmbeddedNodeElement             214  // Massimo Petracca (ASDEA)
+#define ELE_TAG_ZeroLengthImplexContact   215  // Onur Deniz Akan (IUSS), Massimo Petracca (ASDEA)
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2
