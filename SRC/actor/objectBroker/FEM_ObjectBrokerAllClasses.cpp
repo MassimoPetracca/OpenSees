@@ -96,6 +96,7 @@
 #include "Bond_SP01.h"
 #include "SimpleFractureMaterial.h"
 #include "ConfinedConcrete01.h"
+#include "PluginUniaxialMaterial.h"
 #include <HystereticPoly.h>					// Salvatore Sessa 14-Jan-2021
 
 //PY springs: RWBoulanger and BJeremic
@@ -193,6 +194,7 @@
 #include "UWmaterials/InitialStateAnalysisWrapper.h"
 #include "stressDensityModel/stressDensity.h"
 #include "InitStressNDMaterial.h"
+#include "PluginNDMaterial.h"
 
 // Fibers
 #include "fiber/UniaxialFiber2d.h"
@@ -1311,6 +1313,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 	case MAT_TAG_HystereticPoly:			// Salvatore Sessa
 	    return new HystereticPoly();
 
+		case MAT_TAG_PluginUniaxialMaterial:
+			return new PluginUniaxialMaterial();
+
 
 	default:
 
@@ -1527,6 +1532,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_InitStressNDMaterial:
       return new InitStressNDMaterial();
+
+  case ND_TAG_PluginNDMaterial:
+	  return new PluginNDMaterial();
     
   default:
     opserr << "FEM_ObjectBrokerAllClasses::getNewNDMaterial - ";

@@ -174,6 +174,8 @@ extern void *OPS_DegradingPinchedBW(void);
 extern void *OPS_SLModel(void);
 extern void* OPS_HystereticPoly(void); // Salvatore Sessa 14-Jan-2021 Mail: salvatore.sessa2@unina.it
 
+extern void* OPS_PluginUniaxialMaterial(void); // PluginFramework - Massimo Petracca 03/2020
+
 //extern int TclCommand_ConfinedConcrete02(ClientData clientData, Tcl_Interp *interp, int argc, 
 //					 TCL_Char **argv, TclModelBuilder *theTclBuilder);
 
@@ -2838,6 +2840,17 @@ TclModelBuilderUniaxialMaterialCommand (ClientData clientData, Tcl_Interp *inter
       theMaterial = new SmoothPSConcrete( tag, fc, fu, Ec, eps0, epsu, eta);       
     }
     
+    // plugin uniaxial material
+    else if (strcmp(argv[1], "plugin") == 0) {
+        void *theMat = OPS_PluginUniaxialMaterial();
+        if (theMat != 0) {
+            theMaterial = (UniaxialMaterial*)(theMat);
+        }
+        else {
+            return TCL_ERROR;
+        }
+    }
+
 	    // ----- 1D J2 Plasticity ----
 	    else if (strcmp(argv[1],"UniaxialJ2Plasticity") == 0) {
       if (argc < 7) {
