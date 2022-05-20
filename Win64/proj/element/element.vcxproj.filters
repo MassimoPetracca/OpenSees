@@ -947,6 +947,9 @@
     <ClCompile Include="..\..\..\SRC\element\CEqElement\ASDEmbeddedNodeElement.cpp">
       <Filter>CEqElement</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\SRC\element\CEqElement\ASDConstraintEquationElement.cpp">
+      <Filter>CEqElement</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\SRC\coordTransformation\CorotCrdTransfWarping3d.cpp">
       <Filter>crdTransf</Filter>
     </ClCompile>
@@ -1721,6 +1724,9 @@
       <Filter>RockingBC</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\element\CEqElement\ASDEmbeddedNodeElement.h">
+      <Filter>CEqElement</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\SRC\element\CEqElement\ASDConstraintEquationElement.h">
       <Filter>CEqElement</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\coordTransformation\CorotCrdTransfWarping3d.h">

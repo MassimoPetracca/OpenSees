@@ -111,6 +111,7 @@
     <ClCompile Include="..\..\..\SRC\element\absorbentBoundaries\ASDAbsorbingBoundary2D.cpp" />
     <ClCompile Include="..\..\..\SRC\element\absorbentBoundaries\ASDAbsorbingBoundary3D.cpp" />
     <ClCompile Include="..\..\..\SRC\element\CEqElement\ASDEmbeddedNodeElement.cpp" />
+    <ClCompile Include="..\..\..\SRC\element\CEqElement\ASDConstraintEquationElement.cpp" />
     <ClCompile Include="..\..\..\SRC\element\catenaryCable\CatenaryCable.cpp" />
     <ClCompile Include="..\..\..\SRC\element\componentElement\ComponentElement2d.cpp" />
     <ClCompile Include="..\..\..\SRC\element\dispBeamColumn\AxEqDispBeamColumn2d.cpp" />
@@ -386,6 +387,7 @@
     <ClInclude Include="..\..\..\SRC\element\absorbentBoundaries\ASDAbsorbingBoundary2D.h" />
     <ClInclude Include="..\..\..\SRC\element\absorbentBoundaries\ASDAbsorbingBoundary3D.h" />
     <ClInclude Include="..\..\..\SRC\element\CEqElement\ASDEmbeddedNodeElement.h" />
+    <ClInclude Include="..\..\..\SRC\element\CEqElement\ASDConstraintEquationElement.h" />
     <ClInclude Include="..\..\..\SRC\element\catenaryCable\CatenaryCable.h" />
     <ClInclude Include="..\..\..\SRC\element\componentElement\ComponentElement2d.h" />
     <ClInclude Include="..\..\..\SRC\element\dispBeamColumn\AxEqDispBeamColumn2d.h" />
