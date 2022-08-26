@@ -367,41 +367,33 @@ int ASDConstraintEquationElement::addResistingForceToNodalReaction(int flag)
 int ASDConstraintEquationElement::sendSelf(int commitTag, Channel& theChannel)
 {
     int res = 0;
+    int dataTag = getDbTag();
 
-    // note: we don't check for dataTag == 0 for Element
-    // objects as that is taken care of in a commit by the Domain
-    // object - don't want to have to do the check if sending data
-    int dataTag = this->getDbTag();
-
-    // some counters
-    int NN = m_node_ids.Size();
-    int NL = m_local_dofs.Size();
-    int NG = m_num_dofs;
-
-    // INT data
+    // INT data 1
     // tag
-    // number of nodes (NN)
-    // number of local dofs (NL)
-    // number of global dofs (NG)
+    // number of local nodes (NL)
     // U0_computed
-    // NN nodal ids
+    int NL = m_local_nodes.Size();
+    static ID idData1(3);
+    idData1(0) = getTag();
+    idData1(1) = NL;
+    idData1(2) = static_cast<int>(m_U0_computed);
+    res = theChannel.sendID(dataTag, commitTag, idData1);
+    if (res < 0) {
+        opserr << "WARNING ASDConstraintEquationElement::sendSelf() - " << this->getTag() << " failed to send ID 1\n";
+        return res;
+    }
+
+    // INT data 2
     // NL local nodes
     // NL local dofs
-    // NL mapping
-    static ID idData(5 + NN + 3 * NL);
+    ID idData2(2 * NL);
     int pos = 0;
-    idData(pos++) = getTag();
-    idData(pos++) = m_node_ids.Size();
-    idData(pos++) = m_local_dofs.Size();
-    idData(pos++) = m_num_dofs;
-    idData(pos++) = static_cast<int>(m_U0_computed);
-    for (int i = 0; i < NN; ++i) idData(pos++) = m_node_ids(i);
-    for (int i = 0; i < NL; ++i) idData(pos++) = m_local_nodes(i);
-    for (int i = 0; i < NL; ++i) idData(pos++) = m_local_dofs(i);
-    for (int i = 0; i < NL; ++i) idData(pos++) = m_mapping(i);
-    res += theChannel.sendID(dataTag, commitTag, idData);
+    for (int i = 0; i < NL; ++i) idData2(pos++) = m_local_nodes(i);
+    for (int i = 0; i < NL; ++i) idData2(pos++) = m_local_dofs(i);
+    res = theChannel.sendID(dataTag, commitTag, idData2);
     if (res < 0) {
-        opserr << "WARNING ASDConstraintEquationElement::sendSelf() - " << this->getTag() << " failed to send ID\n";
+        opserr << "WARNING ASDConstraintEquationElement::sendSelf() - " << this->getTag() << " failed to send ID 2\n";
         return res;
     }
 
@@ -409,12 +401,12 @@ int ASDConstraintEquationElement::sendSelf(int commitTag, Channel& theChannel)
     // K
     // NL factors
     // NL initial displacement
-    static Vector vectData(1 + 2 * NL);
+    Vector vectData(1 + 2 * NL);
     pos = 0;
     vectData(pos++) = m_K;
     for (int i = 0; i < NL; ++i) vectData(pos++) = m_factors(i);
     for (int i = 0; i < NL; ++i) vectData(pos++) = m_U0(i);
-    res += theChannel.sendVector(dataTag, commitTag, vectData);
+    res = theChannel.sendVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDConstraintEquationElement::sendSelf() - " << this->getTag() << " failed to send Vector\n";
         return res;
@@ -426,65 +418,57 @@ int ASDConstraintEquationElement::sendSelf(int commitTag, Channel& theChannel)
 
 int ASDConstraintEquationElement::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-    // TODO
-    return -1;
+    int res = 0;
+    int dataTag = this->getDbTag();
 
-    //int res = 0;
+    // INT data 1
+    // tag
+    // number of local nodes (NL)
+    // U0_computed
+    static ID idData1(3);
+    res = theChannel.recvID(dataTag, commitTag, idData1);
+    if (res < 0) {
+        opserr << "WARNING ASDConstraintEquationElement::recvSelf() - " << this->getTag() << " failed to receive ID 1\n";
+        return res;
+    }
+    setTag(idData1(0));
+    int NL = idData1(1);
+    m_U0_computed = static_cast<bool>(idData1(2));
 
-    //int dataTag = this->getDbTag();
+    // INT data 2
+    // NL local nodes
+    // NL local dofs
+    ID idData2(2 * NL);
+    m_local_nodes.resize(NL);
+    m_local_dofs.resize(NL);
+    res = theChannel.recvID(dataTag, commitTag, idData2);
+    if (res < 0) {
+        opserr << "WARNING ASDConstraintEquationElement::recvSelf() - " << this->getTag() << " failed to receive ID 2\n";
+        return res;
+    }
+    int pos = 0;
+    for (int i = 0; i < NL; ++i) m_local_nodes(i) = idData2(pos++);
+    for (int i = 0; i < NL; ++i) m_local_dofs(i) = idData2(pos++);
 
-    //// INT data
-    //// tag
-    //// number of nodes (NN)
-    //// number of local dofs (NL)
-    //// number of global dofs (NG)
-    //// U0_computed
-    //// NN nodal ids
-    //// NL local nodes
-    //// NL local dofs
-    //// NL mapping
-    //static ID idData(31);
-    //res += theChannel.recvID(dataTag, commitTag, idData);
-    //if (res < 0) {
-    //    opserr << "WARNING ASDConstraintEquationElement::recvSelf() - " << this->getTag() << " failed to receive ID\n";
-    //    return res;
-    //}
+    // DOUBLE data
+    // K
+    // NL factors
+    // NL initial displacement
+    Vector vectData(1 + 2 * NL);
+    m_factors.resize(NL);
+    m_U0.resize(NL);
+    res = theChannel.recvVector(dataTag, commitTag, vectData);
+    if (res < 0) {
+        opserr << "WARNING ASDConstraintEquationElement::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
+        return res;
+    }
+    pos = 0;
+    m_K = vectData(pos++);
+    for (int i = 0; i < NL; ++i) m_factors(i) = vectData(pos++);
+    for (int i = 0; i < NL; ++i) m_U0(i) = vectData(pos++);
 
-    //setTag(idData(0));
-    //int num_nodes = idData(1);
-    //m_node_ids.resize(num_nodes);
-    //m_nodes.resize(static_cast<std::size_t>(num_nodes), nullptr);
-    //m_node_ids(0) = idData(2);
-    //m_node_ids(1) = idData(3);
-    //m_node_ids(2) = idData(4);
-    //m_node_ids(3) = idData(5);
-    //if (m_node_ids.Size() == 5)
-    //    m_node_ids(4) = idData(6);
-    //m_ndm = idData(7);
-    //m_num_dofs = idData(8);
-    //m_rot_c_flag = idData(9) == 1;
-    //m_rot_c = idData(10) == 1;
-    //m_U0_computed = idData(11) == 1;
-    //int num_local_dofs = idData(12);
-    //m_mapping.resize(num_local_dofs);
-    //for (int i = 0; i < m_mapping.Size(); ++i)
-    //    m_mapping(i) = idData(12 + i);
-
-    //// DOUBLE data
-    //// K
-    //static Vector vectData(31);
-    //res += theChannel.recvVector(dataTag, commitTag, vectData);
-    //if (res < 0) {
-    //    opserr << "WARNING ASDConstraintEquationElement::sendSelf() - " << this->getTag() << " failed to receive Vector\n";
-    //    return res;
-    //}
-    //m_K = vectData(0);
-    //m_U0.resize(m_num_dofs);
-    //for (int i = 0; i < m_num_dofs; ++i)
-    //    m_U0(i) = vectData(1 + i);
-
-    //// done
-    //return res;
+    // done
+    return res;
 }
 
 const Vector& ASDConstraintEquationElement::getLocalDisplacements() const
