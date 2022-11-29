@@ -205,6 +205,7 @@
     <ClCompile Include="..\..\..\SRC\element\CEqElement\ASDEmbeddedNodeElement.cpp" />
     <ClCompile Include="..\..\..\SRC\element\CEqElement\ASDConstraintEquationElement.cpp" />
     <ClCompile Include="..\..\..\SRC\element\componentElement\ComponentElement2d.cpp" />
+    <ClCompile Include="..\..\..\SRC\element\componentElement\ComponentElement3d.cpp" />
     <ClCompile Include="..\..\..\SRC\element\dispBeamColumn\AxEqDispBeamColumn2d.cpp" />
     <ClCompile Include="..\..\..\SRC\element\dispBeamColumn\DispBeamColumn3dThermal.cpp" />
     <ClCompile Include="..\..\..\SRC\element\dispBeamColumn\DispBeamColumnAsym3d.cpp" />
