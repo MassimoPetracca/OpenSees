@@ -3889,7 +3889,7 @@ namespace mpco {
 					int_type = ElementIntegrationRuleType::Quadrilateral_GaussLegendre_3;
 				}
 				/*
-				4-node tetrahedron with 1x1x1 gp
+				4-node tetrahedron with 4 gp
 				*/
 				else if (
 					// ./tetrahedron
@@ -3898,6 +3898,17 @@ namespace mpco {
 				{
 					geom_type = ElementGeometryType::Tetrahedron_4N;
 					int_type = ElementIntegrationRuleType::Tetrahedron_GaussLegendre_1;
+				}
+				/*
+				10-node tetrahedron with 1x1x1 gp
+				*/
+				else if (
+					// ./tetrahedron
+					elem_class_tag == ELE_TAG_TenNodeTetrahedron
+					)
+				{
+					geom_type = ElementGeometryType::Tetrahedron_10N;
+					int_type = ElementIntegrationRuleType::Tetrahedron_GaussLegendre_2;
 				}
 				/*
 				8-node hexahedron with 1x1x1 gp
