@@ -114,9 +114,11 @@ target_sources(OPS_Material
       FRPConfinedConcrete02.cpp
       FatigueMaterial.cpp
       #FedeasMaterial.cpp
+      FlagShapeMaterial.cpp
       GNGMaterial.cpp
       HardeningMaterial.cpp
       #HardeningMaterial2.cpp
+      Hertzdamp.cpp
       HookGap.cpp
       HyperbolicGapMaterial.cpp
       HystereticAsym.cpp
@@ -127,6 +129,7 @@ target_sources(OPS_Material
       ImpactMaterial.cpp
       InitStrainMaterial.cpp
       InitStressMaterial.cpp
+      JankowskiImpact.cpp
       KikuchiAikenHDR.cpp
       KikuchiAikenLRB.cpp
       Maxwell.cpp                      # Uses ops_Dt
@@ -172,6 +175,7 @@ target_sources(OPS_Material
       TDConcreteMC10NL.cpp
       TensionOnlyMaterial.cpp
       UniaxialJ2Plasticity.cpp
+      ViscoelasticGap.cpp
       ViscousDamper.cpp
       ViscousMaterial.cpp
       WrapperUniaxialMaterial.cpp
@@ -229,9 +233,11 @@ target_sources(OPS_Material
       FRPConfinedConcrete02.h
       FatigueMaterial.h
       #FedeasMaterial.h
+      FlagShapeMaterial.h
       GNGMaterial.h
       HardeningMaterial.h
       #HardeningMaterial2.h
+      Hertzdamp.h
       HookGap.h
       HyperbolicGapMaterial.h
       HystereticAsym.h
@@ -242,6 +248,7 @@ target_sources(OPS_Material
       ImpactMaterial.h
       InitStrainMaterial.h
       InitStressMaterial.h
+      JankowskiImpact.h
       KikuchiAikenHDR.h
       KikuchiAikenLRB.h
       Maxwell.h
@@ -286,6 +293,7 @@ target_sources(OPS_Material
       TDConcreteMC10NL.h
       TensionOnlyMaterial.h
       UniaxialJ2Plasticity.h
+      ViscoelasticGap.h
       ViscousDamper.h
       ViscousMaterial.h
       WrapperUniaxialMaterial.h
