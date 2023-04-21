@@ -150,7 +150,6 @@ void ASDConstraintEquationElement::setDomain(Domain* theDomain)
     // order nodes and keep unique values, because in the equations the retained nodes may apper multiple times.
     // key = node id
     // value = num dofs
-    m_num_dofs = 0;
     std::map<int, int> aux_map;
     for (int i = 0; i < m_local_nodes.Size(); ++i) {
         int node_id = m_local_nodes(i);
@@ -163,7 +162,12 @@ void ASDConstraintEquationElement::setDomain(Domain* theDomain)
         // get number of dofs
         int ndofs = node->getNumberDOF();
         aux_map[node_id] = ndofs;
-        // update total number of dofs
+    }
+
+    // count the total number of dofs
+    m_num_dofs = 0;
+    for (const auto& item : aux_map) {
+        int ndofs = item.second;
         m_num_dofs += ndofs;
     }
 
