@@ -1040,6 +1040,9 @@
     <ClCompile Include="..\..\..\SRC\element\PFEMElement\BeamDisk.cpp">
       <Filter>pfem</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\SRC\element\mvlem\E_SFI.cpp">
+      <Filter>mvlem</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\SRC\element\Element.h">
@@ -1824,6 +1827,9 @@
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\element\forceBeamColumn\ConcentratedCurvatureBeamIntegration.h">
       <Filter>forceBeamColumn\beamIntegration</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\SRC\element\mvlem\E_SFI.h">
+      <Filter>mvlem</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
