@@ -159,6 +159,7 @@ OBJS       = UniaxialMaterial.o \
 	HystereticAsym.o \
 	CoulombDamperMaterial.o \
 	FlagShapeMaterial.o \
+	GMG_CyclicReinforcedConcrete.o \
     TclModelBuilderUniaxialMaterialCommand.o
 
 all:         $(OBJS)
