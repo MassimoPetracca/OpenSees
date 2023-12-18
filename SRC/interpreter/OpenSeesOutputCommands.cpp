@@ -73,6 +73,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <BackgroundMesh.h>
 #include <Parameter.h>
 #include <ParameterIter.h>
+#include "OpenSeesCommands.h"
 
 void* OPS_NodeRecorder();
 void* OPS_EnvelopeNodeRecorder();
@@ -381,6 +382,20 @@ int OPS_getTime()
     if (OPS_SetDoubleOutput(&numdata, &time, true) < 0) {
 	opserr << "WARNING failed to get current time\n";
 	return -1;
+    }
+
+    return 0;
+}
+
+int OPS_getCommittedTime()
+{
+    Domain* theDomain = OPS_GetDomain();
+    if (theDomain == 0) return -1;
+    double time = theDomain->getCommittedTime();
+    int numdata = 1;
+    if (OPS_SetDoubleOutput(&numdata, &time, true) < 0) {
+        opserr << "WARNING failed to get committed time\n";
+        return -1;
     }
 
     return 0;
