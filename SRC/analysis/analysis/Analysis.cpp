@@ -37,6 +37,57 @@
 
 #include <Analysis.h>
 #include <Domain.h>
+#include <elementAPI.h>
+
+int OPS_SetAnalysisCommitFilter()
+{
+    int numData = OPS_GetNumRemainingInputArgs();
+    if (numData > 0) {
+        AnalysisCommitFilter::instance().setExpression(OPS_GetString());
+    }
+    else {
+        AnalysisCommitFilter::instance().unset();
+    }
+    return 0;
+}
+
+AnalysisCommitFilter& AnalysisCommitFilter::instance()
+{
+    static AnalysisCommitFilter _instance;
+    return _instance;
+}
+
+void AnalysisCommitFilter::setExpression(const std::string& x)
+{
+    m_expression = x;
+    m_active = true;
+}
+
+void AnalysisCommitFilter::unset()
+{
+    m_active = false;
+}
+
+void AnalysisCommitFilter::setCustomFunction(function_t the_custom_function)
+{
+    m_function = the_custom_function;
+}
+
+int AnalysisCommitFilter::test()
+{
+    return m_function(m_expression);
+}
+
+AnalysisCommitFilter::function_t AnalysisCommitFilter::makeDefaultTclFunction()
+{
+    return [](const std::string& x) -> int {
+        double value = 0.0;
+        if (OPS_EvalDoubleTclStringExpression(x.data(), value) < 0)
+            return 0;
+        return static_cast<int>(value);
+    };
+}
+
 
 Analysis::Analysis(Domain &theDom)
 :theDomain(&theDom)
@@ -54,5 +105,3 @@ Analysis::getDomainPtr(void)
 {
     return theDomain;
 }
-
-

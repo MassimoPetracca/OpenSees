@@ -327,6 +327,16 @@ int OPS_GetDoubleInput(int* numData, double* data)
 }
 
 extern "C"
+int OPS_EvalDoubleTclStringExpression(const char* theExpression, double& current_val) {
+    if (Tcl_ExprDouble(theInterp, theExpression, &current_val) != TCL_OK) {
+        opserr << "OPS_EvalDoubleTclStringExpression::evaluateExpression -- expression \"" << theExpression;
+        opserr << "\" caused error:" << endln << Tcl_GetStringResult(theInterp) << endln;
+        return -1;
+    }
+    return 0;
+}
+
+extern "C"
 int OPS_SetDoubleOutput(int* numData, double* data, bool scalar)
 {
     int numArgs = *numData;
