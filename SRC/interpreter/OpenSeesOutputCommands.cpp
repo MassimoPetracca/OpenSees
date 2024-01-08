@@ -87,8 +87,8 @@ void* OPS_MPCORecorder();
 #endif
 BackgroundMesh& OPS_getBgMesh();
 
-//void* OPS_DriftRecorder();
-//void* OPS_PatternRecorder();
+void* OPS_DriftRecorder();
+void* OPS_EnvelopeDriftRecorder();
 
 namespace {
 
@@ -114,6 +114,8 @@ namespace {
 	recordersMap.insert(std::make_pair("ElementRemoval", &OPS_RemoveRecorder));
 	recordersMap.insert(std::make_pair("NodeRemoval", &OPS_RemoveRecorder));
 	recordersMap.insert(std::make_pair("Collapse", &OPS_RemoveRecorder));
+	recordersMap.insert(std::make_pair("Drift", &OPS_DriftRecorder));
+	recordersMap.insert(std::make_pair("EnvelopeDrift", &OPS_EnvelopeDriftRecorder));
 #ifdef _HDF5
 	recordersMap.insert(std::make_pair("mpco", &OPS_MPCORecorder));
 #endif
