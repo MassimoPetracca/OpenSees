@@ -536,6 +536,8 @@
 
 #define ND_TAG_ASDConcrete3DMaterial 7017 // Massimo Petracca ASDEA Software
 
+#define ND_TAG_TIMSoilAbutment3D 7018 // Davide Noe Gorini
+
 #define FIBER_TAG_Uniaxial2d	1
 #define FIBER_TAG_Uniaxial3d	2
 #define FIBER_TAG_ND2d	3

@@ -548,6 +548,7 @@
     <ClCompile Include="..\..\..\SRC\material\nD\soil\T2Vector.cpp" />
     <ClCompile Include="..\..\..\SRC\material\nD\soil\TclUpdateMaterialStageCommand.cpp" />
     <ClCompile Include="..\..\..\SRC\material\nD\ASDConcrete3DMaterial.cpp" />
+    <ClCompile Include="..\..\..\SRC\material\nD\TIMSoilAbutment3D.cpp" />
     <ClCompile Include="..\..\..\SRC\material\nD\BeamFiberMaterial.cpp" />
     <ClCompile Include="..\..\..\SRC\material\nD\OrthotropicMaterial.cpp" />
     <ClCompile Include="..\..\..\SRC\material\nD\Series3DMaterial.cpp" />
@@ -971,6 +972,7 @@
     <ClInclude Include="..\..\..\SRC\material\nD\soil\PressureIndependMultiYield.h" />
     <ClInclude Include="..\..\..\SRC\material\nD\soil\T2Vector.h" />
     <ClInclude Include="..\..\..\SRC\material\nD\ASDConcrete3DMaterial.h" />
+    <ClInclude Include="..\..\..\SRC\material\nD\TIMSoilAbutment3D.h" />
     <ClInclude Include="..\..\..\SRC\material\nD\BeamFiberMaterial.h" />
     <ClInclude Include="..\..\..\SRC\material\nD\OrthotropicMaterial.h" />
     <ClInclude Include="..\..\..\SRC\material\nD\Series3DMaterial.h" />
