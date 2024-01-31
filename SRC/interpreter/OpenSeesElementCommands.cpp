@@ -74,6 +74,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 // no 'beamWithHinges', 'flBrick'
 
 void* OPS_ZeroLengthND();
+void* OPS_ZeroLength6D();
 void* OPS_ZeroLengthSection();
 void* OPS_ZeroLength();
 void* OPS_TrussElement();
@@ -771,6 +772,7 @@ namespace {
 	functionMap.insert(std::make_pair("zeroLength", &OPS_ZeroLength));
 	functionMap.insert(std::make_pair("zeroLengthSection", &OPS_ZeroLengthSection));
 	functionMap.insert(std::make_pair("zeroLengthND", &OPS_ZeroLengthND));
+	functionMap.insert(std::make_pair("zeroLength6D", &OPS_ZeroLength6D));
 	functionMap.insert(std::make_pair("FourNodeTetrahedron", &OPS_FourNodeTetrahedron));
 	functionMap.insert(std::make_pair("TenNodeTetrahedron", &OPS_TenNodeTetrahedron));
 	functionMap.insert(std::make_pair("CatenaryCable", &OPS_CatenaryCableElement));

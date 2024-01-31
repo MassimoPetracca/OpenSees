@@ -1830,6 +1830,7 @@ PVDRecorder::setVTKType()
     vtktypes[ELE_TAG_ZeroLength] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ZeroLengthSection] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ZeroLengthND] = VTK_POLY_VERTEX;
+    vtktypes[ELE_TAG_ZeroLength6D] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ZeroLengthContact2D] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ZeroLengthContact3D] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ZeroLengthContactASDimplex] = VTK_POLY_VERTEX;

@@ -212,6 +212,9 @@
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthND.cpp">
       <Filter>zeroLength</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLength6D.cpp">
+      <Filter>zeroLength</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthRocking.cpp">
       <Filter>zeroLength</Filter>
     </ClCompile>
@@ -1034,6 +1037,9 @@
       <Filter>zeroLength</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthND.h">
+      <Filter>zeroLength</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLength6D.h">
       <Filter>zeroLength</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthRocking.h">

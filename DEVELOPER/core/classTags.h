@@ -724,6 +724,7 @@
 #define ELE_TAG_SixNodeTri                209
 
 #define ELE_TAG_ASDEmbeddedNodeElement             217  // Massimo Petracca (ASDEA)
+#define ELE_TAG_ZeroLength6D	        263 // Davide Noe Gorini
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2

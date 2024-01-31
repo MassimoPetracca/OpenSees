@@ -3741,6 +3741,7 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_ZeroLength ||
 					elem_class_tag == ELE_TAG_ZeroLengthSection ||
 					elem_class_tag == ELE_TAG_ZeroLengthND ||
+					elem_class_tag == ELE_TAG_ZeroLength6D ||
 					elem_class_tag == ELE_TAG_CoupledZeroLength ||
 					elem_class_tag == ELE_TAG_ZeroLengthRocking ||
 					elem_class_tag == ELE_TAG_ZeroLengthContact2D ||

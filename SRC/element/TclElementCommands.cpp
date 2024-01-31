@@ -208,6 +208,7 @@ extern void *OPS_BeamWithHinges(void);
 extern void* OPS_DispBeamColumnAsym3dTcl();  //Xinlong Du
 extern void* OPS_MixedBeamColumnAsym3dTcl(); //Xinlong Du
 extern void* OPS_ZeroLengthContactASDimplex(void); // Onur Deniz Akan (IUSS), Massimo Petracca (ASDEA)
+extern void* OPS_ZeroLength6D(void); // Davide Noe Gorini
 
 extern int TclModelBuilder_addFeapTruss(ClientData clientData, Tcl_Interp *interp,  int argc,
 					TCL_Char **argv, Domain*, TclModelBuilder *, int argStart);
@@ -1687,6 +1688,17 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
           return TCL_ERROR;
       }
   }
+  
+  else if (strcmp(argv[1], "zeroLength6D") == 0) {
+      void* theEle = OPS_ZeroLength6D();
+      if (theEle != 0)
+          theElement = (Element*)theEle;
+      else {
+          opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+          return TCL_ERROR;
+      }
+  }
+  
   else if (strcmp(argv[1],"beamWithHinges") == 0) {
     void *theEle = OPS_BeamWithHinges();
     if (theEle != 0) 

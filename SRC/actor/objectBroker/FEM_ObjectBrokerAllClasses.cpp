@@ -292,6 +292,7 @@
 #include "zeroLength/ZeroLengthInterface2D.h"
 #include "zeroLength/ZeroLengthContactASDimplex.h"
 //#include "ZeroLengthND.h"
+#include "ZeroLength6D.h"
 
 #include "fourNodeQuad/FourNodeQuad.h"
 #include "fourNodeQuad/EnhancedQuad.h"
@@ -806,7 +807,10 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
       
       //case ELE_TAG_ZeroLengthND:  
       //return new ZeroLengthND(); 	     
-      
+
+    case ELE_TAG_ZeroLength6D:
+      return new ZeroLength6D();
+
     case ELE_TAG_FourNodeQuadUP:  
       return new FourNodeQuadUP(); 	     
       
