@@ -57,6 +57,7 @@ OBJS       = NDMaterial.o \
 	J2ThreeDimensional.o \
 	OrthotropicMaterial.o \
 	Series3DMaterial.o \
+	Parallel3DMaterial.o \
 	PlaneStrainMaterial.o \
 	PlaneStressMaterial.o \
 	PlaneStressUserMaterial.o \
@@ -74,6 +75,7 @@ OBJS       = NDMaterial.o \
 	TclModelBuilderNDMaterialCommand.o \
 	WrapperNDMaterial.o \
 	InitStressNDMaterial.o \
+	InitStrainNDMaterial.o \
 	ConcreteMcftNonLinear5.o \
 	ConcreteMcftNonLinear7.o \
 	CapPlasticity.o \
@@ -111,6 +113,7 @@ all: $(OBJS)
 	@$(CD) $(FE)/material/nD/UANDESmaterials; $(MAKE);
 	@$(CD) $(FE)/material/nD/OrthotropicRotatingAngleConcreteT2DMaterial01; $(MAKE);
 	@$(CD) $(FE)/material/nD/SmearedSteelDoubleLayerT2DMaterial01; $(MAKE);
+	@$(CD) $(FE)/material/nD/ASDPlasticMaterial; $(MAKE);
 
 test: $(OBJS) main.o
 	$(LINKER) $(LINKFLAGS) main.o ../../../SRC/api/elementAPI_Dummy.o $(FE_LIBRARY) \
@@ -139,6 +142,7 @@ spotless: clean
 	@$(CD) $(FE)/material/nD/UANDESmaterials; $(MAKE) wipe;
 	@$(CD) $(FE)/material/nD/OrthotropicRotatingAngleConcreteT2DMaterial01; $(MAKE) wipe;
 	@$(CD) $(FE)/material/nD/SmearedSteelDoubleLayerT2DMaterial01; $(MAKE) wipe;
+	@$(CD) $(FE)/material/nD/ASDPlasticMaterial; $(MAKE) wipe;
 	
 
 wipe: spotless
