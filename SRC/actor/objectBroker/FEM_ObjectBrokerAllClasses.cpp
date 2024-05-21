@@ -105,6 +105,7 @@
 #include "HystereticSMMaterial.h"
 #include "OOHystereticMaterial.h"
 #include "EPPGapMaterial.h"
+#include "HookGap.h"
 #include "ViscousMaterial.h"
 #include "ViscousDamper.h"
 #include "BilinearOilDamper.h"
@@ -1830,6 +1831,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 	case MAT_TAG_EPPGap:
 		return new EPPGapMaterial();
 
+	case MAT_TAG_HookGap:
+	    return new HookGap();
+	    
 	case MAT_TAG_Viscous:
 		return new ViscousMaterial();
 
