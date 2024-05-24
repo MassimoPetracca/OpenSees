@@ -188,9 +188,12 @@ target_sources(OPS_Material
       SMAMaterial.cpp
       PluginUniaxialMaterial.cpp
       CoulombDamperMaterial.cpp
-      
+      APDFMD.cpp
+      APDMD.cpp
+      APDVFD.cpp
       TriMatrix.cpp
       DuctileFracture.cpp
+       
 
     PUBLIC
       ASD_SMA_3K.h
@@ -310,6 +313,9 @@ target_sources(OPS_Material
       pyUCLA.h
       PluginUniaxialMaterial.h
       CoulombDamperMaterial.h
+      APDFMD.h
+      APDMD.h
+      APDVFD.h
 
       TriMatrix.h  # move to SRC/matrix ?
       DuctileFracture.h
