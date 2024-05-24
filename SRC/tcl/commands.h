@@ -135,6 +135,9 @@ modalProperties(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** 
 int
 responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
+int
+getDomainElementStiffnessOOM(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int 
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 

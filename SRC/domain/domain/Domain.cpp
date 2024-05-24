@@ -82,6 +82,8 @@
 
 #include <DomainModalProperties.h>
 
+#include <elementAPI.h>
+
 //
 // global variables
 //
@@ -90,6 +92,37 @@ Domain       *ops_TheActiveDomain = 0;
 double        ops_Dt = 0.0;
 bool          ops_InitialStateAnalysis = false;
 int           ops_Creep = 0;
+
+//
+// utilities
+//
+
+int OPS_DomainElementStiffnessOOM()
+{
+    // EleStiffnessOOM <-verbose>
+    bool verbose = false;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* type = OPS_GetString();
+        if ((strcmp(type, "-verbose") == 0))
+            verbose = true;
+    }
+
+    // compute
+    Domain* domain = OPS_GetDomain();
+    Vector output(4);
+    if (domain)
+        output = domain->getElementStiffnessOOM(verbose);
+
+    // give output
+    int size = output.Size();
+    if (OPS_SetDoubleOutput(&size, &output(0), false) < 0) {
+        opserr << "EleStiffnessOOM Error: Failed to set result\n";
+        return -1;
+    }
+
+    // done
+    return 0;
+}
 
 Domain::Domain()
 :theRecorders(0), numRecorders(0),
@@ -1752,6 +1785,80 @@ Domain::getElementResponse(int eleTag, const char **argv, int argc)
   }
 }
 
+Vector Domain::getElementStiffnessOOM(bool verbose)
+{
+    // output for the avg, min and max order of magnitudes (+ the counter)
+    Vector oom_values(4);
+
+    // process all elements
+    double Kmax = 0.0;
+    double Kmin = 0.0;
+    double Kavg = 0.0;
+    double Kcount = 0.0;
+    double Kmaxreal = 0.0;
+
+    // compute Kmaxreal to be used for relative tolerance
+    {
+        Element* elePtr;
+        ElementIter& theEles = getElements();
+        while ((elePtr = theEles()) != 0) {
+            if (!elePtr->isSubdomain()) {
+                const Matrix& K = elePtr->getTangentStiff();
+                for (int i = 0; i < K.noRows(); ++i) {
+                    double kij = fabs(K(i, i));
+                    Kmaxreal = fmax(Kmaxreal, kij);
+                }
+            }
+        }
+    }
+
+    // compute Kmin, Kmax, and accumulate Kavg
+    {
+        bool first_done = false;
+        Element* elePtr;
+        ElementIter& theEles = getElements();
+        while ((elePtr = theEles()) != 0) {
+            if (!elePtr->isSubdomain()) {
+                const Matrix& K = elePtr->getTangentStiff();
+                for (int i = 0; i < K.noRows(); ++i) {
+                    double kij = fabs(K(i, i));
+                    if (kij > 1.0e-10 * Kmaxreal) {
+                        kij = std::round(std::log10(kij));
+                        if (first_done) {
+                            Kmax = fmax(Kmax, kij);
+                            Kmin = fmin(Kmin, kij);
+                        }
+                        else {
+                            Kmax = Kmin = kij;
+                            first_done = true;
+                        }
+                        Kavg += kij;
+                        Kcount += 1.0;
+                    }
+                }
+            }
+        }
+    }
+
+    // do the average
+    if (Kcount > 0.0) {
+        Kavg /= Kcount;
+        Kavg = std::round(Kavg);
+    }
+
+    if (verbose) {
+        opserr << "OOM(Kmax) = " << Kmax << "\n";
+        opserr << "OOM(Kmin) = " << Kmin << "\n";
+        opserr << "OOM(Kavg) = " << Kavg << "\n";
+    }
+
+    // done
+    oom_values(0) = Kavg;
+    oom_values(1) = Kmin;
+    oom_values(2) = Kmax;
+    oom_values(3) = Kcount;
+    return oom_values;
+}
 
 Graph  &
 Domain::getElementGraph(void)
