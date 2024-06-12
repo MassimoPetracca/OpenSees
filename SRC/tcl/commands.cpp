@@ -5882,7 +5882,9 @@ int
 setAnalysisCommitFilter(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
-    return OPS_SetAnalysisCommitFilter();
+    if (OPS_SetAnalysisCommitFilter() < 0)
+        return TCL_ERROR;
+    return TCL_OK;
 }
 
 int 
