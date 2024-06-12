@@ -82,7 +82,7 @@ AnalysisCommitFilter::function_t AnalysisCommitFilter::makeDefaultTclFunction()
 {
     return [](const std::string& x) -> int {
         double value = 0.0;
-        if (OPS_EvalDoubleTclStringExpression(x.data(), value) < 0)
+        if (OPS_EvalDoubleStringExpression(x.data(), value) < 0)
             return 0;
         return static_cast<int>(value);
     };
