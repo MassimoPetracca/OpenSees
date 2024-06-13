@@ -186,6 +186,7 @@ target_sources(OPS_Material
       WrapperUniaxialMaterial.cpp
       pyUCLA.cpp
       SMAMaterial.cpp
+      ../../api/PluginFramework.cpp
       PluginUniaxialMaterial.cpp
       CoulombDamperMaterial.cpp
       APDFMD.cpp
