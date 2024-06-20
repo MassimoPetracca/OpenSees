@@ -22,6 +22,10 @@
 
 // Description: misc commands
 
+#ifdef _PARALLEL_INTERPRETERS
+#undef _PARALLEL_INTERPRETERS
+#endif
+
 #include <elementAPI.h>
 #include <Domain.h>
 #include <LoadPattern.h>
