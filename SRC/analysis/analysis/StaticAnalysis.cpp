@@ -204,6 +204,17 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 
 // AddingSensitivity:END //////////////////////////////////////
 
+    if (AnalysisCommitFilter::instance().isActive()) {
+        result = AnalysisCommitFilter::instance().test();
+        if (result < 0) {
+            opserr << "StaticAnalysis::analyze() - the commit filter failed";
+            opserr << " at time " << the_Domain->getCurrentTime() << endln;
+            the_Domain->revertToLastCommit();
+            theIntegrator->revertToLastStep();
+            return -6;
+        }
+    }
+
 	result = theIntegrator->commit();
 	if (result < 0) {
 	    opserr << "StaticAnalysis::analyze() - ";
