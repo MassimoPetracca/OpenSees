@@ -41,6 +41,7 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <FEM_ObjectBroker.h>
 
 void* OPS_ASDSteel1DMaterial()
 {
@@ -52,7 +53,7 @@ void* OPS_ASDSteel1DMaterial()
 	}
 	
 	// the command description
-	const char* cmd_descr = 
+	static const char* cmd_descr = 
 		"uniaxialMaterial ASDSteel1D $tag $Es $fy $Hs $fc $diam $Leff "
 		"<-good_bond> "
 		"<-mm $mm> <-N $N> "
@@ -146,7 +147,7 @@ ASDSteel1DMaterial::ASDSteel1DMaterial(
 	UniaxialMaterial* _steel_mat,
 	UniaxialMaterial* _bond_mat)
 	: UniaxialMaterial(_tag, MAT_TAG_ASDSteel1DMaterial)
-	, Es(_E)
+	, Es(_Es)
 	, fy(_fy)
 	, Hs(_Hs)
 	, fc(_fc)
@@ -255,11 +256,11 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 {
 	// we can pack:
 	// * this tag (1)
-	// * all variables (13) +
+	// * all variables (12) +
 	// * 2 tags for each sub-material (4)
 	// in a vector
-	// with a total size = 1+13+4=18
-	static Vector D(18);
+	// with a total size = 1+12+4=17
+	static Vector D(17);
 	int counter = 0;
 	
 	// put the tag first
@@ -306,8 +307,8 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 
 int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-	// receive the 18-component DBL vector
-	static Vector D(18);
+	// receive the 17-component DBL vector
+	static Vector D(17);
 	if (theChannel.recvVector(getDbTag(), commitTag, D) < 0) {
 		opserr << "ASDSteel1DMaterial::recvSelf() - failed to receive DBL data\n";
 		return -1;
@@ -325,7 +326,7 @@ int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	// ...
 	
 	// receive sub-materials
-	auto lambda_mat = [&theChannel, &counter](UniaxialMaterial* imat) {
+	auto lambda_mat = [&theChannel, &theBroker, &commitTag, &counter]() -> UniaxialMaterial* {
 		int mat_class_tag = D(counter++);
 		int mat_db_tag = D(counter++);
 		UniaxialMaterial* the_material = theBroker.getNewUniaxialMaterial(mat_class_tag);
@@ -338,6 +339,7 @@ int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 			opserr << "ASDSteel1DMaterial::recvSelf() - failed to receive material\n";
 			return nullptr;
 		}
+		return the_material;
 	};
 	if (steel_mat) delete steel_mat;
 	if (bond_mat) delete bond_mat;

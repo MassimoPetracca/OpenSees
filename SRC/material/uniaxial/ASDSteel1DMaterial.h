@@ -109,8 +109,6 @@ private:
 	double diam = 0.0;
 	// Effective bond length
 	double Leff = 0.0;
-	// bond stress scale to go from bond stress to equivalent stress
-	double bond_scale = 1.0;
 	// good bond flag
 	bool good_bond = false;
 	// 1 millimeter in your unit system
@@ -126,8 +124,8 @@ private:
 	double energy = 0.0;
 	
 	// the materials
-	UniaxialMaterial* mat_steel = nullptr;
-	UniaxialMaterial* mat_bond = nullptr;
+	UniaxialMaterial* steel_mat = nullptr;
+	UniaxialMaterial* bond_mat = nullptr;
 };
 
 #endif
