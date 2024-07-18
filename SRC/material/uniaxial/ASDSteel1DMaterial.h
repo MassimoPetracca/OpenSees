@@ -47,9 +47,6 @@ public:
 		double _fc, /** concrete compressive strength */
 		double _diam, /** rebar diameter */
 		double _Leff, /** effective bond length */
-		bool _good_bond, /** good bond flag */
-		double _mm, /** 1 millimeter in your unit system */
-		double _N, /** 1 Newton in your unit system */
 		UniaxialMaterial* _steel_mat, /** the steel material */
 		UniaxialMaterial* _bond_mat /** the bond material */
 		);
@@ -109,12 +106,6 @@ private:
 	double diam = 0.0;
 	// Effective bond length
 	double Leff = 0.0;
-	// good bond flag
-	bool good_bond = false;
-	// 1 millimeter in your unit system
-	double mm = 1.0;
-	// 1 Newton in your unit system
-	double N = 1.0;
 	
 	// strain, stress and tangent
 	double strain = 0.0;

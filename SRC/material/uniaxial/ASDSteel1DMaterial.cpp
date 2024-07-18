@@ -141,9 +141,6 @@ ASDSteel1DMaterial::ASDSteel1DMaterial(
 	double _fc,
 	double _diam,
 	double _Leff,
-	bool _good_bond,
-	double _mm,
-	double _N,
 	UniaxialMaterial* _steel_mat,
 	UniaxialMaterial* _bond_mat)
 	: UniaxialMaterial(_tag, MAT_TAG_ASDSteel1DMaterial)
@@ -153,11 +150,8 @@ ASDSteel1DMaterial::ASDSteel1DMaterial(
 	, fc(_fc)
 	, diam(_diam)
 	, Leff(_Leff)
-	, good_bond(_good_bond)
-	, mm(_mm)
-	, N(_N)
-	, steel_mat(_steel_mat)
-	, bond_mat(_bond_mat)
+	, steel_mat(_steel_mat->getCopy())
+	, bond_mat(_bond_mat->getCopy())
 {
 	// you can do some extra initialization here
 }
@@ -256,11 +250,11 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 {
 	// we can pack:
 	// * this tag (1)
-	// * all variables (12) +
+	// * all variables (9) +
 	// * 2 tags for each sub-material (4)
 	// in a vector
-	// with a total size = 1+12+4=17
-	static Vector D(17);
+	// with a total size = 1+9+4=14
+	static Vector D(14);
 	int counter = 0;
 	
 	// put the tag first
@@ -307,8 +301,8 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 
 int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-	// receive the 17-component DBL vector
-	static Vector D(17);
+	// receive the 14-component DBL vector
+	static Vector D(14);
 	if (theChannel.recvVector(getDbTag(), commitTag, D) < 0) {
 		opserr << "ASDSteel1DMaterial::recvSelf() - failed to receive DBL data\n";
 		return -1;
