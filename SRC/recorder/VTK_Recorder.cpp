@@ -1183,6 +1183,7 @@ VTK_Recorder::setVTKType()
     vtktypes[ELE_TAG_SFI_MVLEM_3D] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_E_SFI_MVLEM_3D] = VTK_POLY_VERTEX;
 	vtktypes[ELE_TAG_E_SFI] = VTK_POLY_VERTEX;
+	vtktypes[ELE_TAG_MEFI] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_PFEMElement2DFIC] = VTK_TRIANGLE;
     vtktypes[ELE_TAG_TaylorHood2D] = VTK_QUADRATIC_TRIANGLE;
     vtktypes[ELE_TAG_PFEMElement2DQuasi] = VTK_TRIANGLE;
@@ -1197,6 +1198,9 @@ VTK_Recorder::setVTKType()
     vtktypes[ELE_TAG_InertiaTruss] = VTK_LINE;
     vtktypes[ELE_TAG_ASDAbsorbingBoundary2D] = VTK_QUAD;
     vtktypes[ELE_TAG_ASDAbsorbingBoundary3D] = VTK_HEXAHEDRON;
+    vtktypes[ELE_TAG_FSIFluidElement2D] = VTK_QUAD;
+    vtktypes[ELE_TAG_FSIInterfaceElement2D] = VTK_LINE;
+    vtktypes[ELE_TAG_FSIFluidBoundaryElement2D] = VTK_LINE;
 }
 
 
