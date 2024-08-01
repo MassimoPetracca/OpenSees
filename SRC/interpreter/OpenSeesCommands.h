@@ -267,6 +267,7 @@ int OPS_nodeDisp();
 int OPS_nodeReaction();
 int OPS_nodeEigenvector();
 int OPS_getTime();
+int OPS_getCommittedTime();
 int OPS_eleResponse();
 int OPS_getLoadFactor();
 int OPS_printModelGID();

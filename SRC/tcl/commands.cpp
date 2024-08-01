@@ -261,6 +261,7 @@ extern int OPS_sdfResponse(void);
 
 // domain utilities
 extern int OPS_DomainElementStiffnessOOM(void);
+extern int OPS_SetAnalysisCommitFilter();
 
 #include <Newmark.h>
 #include <StagedNewmark.h>
@@ -870,8 +871,12 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);     
     Tcl_CreateCommand(interp, "getTime", &getTime,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "getCommittedTime", &getCommittedTime,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
     Tcl_CreateCommand(interp, "getLoadFactor", &getLoadFactor,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "domainCommitTag", &domainCommitTag,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
 		
     Tcl_CreateCommand(interp, "build", &buildModel,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -1117,6 +1122,9 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
 
     Tcl_CreateCommand(interp, "EleStiffnessOOM", &getDomainElementStiffnessOOM,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
+
+    Tcl_CreateCommand(interp, "setAnalysisCommitFilter", &setAnalysisCommitFilter,
         (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
 
 #ifdef _RELIABILITY
@@ -1707,6 +1715,27 @@ getTime(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   return TCL_OK;
 }
 
+int getCommittedTime(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    double time = theDomain.getCommittedTime();
+
+    // get the display format
+    char format[80];
+    if (argc == 1) {
+        //      strcpy(format,"%f");
+        sprintf(format, "%f", time);
+    }
+    else if (argc == 2) {
+        //      strcpy(format,argv[1]);
+        sprintf(format, argv[1], time);
+    }
+
+    // now we copy the value to the tcl string that is returned
+    //  sprintf(interp->result,format,time);
+    Tcl_SetResult(interp, format, TCL_VOLATILE);
+    return TCL_OK;
+}
+
 int 
 getLoadFactor(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
@@ -1736,6 +1765,22 @@ getLoadFactor(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **ar
   Tcl_SetResult(interp, buffer, TCL_VOLATILE);
 
   return TCL_OK;
+}
+
+int domainCommitTag(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    int commitTag = theDomain.getCommitTag();
+    if (argc > 1) {
+        if (Tcl_GetInt(interp, argv[1], &commitTag) != TCL_OK) {
+            opserr << "ERROR reading commit tag -- domainCommitTag\n";
+            return TCL_ERROR;
+        }
+        theDomain.setCommitTag(commitTag);
+    }
+    char buffer[40];
+    sprintf(buffer, "%d", commitTag);
+    Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+    return TCL_OK;
 }
 
 ////////////////////////////////////////////////Abbas//////////////////////////////
@@ -5861,6 +5906,15 @@ getDomainElementStiffnessOOM(ClientData clientData, Tcl_Interp* interp, int argc
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_DomainElementStiffnessOOM() < 0)
+        return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+setAnalysisCommitFilter(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_SetAnalysisCommitFilter() < 0)
         return TCL_ERROR;
     return TCL_OK;
 }
