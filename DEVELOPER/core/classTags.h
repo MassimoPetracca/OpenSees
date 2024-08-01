@@ -731,6 +731,8 @@
 
 #define ELE_TAG_Inno3DPnPJoint			  263
 
+#define ELE_TAG_ZeroLength6D	        264 // Davide Noe Gorini
+
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2
 #define FRN_TAG_VelPressureDep     3

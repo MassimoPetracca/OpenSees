@@ -557,6 +557,7 @@
 #define ND_TAG_SmearedSteelDoubleLayerT2DMaterial01 7019		  // M. J. Nunez - UChile
 
 #define ND_TAG_InitStrainNDMaterial 7020 // Massimo Petracca ASDEA Software
+#define ND_TAG_TIMSoilAbutment3D 7021 // Davide Noe Gorini
 #define ND_TAG_ASDPlasticMaterial 10000 // For ASDPlasticity-class material
 
 
@@ -890,7 +891,7 @@
 #define ELE_TAG_FSIFluidElement2D          265  // Massimo Petracca (ASDEA)
 #define ELE_TAG_FSIInterfaceElement2D      266  // Massimo Petracca (ASDEA)
 #define ELE_TAG_FSIFluidBoundaryElement2D  267  // Massimo Petracca (ASDEA)
-
+#define ELE_TAG_ZeroLength6D	        268 // Davide Noe Gorini
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2
