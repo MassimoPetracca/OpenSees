@@ -111,7 +111,7 @@ void* OPS_ZeroLengthContactASDimplex(void) {
     // a quick check on number of args
     if (OPS_GetNumRemainingInputArgs() < 6) {
         opserr << "ZeroLengthContactASDimplex: WARNING: too few arguments \n" <<
-            "want - element zeroLengthContactASDimplex eleTag? iNode? jNode? Kn? Kt? mu? <-orient $x1 $x2 $x3> <-intType type?>\n";
+            "want - element zeroLengthContactASDimplex eleTag? iNode? jNode? Kn? Kt? mu? <-orient $x1 $x2 $x3> <-intType type?> <-UPDep $NUPNodes $n1 $n2 ... $nN>\n";
         return theElement;
     }
 
@@ -131,6 +131,9 @@ void* OPS_ZeroLengthContactASDimplex(void) {
         opserr << "ZeroLengthContactASDimplex: WARNING: invalid double inputs\n";
         return theElement;
     }
+
+    // init optional UP nodes
+    ID upNodes;
 
     // continue with optional inputs
     Vector x_e(3); x_e(0) = 1.0; x_e(1) = 0.0; x_e(2) = 0.0;                        // initialize orientation vector
@@ -172,6 +175,33 @@ void* OPS_ZeroLengthContactASDimplex(void) {
                 return theElement;
             }
         }
+        else if (strcmp(inputstring, "-UPDep") == 0) {
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "ZeroLengthContactASDimplex: WARNING: insufficient optional arguments for -UPDep\n";
+                return theElement;
+            }
+            numdata = 1;
+            int NUPNodes = 0;
+            if (OPS_GetIntInput(&numdata, &NUPNodes) < 0) {
+                opserr << "ZeroLengthContactASDimplex: WARNING: invalid integer $NUPNodes after -UPDep\n";
+                return theElement;
+            }
+            if (NUPNodes > 0) {
+                if (OPS_GetNumRemainingInputArgs() < NUPNodes) {
+                    opserr << "ZeroLengthContactASDimplex: WARNING: insufficient optional arguments $n1 ... $nN for -UPDep\n";
+                    return theElement;
+                }
+                upNodes.resize(NUPNodes);
+                for (int i = 0; i < NUPNodes; ++i) {
+                    int theIthUPNode = 0;
+                    if (OPS_GetIntInput(&numdata, &theIthUPNode) < 0) {
+                        opserr << "ZeroLengthContactASDimplex: WARNING: invalid integer a node tag after -UPDep\n";
+                        return theElement;
+                    }
+                    upNodes(i) = theIthUPNode;
+                }
+            }
+        }
     }
     // input reading stage is complete
 
@@ -189,11 +219,11 @@ void* OPS_ZeroLengthContactASDimplex(void) {
 
     // finally, create the element
     theElement = new ZeroLengthContactASDimplex(idata[0], idata[1], idata[2], ddata[0], ddata[1],
-        ddata[2], ndm, integrationType, x_e[0], x_e[1], x_e[2]);
+        ddata[2], ndm, integrationType, x_e[0], x_e[1], x_e[2], upNodes);
 
     if (theElement == 0) {
         opserr << "WARNING: out of memory: element zeroLengthContactASDimplex " << idata[0] <<
-            " iNode? jNode? Kn? Kt? mu? <-orient $x1 $x2 $x3> <-intType type?>\n";
+            " iNode? jNode? Kn? Kt? mu? <-orient $x1 $x2 $x3> <-intType type?> <-UPDep $NUPNodes $n1 $n2 ... $nN>\n";
     }
 
     return theElement;
@@ -201,7 +231,8 @@ void* OPS_ZeroLengthContactASDimplex(void) {
 
 ZeroLengthContactASDimplex::ZeroLengthContactASDimplex(int tag, int Nd1, int Nd2,
     double Kn, double Kt, double fcoeff,
-    int ndm, bool itype, double xN, double yN, double zN)
+    int ndm, bool itype, double xN, double yN, double zN,
+    const ID& upNodes)
     : Element(tag, ELE_TAG_ZeroLengthContactASDimplex)
     , connectedExternalNodes(2)
     , Knormal(Kn)
@@ -209,6 +240,7 @@ ZeroLengthContactASDimplex::ZeroLengthContactASDimplex(int tag, int Nd1, int Nd2
     , mu(fcoeff)
     , numDIM(ndm)
     , use_implex(itype)
+    , theUPNodes(upNodes)
 {
     connectedExternalNodes(0) = Nd1;
     connectedExternalNodes(1) = Nd2;
@@ -489,9 +521,10 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
 
     int res = 0;
     int dataTag = this->getDbTag();
+    int nup = theUPNodes.Size();
 
     // int data
-    static ID idata(10);
+    static ID idata(11);
     idata(0) = getTag();
     idata(1) = numDIM;
     idata(2) = numDOF[0];
@@ -502,6 +535,7 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     idata(7) = sv.dtime_is_user_defined ? 1 : 0;
     idata(8) = sv.dtime_first_set ? 1 : 0;
     idata(9) = gap0_initialized ? 1 : 0;
+    idata(10) = nup;
     res = theChannel.sendID(dataTag, commitTag, idata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::sendSelf() - " << this->getTag() << " failed to send ID\n";
@@ -509,7 +543,7 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     }
 
     // double data
-    static Vector ddata(31);
+    static Vector ddata(31 + nup);
     ddata(0) = Knormal;
     ddata(1) = Kfriction;
     ddata(2) = mu;
@@ -541,6 +575,8 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     ddata(28) = gap0(0);
     ddata(29) = gap0(1);
     ddata(30) = gap0(2);
+    for (int i = 0; i < nup; ++i)
+        ddata(31 + i) = static_cast<double>(theUPNodes(i));
     res = theChannel.sendVector(dataTag, commitTag, ddata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::sendSelf() - " << this->getTag() << " failed to send Vector\n";
@@ -557,7 +593,7 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     int dataTag = this->getDbTag();
 
     // int data
-    static ID idata(10);
+    static ID idata(11);
     res = theChannel.recvID(dataTag, commitTag, idata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::recvSelf() - failed to receive ID\n";
@@ -573,9 +609,11 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     sv.dtime_is_user_defined = idata(7) == 1;
     sv.dtime_first_set = idata(8) == 1;
     gap0_initialized = idata(9) == 1;
+    int nup = idata(10);
+    theUPNodes.resize(nup);
 
     // double data
-    static Vector ddata(31);
+    static Vector ddata(31 + nup);
     res = theChannel.recvVector(dataTag, commitTag, ddata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::recvSelf() - failed to receive Vector\n";
@@ -612,6 +650,8 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     gap0(0) = ddata(28);
     gap0(1) = ddata(39);
     gap0(2) = ddata(30);
+    for (int i = 0; i < nup; ++i)
+        theUPNodes(i) = static_cast<int>(ddata(31 + i));
 
     return 0;
 }
@@ -777,6 +817,12 @@ Response* ZeroLengthContactASDimplex::setResponse(const char** argv, int argc, O
             lam_close_gauss();
             theResponse = new ElementResponse(this, 8, Vector(3));
         }
+        else if (strcmp(argv[0], "PP") == 0) {
+            lam_open_gauss();
+            output.tag("ResponseType", "-PP");
+            lam_close_gauss();
+            theResponse = new ElementResponse(this, 9, Vector(1));
+        }
     }
 
     output.endTag(); // ElementOutput
@@ -852,6 +898,11 @@ int ZeroLengthContactASDimplex::getResponse(int responseID, Information& eleInfo
         cres(0) = sv.cres; cres(1) = sv.cres_commit; cres(2) = sv.cres_commit_old;
         return eleInfo.setVector(cres);
     }
+    else if (responseID == 9) {
+        // mean PP
+        scalar(0) = computeMeanPP();
+        return eleInfo.setVector(scalar);
+    }
     else {
         return -1;
     }
@@ -875,6 +926,40 @@ int ZeroLengthContactASDimplex::updateParameter(int parameterID, double value)
     }
     // done
     return 0;
+}
+
+double ZeroLengthContactASDimplex::computeMeanPP() const
+{
+    double pp = 0;
+    if (theUPNodes.Size() > 0) {
+        Domain* dom = this->getDomain();
+        for (int i = 0; i < theUPNodes.Size(); ++i) {
+            int nodeTag = theUPNodes(i);
+            Node* theNode = dom->getNode(nodeTag);
+            if (theNode) {
+                if (numDIM == 2 && theNode->getNumberDOF() != 3) {
+                    opserr << "ZeroLengthContactASDimplex::computeMeanPP Error: (Ele Tag = " << this->getTag() << "), 2D UP node " << nodeTag << " does not have 3 DOFs\n";
+                    exit(-1);
+                }
+                if (numDIM == 3 && theNode->getNumberDOF() != 4) {
+                    opserr << "ZeroLengthContactASDimplex::computeMeanPP Error: (Ele Tag = " << this->getTag() << "), DD UP node " << nodeTag << " does not have 4 DOFs\n";
+                    exit(-1);
+                }
+                const Vector& V = theNode->getVel();
+                double ip = V(numDIM);
+                pp += ip;
+            }
+            else {
+                opserr << "ZeroLengthContactASDimplex::computeMeanPP Error: (Ele Tag = " << this->getTag() << "), UP node " << nodeTag << " not in Domain\n";
+                exit(-1);
+            }
+        }
+        pp /= static_cast<double>(theUPNodes.Size());
+        // note:
+        // change sign for negative compression
+        pp = -pp;
+    }
+    return pp;
 }
 
 const Matrix& ZeroLengthContactASDimplex::getRotationMatrix33()
@@ -999,6 +1084,10 @@ void ZeroLengthContactASDimplex::updateInternal(bool do_implex, bool do_tangent)
     double SN = Knormal * sv.eps(0);
     double T1 = sv.shear(0) + Kfriction * (sv.eps(1) - sv.eps_commit(1));
     double T2 = sv.shear(1) + Kfriction * (sv.eps(2) - sv.eps_commit(2));
+
+    // optional: include UPDep
+    double PP = computeMeanPP();
+    SN -= PP;
 
     // tangential stress norm
     double SS = sqrt(T1 * T1 + T2 * T2);
