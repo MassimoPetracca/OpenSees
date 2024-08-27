@@ -261,6 +261,7 @@ extern int OPS_sdfResponse(void);
 
 // domain utilities
 extern int OPS_DomainElementStiffnessOOM(void);
+extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
 #include <Newmark.h>
 #include <StagedNewmark.h>
@@ -1291,6 +1292,11 @@ reliability(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv
   if (theReliabilityBuilder == 0) {
 
     theReliabilityBuilder = new TclReliabilityBuilder(theDomain,interp);
+    if (theReliabilityBuilder == 0) {
+      opserr << "Failed to create reliability domain" << endln;
+      return TCL_ERROR;
+    }
+    OPS_SetReliabilityDomain(theReliabilityBuilder->getReliabilityDomain());
     return TCL_OK;
   }
   else
@@ -1303,6 +1309,7 @@ wipeReliability(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **
 {
   if (theReliabilityBuilder != 0) {
     delete theReliabilityBuilder;
+    OPS_SetReliabilityDomain(0);
     theReliabilityBuilder = 0;
   }
   return TCL_OK;
