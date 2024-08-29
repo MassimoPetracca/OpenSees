@@ -154,7 +154,7 @@ public:
     ZeroLengthContactASDimplex(int tag, int Nd1, int Nd2,
         double Kn, double Kt, double fs,
         int ndm, bool itype, double xN, double yN, double zN,
-        const ID& upNodes);
+        const ID& upNodes, bool upDepExp);
 
     // null constructor & destructor
     ZeroLengthContactASDimplex();
@@ -212,6 +212,7 @@ private:
     // optional for UP-pressure-dep
     // todo, add a weight vector
     ID theUPNodes;
+    bool UPDepExplicit = false;
 
     // initial gap in global coordinates
     // it includes the initial gap in geometry and the initial displacement
