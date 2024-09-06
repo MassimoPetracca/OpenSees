@@ -217,6 +217,7 @@ GLF_LIBS = $(FE)/element/zeroLength/ZeroLength.o \
 REMO_LIBS = $(FE)/element/nonlinearBeamColumn/matrixutil/MatrixUtil.o \
 	$(FE)/element/forceBeamColumn/ForceBeamColumn2d.o \
 	$(FE)/element/forceBeamColumn/ForceBeamColumn2dThermal.o \
+        $(FE)/element/forceBeamColumn/ForceBeamColumn3dThermal.o \
 	$(FE)/element/forceBeamColumn/ForceBeamColumnCBDI2d.o \
 	$(FE)/element/forceBeamColumn/ForceBeamColumnWarping2d.o \
 	$(FE)/element/forceBeamColumn/ForceBeamColumn3d.o \
@@ -571,7 +572,6 @@ ELE_LIBS   =  $(FE)/element/Element.o \
 	$(FE)/element/shell/ASDShellQ4.o \
 	$(FE)/element/shell/ASDShellT3.o \
 	$(FE)/element/shell/R3vectors.o \
-	$(FE)/element/shell/ShellANDeS.o \
 	$(FE)/element/brick/Brick.o \
 	$(FE)/element/brick/BbarBrick.o \
 	$(FE)/element/brick/BbarBrickWithSensitivity.o \
@@ -734,7 +734,7 @@ else
 endif
 
 ifdef H5DRM_FLAG
-	H5DRM = $(FE)/domain/pattern/drm/H5DRM.o
+	H5DRM =  $(FE)/domain/pattern/drm/H5DRMLoadPattern.o
 else
 	H5DRM = 
 endif
@@ -960,6 +960,7 @@ MATERIAL_LIBS   =  $(FE)/material/Material.o \
 	$(FE)/material/nD/ConcreteMcftNonLinear7.o \
 	$(FE)/material/nD/InitStressNDMaterial.o \
 	$(FE)/material/nD/InitStrainNDMaterial.o \
+	$(FE)/material/nD/MinMaxNDMaterial.o \
 	$(FE)/material/nD/matCMM/MaterialCMM.o \
 	$(FE)/material/nD/PlasticDamageConcrete3d.o \
 	$(FE)/material/nD/PlasticDamageConcretePlaneStress.o \
@@ -1067,11 +1068,11 @@ MATERIAL_LIBS   =  $(FE)/material/Material.o \
 	$(FE)/material/nD/PlateRebarMaterial.o \
 	$(FE)/material/nD/ASDConcrete3DMaterial.o \
 	$(FE)/material/nD/TIMSoilAbutment3D.o \
-	$(FE)/material/nD/ASDPlasticMaterial/OPS_AllASDPlasticMaterials.o \
 	$(FE)/material/nD/stressDensityModel/stressDensity.o \
 	$(FE)/material/nD/stressDensityModel/SDM-UC.o \
 	$(FE)/material/nD/OrthotropicRotatingAngleConcreteT2DMaterial01/OrthotropicRotatingAngleConcreteT2DMaterial01.o \
-	$(FE)/material/nD/SmearedSteelDoubleLayerT2DMaterial01/SmearedSteelDoubleLayerT2DMaterial01.o
+	$(FE)/material/nD/SmearedSteelDoubleLayerT2DMaterial01/SmearedSteelDoubleLayerT2DMaterial01.o \
+ 	$(FE)/material/nD/ASDPlasticMaterial3D/OPS_AllASDPlasticMaterial3Ds.o
 
 FEDEAS_LIBS = $(FE)/material/uniaxial/FedeasMaterial.o \
 	$(FE)/material/uniaxial/fedeas/FedeasHardeningMaterial.o \
