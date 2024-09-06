@@ -644,7 +644,6 @@ namespace utils {
 				ele_tag == ELE_TAG_ShellNLDKGQThermal ||
 				ele_tag == ELE_TAG_ShellDKGT ||
 				ele_tag == ELE_TAG_ShellNLDKGT ||
-				ele_tag == ELE_TAG_ShellANDeS ||
 				ele_tag == ELE_TAG_ASDShellQ4 ||
 				ele_tag == ELE_TAG_ASDShellT3
 				);
@@ -3937,7 +3936,6 @@ namespace mpco {
 				*/
 				else if (
 					// ./shell
-					elem_class_tag == ELE_TAG_ShellANDeS ||
 					elem_class_tag == ELE_TAG_ASDShellT3
 					) {
 					geom_type = ElementGeometryType::Triangle_3N;
