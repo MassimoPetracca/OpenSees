@@ -151,6 +151,7 @@
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthImpact3D.cpp" />
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthInterface2D.cpp" />
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthND.cpp" />
+    <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLength6D.cpp" />
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthRocking.cpp" />
     <ClCompile Include="..\..\..\SRC\element\zeroLength\ZeroLengthSection.cpp" />
     <ClCompile Include="..\..\..\SRC\coordTransformation\CorotCrdTransf2d.cpp" />
@@ -447,6 +448,7 @@
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthImpact3D.h" />
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthInterface2D.h" />
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthND.h" />
+    <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLength6D.h" />
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthRocking.h" />
     <ClInclude Include="..\..\..\SRC\element\zeroLength\ZeroLengthSection.h" />
     <ClInclude Include="..\..\..\SRC\coordTransformation\CorotCrdTransf2d.h" />
