@@ -255,7 +255,8 @@
 #define MAT_TAG_FlagShapeMaterial 229
 #define MAT_TAG_CreepMaterial 230
 #define MAT_TAG_ASDConcrete1DMaterial 231
-#define MAT_TAG_ASDSteel1DMaterial 232
+#define MAT_TAG_PipeMaterial 232
+#define MAT_TAG_ASDSteel1DMaterial 233
 
 #define MAT_TAG_FedeasMaterial    1000
 #define MAT_TAG_FedeasBond1       1001
@@ -362,6 +363,7 @@
 #define SEC_TAG_ElasticTube3d 37
 #define SEC_TAG_CreepSection 38
 #define SEC_TAG_ASDCoupledHinge3D 39
+#define SEC_TAG_PipeSection 40
 
 #define SEC_TAG_MCFTFiberSection2d 7601
 
@@ -460,6 +462,7 @@
 #define ND_TAG_J2AxiSymm                      3007
 #define ND_TAG_J2ThreeDimensional             3009
 #define ND_TAG_J2PlateFiber		      3010
+#define ND_TAG_J2PlateFibre 30101
 #define ND_TAG_J2BeamFiber		      3011
 #define ND_TAG_J2BeamFiber2d 91625
 #define ND_TAG_J2BeamFiber3d 92516
@@ -888,6 +891,9 @@
 #define ELE_TAG_FSIFluidElement2D          265  // Massimo Petracca (ASDEA)
 #define ELE_TAG_FSIInterfaceElement2D      266  // Massimo Petracca (ASDEA)
 #define ELE_TAG_FSIFluidBoundaryElement2D  267  // Massimo Petracca (ASDEA)
+#define ELE_TAG_ShellNLDKGTThermal		   268 // Giovanni Rinaldin
+#define ELE_TAG_Pipe                      269
+#define ELE_TAG_CurvedPipe                      270
 
 
 #define FRN_TAG_Coulomb            1
