@@ -124,6 +124,13 @@ TIMSoilAbutment3D::TIMSoilAbutment3D(int ptag,
 	Punload = 0;
 	PnumUnload = 0;
 
+	checkUnload = 0;
+	numUnload = 0;
+	q1el = 0.0;
+	q2el = 0.0;
+	q3el = 0.0;
+	unload = 0;
+
 	Qy1_iter.Zero();
 	Qy2_iter.Zero();
 	Qy3_iter.Zero();
@@ -409,7 +416,7 @@ const Matrix& TIMSoilAbutment3D::getTangent() {
 
 const Matrix& TIMSoilAbutment3D::getInitialTangent() {
 
-	Matrix initTangent(6, 6);
+	static Matrix initTangent(6, 6);
 	initTangent.Zero();
 	double initTangent0 = initTangent(0, 0);
 	initTangent(0, 0) = H11el;
