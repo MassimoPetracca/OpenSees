@@ -134,6 +134,13 @@ VariableTimeStepDirectIntegrationAnalysis::analyze(int numSteps, double dT, doub
 #endif
     // AddingSensitivity:END //////////////////////////////////////
 
+    if (AnalysisCommitFilter::instance().isActive()) {
+        result = AnalysisCommitFilter::instance().test();
+        if (result < 0) {
+            result = -6;
+        }
+    }
+
     if (result >= 0) {
       result = theIntegratr->commit();
       if (result < 0) 
