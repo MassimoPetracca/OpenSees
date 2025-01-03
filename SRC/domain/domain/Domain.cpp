@@ -2368,8 +2368,9 @@ Domain::Print(OPS_Stream &s, int flag)
       if (numPrinted < numToPrint)
 	s << ",\n";
       else
-	s << "\n\t\t],\n";
+	s << "\n";
     }
+    s<<"\t\t],\n";
 
 
     Element *theEle;
@@ -2383,8 +2384,9 @@ Domain::Print(OPS_Stream &s, int flag)
       if (numPrinted < numToPrint)
 	s << ",\n";
       else
-	s << "\n\t\t]\n";
+	s << "\n";
       }
+	s<<"\t\t]\n";
 
 	s << "\t}\n";
 	s << "}\n";
