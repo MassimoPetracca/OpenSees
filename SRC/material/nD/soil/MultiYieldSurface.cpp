@@ -91,6 +91,8 @@ double secondOrderEqn(double A, double B, double C, int i)
 
 	double determ, val1, val2, val;
   determ = B*B - 4.*A*C; 
+  if (fabs(determ) < 1.0e-12)
+      determ = 0.0;
   if(determ < 0){
     opserr << "FATAL:second_order_eqn: Complex roots.\n";
     if(i==0) opserr << " when finding reference point on outer surface." <<endln;
