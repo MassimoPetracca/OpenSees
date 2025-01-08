@@ -2146,7 +2146,7 @@ TenNodeTetrahedron::shp3d( const double zeta[4], double &xsj, double shp[4][NumN
     double Jdet = (t1*(t5*t9-t6*t8) - t2*(t4*t9-t6*t7) + t3*(t4*t8-t5*t7))/6.0;
 
     // Saving the Jacobians Determinant
-    xsj = Jdet;
+    xsj = Jdet*6.0;
 
     // qx1 - qx10 (17.24)
     shp[0][0] = 1/(6.0*Jdet)*(dN1_dzeta1*a1  + dN1_dzeta2*a2  + dN1_dzeta3*a3  + dN1_dzeta4*a4);
