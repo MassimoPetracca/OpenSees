@@ -563,6 +563,7 @@
 #define ND_TAG_SmearedSteelDoubleLayerT2DMaterial01 7019		  // M. J. Nunez - UChile
 
 #define ND_TAG_InitStrainNDMaterial 7020 // Massimo Petracca ASDEA Software
+#define ND_TAG_TIMSoilAbutment3D 7021 // Davide Noe Gorini
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
 
 
@@ -899,6 +900,7 @@
 #define ELE_TAG_ShellNLDKGTThermal		   268 // Giovanni Rinaldin
 #define ELE_TAG_Pipe                      269
 #define ELE_TAG_CurvedPipe                      270
+#define ELE_TAG_ZeroLength6D	        271 // Davide Noe Gorini
 
 
 #define FRN_TAG_Coulomb            1
