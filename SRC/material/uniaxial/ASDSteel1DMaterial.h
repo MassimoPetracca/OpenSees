@@ -52,7 +52,10 @@ public:
 		double H2 = 0.0;
 		double gamma1 = 0.0;
 		double gamma2 = 0.0;
-		static constexpr int NDATA = 6;
+		// misc
+		bool implex = false;
+		// counter
+		static constexpr int NDATA = 7;
 	};
 	class StateVariablesSteel {
 	public:
@@ -64,6 +67,8 @@ public:
 		// state variables - plastic multiplier
 		double lambda = 0.0;
 		double lambda_commit = 0.0;
+		double lambda_commit_old = 0.0; // for implex
+		double sg_commit = 0.0; // plastic flow dir for implex
 		// strain, stress and tangent
 		double strain = 0.0;
 		double strain_commit = 0.0;
@@ -71,7 +76,7 @@ public:
 		double stress_commit = 0.0;
 		double C = 0.0;
 		// methods
-		static constexpr int NDATA = 11;
+		static constexpr int NDATA = 13;
 		void commit(const InputParameters& params);
 		void revertToLastCommit(const InputParameters& params);
 		void revertToStart(const InputParameters& params);
@@ -120,13 +125,17 @@ public:
 	double getEnergy(void);
 
 private:
-	int computeBaseSteel(StateVariablesSteel& sv);
+	int computeBaseSteel(StateVariablesSteel& sv, bool do_implex);
 
  private:
 	 // common input parameters
 	 InputParameters params;
 	 // state variables - steel
 	 StateVariablesSteel steel;
+	 // state variables - implex
+	 double dtime_n = 0.0;
+	 double dtime_n_commit = 0.0;
+	 bool commit_done = false;
 	 // strain, stress and tangent (homogenized)
 	 double strain = 0.0;
 	 double strain_commit = 0.0;
