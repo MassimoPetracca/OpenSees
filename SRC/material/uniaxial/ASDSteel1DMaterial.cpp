@@ -19,12 +19,12 @@
 ** ****************************************************************** */
 
 // $Revision: 1.0 $
-// $Date: 2042-06-14 11:29:01 $
+// $Date: 2025-01-03 11:29:01 $
 // $Source: /usr/local/cvs/OpenSees/SRC/material/uniaxial/ASDSteel1DMaterial.cpp,v $
 
-// Massimo Petracca - ASDEA Software, Italy
+// Alessia Casalucci - ASDEA Software, Italy
 //
-// A Simple and robust plastic-damage model for concrete and masonry
+// todo...
 //
 
 #include <ASDSteel1DMaterial.h>
@@ -44,20 +44,6 @@
 
 // anonymous namespace for utilities
 namespace {
-
-	/**
-	Converts a string into a vector of doubles using whitespace as delimiter
-	*/
-	bool string_to_double(const std::string& text, double& num) {
-		num = 0.0;
-		try {
-			num = std::stod(text);
-			return true;
-		}
-		catch (...) {
-			return false;
-		}
-	}
 
 	inline double sign(double x) { return x == 0.0 ? 0.0 : (x > 0.0 ? 1.0 : -1.0); }
 
