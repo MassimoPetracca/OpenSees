@@ -44,7 +44,7 @@ public:
 
     // life cycle
     ASDConstraintEquationElement();
-    ASDConstraintEquationElement(int tag, const ID &theNodes, const ID &theDofs, const Vector &theFactors, double K);
+    ASDConstraintEquationElement(int tag, const ID &theNodes, const ID &theDofs, const Vector &theFactors, double K, double rhs);
     virtual ~ASDConstraintEquationElement();
 
     // domain
@@ -85,6 +85,10 @@ public:
     int sendSelf(int commitTag, Channel& theChannel);
     int recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker);
 
+    // parameters
+    int setParameter(const char** argv, int argc, Parameter& param);
+    int updateParameter(int parameterID, Information& info);
+
 private:
     const Vector& getLocalDisplacements() const;
     const Matrix& getLocalMatrix() const;
@@ -107,6 +111,8 @@ private:
     ID m_mapping;
     // stiffness penalty value to impose the constraint
     double m_K = 1.0e18;
+    // rhs for non-homogeneous constraints
+    double m_rhs = 0.0;
     // initial displacements
     Vector m_U0;
     bool m_U0_computed = false;

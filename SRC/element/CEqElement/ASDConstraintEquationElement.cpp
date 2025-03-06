@@ -35,6 +35,7 @@
 #include <elementAPI.h>
 #include <Renderer.h>
 #include <analysis/dof_grp/DOF_Group.h>
+#include <Parameter.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,10 +52,10 @@ OPS_ASDConstraintEquationElement(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDConstraintEquationElement $tag $K $cNode $cDof <$rNode1 $rDof1 $rFact1 ... $rNodeN $rDofN $rFactN>\n";
+    const char* descr = "Want: element ASDConstraintEquationElement $tag $K $cNode $cDof $rhs <$rNode1 $rDof1 $rFact1 ... $rNodeN $rDofN $rFactN>\n";
 
     int numArgs = OPS_GetNumRemainingInputArgs();
-    if (numArgs < 4) {
+    if (numArgs < 5) {
         opserr << "ASDConstraintEquationElement ERROR : Few arguments:\n" << descr;
         return 0;
     }
@@ -79,6 +80,11 @@ OPS_ASDConstraintEquationElement(void)
     int cDof;
     if (OPS_GetInt(&numData, &cDof) != 0) {
         opserr << "ASDConstraintEquationElement ERROR invalid integer for $cDof.\n";
+        return 0;
+    }
+    double rhs = 0.0;
+    if (OPS_GetDouble(&numData, &rhs) != 0) {
+        opserr << "ASDConstraintEquationElement ERROR invalid floating point number for $rhs.\n";
         return 0;
     }
 
@@ -119,7 +125,7 @@ OPS_ASDConstraintEquationElement(void)
     }
 
     // done
-    return new ASDConstraintEquationElement(tag, rNodes, rDofs, rFactors, K);
+    return new ASDConstraintEquationElement(tag, rNodes, rDofs, rFactors, K, rhs);
 }
 
 ASDConstraintEquationElement::ASDConstraintEquationElement() 
@@ -127,12 +133,13 @@ ASDConstraintEquationElement::ASDConstraintEquationElement()
 {
 }
 
-ASDConstraintEquationElement::ASDConstraintEquationElement(int tag, const ID& theNodes, const ID& theDofs, const Vector& theFactors, double K)
+ASDConstraintEquationElement::ASDConstraintEquationElement(int tag, const ID& theNodes, const ID& theDofs, const Vector& theFactors, double K, double rhs)
     : Element(tag, ELE_TAG_ASDConstraintEquationElement)
     , m_local_nodes(theNodes)
     , m_local_dofs(theDofs)
     , m_factors(theFactors)
     , m_K(K)
+    , m_rhs(rhs)
 {
 }
 
@@ -345,6 +352,10 @@ const Vector& ASDConstraintEquationElement::getResistingForce()
     const Vector& UL = getLocalDisplacements();
     FL.addMatrixVector(0.0, KL, UL, 1.0);
 
+    if (m_rhs != 0.0) {
+        FL.addVector(1.0, m_factors, m_rhs * m_K);
+    }
+
     // copy in global dofset
     for (int i = 0; i < FL.Size(); ++i) {
         int ig = m_mapping(i);
@@ -403,11 +414,13 @@ int ASDConstraintEquationElement::sendSelf(int commitTag, Channel& theChannel)
 
     // DOUBLE data
     // K
+    // rhs
     // NL factors
     // NL initial displacement
-    Vector vectData(1 + 2 * NL);
+    Vector vectData(2 + 2 * NL);
     pos = 0;
     vectData(pos++) = m_K;
+    vectData(pos++) = m_rhs;
     for (int i = 0; i < NL; ++i) vectData(pos++) = m_factors(i);
     for (int i = 0; i < NL; ++i) vectData(pos++) = m_U0(i);
     res = theChannel.sendVector(dataTag, commitTag, vectData);
@@ -456,9 +469,10 @@ int ASDConstraintEquationElement::recvSelf(int commitTag, Channel& theChannel, F
 
     // DOUBLE data
     // K
+    // rhs
     // NL factors
     // NL initial displacement
-    Vector vectData(1 + 2 * NL);
+    Vector vectData(2 + 2 * NL);
     m_factors.resize(NL);
     m_U0.resize(NL);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
@@ -468,11 +482,37 @@ int ASDConstraintEquationElement::recvSelf(int commitTag, Channel& theChannel, F
     }
     pos = 0;
     m_K = vectData(pos++);
+    m_rhs = vectData(pos++);
     for (int i = 0; i < NL; ++i) m_factors(i) = vectData(pos++);
     for (int i = 0; i < NL; ++i) m_U0(i) = vectData(pos++);
 
     // done
     return res;
+}
+
+int ASDConstraintEquationElement::setParameter(const char** argv, int argc, Parameter& param)
+{
+    // handle parameters of this element
+    if (strcmp(argv[0], "rhs") == 0) {
+        param.setValue(m_rhs);
+        return param.addObject(1, this);
+    }
+    // default if not handled
+    return -1;
+}
+
+int ASDConstraintEquationElement::updateParameter(int parameterID, Information& info)
+{
+    // handled known parameters
+    switch (parameterID) {
+    case 1:
+        m_rhs = info.theDouble;
+        //opserr << "update: " << m_rhs << "\n";
+        return 0;
+        // default
+    default:
+        return -1;
+    }
 }
 
 const Vector& ASDConstraintEquationElement::getLocalDisplacements() const
@@ -498,6 +538,7 @@ const Vector& ASDConstraintEquationElement::getLocalDisplacements() const
     if (m_U0_computed) {
         UL.addVector(1.0, m_U0, -1.0);
     }
+
     return UL;
 }
 
