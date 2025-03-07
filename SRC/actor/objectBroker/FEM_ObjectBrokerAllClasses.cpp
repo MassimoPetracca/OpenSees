@@ -496,6 +496,8 @@
 #include "absorbentBoundaries/FSIInterfaceElement2D.h"
 #include "absorbentBoundaries/FSIFluidBoundaryElement2D.h"
 
+#include "loadElements/UDepNodalLoad.h" // Massimo Petracca
+
 #include "LinearCrdTransf2d.h"
 #include "LinearCrdTransf3d.h"
 #include "PDeltaCrdTransf2d.h"

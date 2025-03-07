@@ -895,6 +895,7 @@
 #define ELE_TAG_ShellNLDKGTThermal		   268 // Giovanni Rinaldin
 #define ELE_TAG_Pipe                      269
 #define ELE_TAG_CurvedPipe                      270
+#define ELE_TAG_UDepNodalLoad                271  // Massimo Petracca (ASDEA)
 
 
 #define FRN_TAG_Coulomb            1

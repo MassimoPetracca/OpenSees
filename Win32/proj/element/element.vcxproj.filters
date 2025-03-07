@@ -668,6 +668,9 @@
     <ClCompile Include="..\..\..\SRC\element\shell\ASDShellT3.cpp">
       <Filter>shell</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\SRC\element\loadElements\UDepNodalLoad.cpp">
+      <Filter>loadElements</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\SRC\element\HUelements\DBESI0.C">
       <Filter>HUelements</Filter>
     </ClCompile>
@@ -1458,6 +1461,9 @@
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\element\shell\ASDShellT3.h">
       <Filter>shell</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\SRC\element\loadElements\UDepNodalLoad.h">
+      <Filter>loadElements</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\SRC\element\HUelements\KikuchiBearing.h">
       <Filter>HUelements</Filter>
