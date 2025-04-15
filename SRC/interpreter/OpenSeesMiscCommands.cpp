@@ -58,9 +58,8 @@
 #include <vector>
 #include <TriMesh.h>
 #include <TetMesh.h>
-#include <BackgroundMesh.h>
 #include <Damping.h>
-
+#include <BackgroundMesh.h>
 #ifdef _PARALLEL_INTERPRETERS
 #include <mpi.h>
 #include <metis.h>
@@ -1586,11 +1585,11 @@ int OPS_remesh()
 	}
 
     } else {
-	BackgroundMesh& bgmesh = OPS_getBgMesh();
-	if (bgmesh.remesh() < 0) {
-	    opserr << "WARNING: failed to remesh background\n";
-	    return -1;
-	}
+        BackgroundMesh& bgmesh = OPS_getBgMesh();
+        if (bgmesh.remesh() < 0) {
+            opserr << "WARNING: failed to remesh background\n";
+            return -1;
+        }
     }
 
     return 0;
