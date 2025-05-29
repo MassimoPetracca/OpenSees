@@ -11,7 +11,9 @@
 target_sources(OPS_Element
    PRIVATE
     ASDEmbeddedNodeElement.cpp
+    ASDConstraintEquationElement.cpp
    PUBLIC    
     ASDEmbeddedNodeElement.h
+    ASDConstraintEquationElement.h
 )
 

@@ -724,6 +724,7 @@
 #define ELE_TAG_SixNodeTri                209
 
 #define ELE_TAG_ASDEmbeddedNodeElement             217  // Massimo Petracca (ASDEA)
+#define ELE_TAG_ASDConstraintEquationElement      222  // Massimo Petracca (ASDEA)
 
 #define ELE_TAG_Inno3DPnPJoint			  263
 

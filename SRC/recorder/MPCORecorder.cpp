@@ -3750,7 +3750,8 @@ namespace mpco {
 					skip element classes that we don't want to record
 					*/
 					if (elem_type == ELE_TAG_Subdomain ||
-						elem_type == ELE_TAG_ASDEmbeddedNodeElement)
+						elem_type == ELE_TAG_ASDEmbeddedNodeElement ||
+						elem_type == ELE_TAG_ASDConstraintEquationElement)
 					{
 						continue;
 					}
