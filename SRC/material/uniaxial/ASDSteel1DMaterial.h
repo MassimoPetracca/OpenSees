@@ -38,6 +38,15 @@
 #include <vector>
 #include <map>
 
+/**
+todo: global material
+	flag computed_once -> if false -> call update
+		revert to start -> call update (TO SET INITIAL DATA)
+
+*/
+
+class ASDSteel1DMaterialPIMPL;
+
 class ASDSteel1DMaterial : public UniaxialMaterial
 {
 public:
@@ -47,6 +56,8 @@ public:
 		double E = 0.0;
 		// Yield stress
 		double sy = 0.0;
+		// ultimate strain for damage initialization
+		double eu = 0.0;
 		// Chaboche kinematic hardening parameters
 		double H1 = 0.0;
 		double H2 = 0.0;
@@ -54,42 +65,32 @@ public:
 		double gamma2 = 0.0;
 		// misc
 		bool implex = false;
+		bool buckling = false;
+		bool fracture = false;
+		bool slip = false;
+		double lch_anchor = 0.0;
+		// buckling
+		double radius = 0.0;
+		double length = 0.0;
+		double lch_element = 0.0;
+
+		//convergence
+		double K_alpha = 0.0;
+		double max_iter = 0.0;
+		double tolU = 0.0;
+		double tolR = 0.0;
 		// counter
-		static constexpr int NDATA = 7;
-	};
-	class StateVariablesSteel {
-	public:
-		// state variables - backstresses
-		double alpha1 = 0.0;
-		double alpha1_commit = 0.0;
-		double alpha2 = 0.0;
-		double alpha2_commit = 0.0;
-		// state variables - plastic multiplier
-		double lambda = 0.0;
-		double lambda_commit = 0.0;
-		double lambda_commit_old = 0.0; // for implex
-		double sg_commit = 0.0; // plastic flow dir for implex
-		// strain, stress and tangent
-		double strain = 0.0;
-		double strain_commit = 0.0;
-		double stress = 0.0;
-		double stress_commit = 0.0;
-		double C = 0.0;
-		// methods
-		static constexpr int NDATA = 13;
-		void commit(const InputParameters& params);
-		void revertToLastCommit(const InputParameters& params);
-		void revertToStart(const InputParameters& params);
-		void sendSelf(int &counter, Vector& ddata);
-		void recvSelf(int& counterg, Vector& ddata);
+		static constexpr int NDATA = 19;
 	};
 
 public:
 	// life-cycle
 	ASDSteel1DMaterial(
 		int _tag,
-		const InputParameters& _params);
+		const InputParameters& _params,
+		UniaxialMaterial* slip_material);
 	ASDSteel1DMaterial();
+	ASDSteel1DMaterial(const ASDSteel1DMaterial& other);
 	~ASDSteel1DMaterial();
 
 	// info
@@ -125,13 +126,17 @@ public:
 	double getEnergy(void);
 
 private:
-	int computeBaseSteel(StateVariablesSteel& sv, bool do_implex);
+	int homogenize(bool do_implex);
+	const Vector& getBucklingIndicator() const;
+	const Vector& getDamage() const;
+	const Vector& getEqPlStrain() const;
+	const Vector& getSlipResponse() const;
+	const Vector& getSteelResponse() const;
 
- private:
+
+ private:	
 	 // common input parameters
 	 InputParameters params;
-	 // state variables - steel
-	 StateVariablesSteel steel;
 	 // state variables - implex
 	 double dtime_n = 0.0;
 	 double dtime_n_commit = 0.0;
@@ -142,8 +147,15 @@ private:
 	 double stress = 0.0;
 	 double stress_commit = 0.0;
 	 double C = 0.0;
+	 double stress_rve = 0.0;
+	 double stress_rve_commit = 0.0;
+	 double C_rve = 0.0;
+	 
 	 // other variables for output purposes
 	 double energy = 0.0;
+
+	 // private implementation
+	 ASDSteel1DMaterialPIMPL* pdata = nullptr;
 };
 
 #endif
