@@ -896,7 +896,8 @@
 #define ELE_TAG_ShellNLDKGTThermal		   268 // Giovanni Rinaldin
 #define ELE_TAG_Pipe                      269
 #define ELE_TAG_CurvedPipe                      270
-#define ELE_TAG_ZeroLength6D	        271 // Davide Noe Gorini
+#define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
+#define ELE_TAG_ZeroLength6D	        272 // Davide Noe Gorini
 
 
 #define FRN_TAG_Coulomb            1
@@ -1192,6 +1193,7 @@
 #define RECORDER_TAGS_VTK_Recorder               22
 #define RECORDER_TAGS_NodeRecorderRMS               23
 #define RECORDER_TAGS_ElementRecorderRMS               24
+#define RECORDER_TAGS_VTKHDF_Recorder               25
 
 #define OPS_STREAM_TAGS_FileStream		1
 #define OPS_STREAM_TAGS_StandardStream		2
