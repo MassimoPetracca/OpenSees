@@ -3996,7 +3996,8 @@ namespace mpco {
 				else if (
 					// ./mvlem
 					elem_class_tag == ELE_TAG_MVLEM_3D ||
-					elem_class_tag == ELE_TAG_SFI_MVLEM_3D
+					elem_class_tag == ELE_TAG_SFI_MVLEM_3D ||
+					elem_class_tag == ELE_TAG_E_SFI_MVLEM_3D
 					) {
 					geom_type = ElementGeometryType::Quadrilateral_CohesiveBand_4N;
 					int_type = ElementIntegrationRuleType::CustomIntegrationRule;
@@ -4174,7 +4175,8 @@ namespace mpco {
 					bool done = false;
 					std::string request1 = "section";
 					if (elem->getClassTag() == ELE_TAG_MVLEM_3D || 
-						elem->getClassTag() == ELE_TAG_SFI_MVLEM_3D) {
+						elem->getClassTag() == ELE_TAG_SFI_MVLEM_3D ||
+						elem->getClassTag() == ELE_TAG_E_SFI_MVLEM_3D) {
 						request1 = "material";
 					}
 					std::string request3 = "dummy";
