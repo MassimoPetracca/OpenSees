@@ -464,6 +464,7 @@ void* OPS_ParallelRCM();
 
 void* OPS_ParallelDisplacementControl();
 
+void* OPS_ItpackLinSolver();
 void* OPS_MumpsSolver();
 
 // Sensitivity:BEGIN /////////////////////////////////////////////
