@@ -173,6 +173,11 @@ CapPlasticity::CapPlasticity( int    pTag,
   // -- theMode 
   theMode =-10;
   
+  // non initialized members
+  deltPlastStrainI1 = 0.0;
+  hardening_k = 0.0;
+  isKAdjusted = false;
+
 };
 
 CapPlasticity::CapPlasticity( const CapPlasticity & a)
@@ -202,8 +207,17 @@ CapPlasticity::CapPlasticity( const CapPlasticity & a)
   // --
   revertToStart();
   
+  debug = 0;
   SHVs =0;
   parameterID =0;
+
+  // -- theMode 
+  theMode = -10;
+
+  // non initialized members
+  deltPlastStrainI1 = 0.0;
+  hardening_k = 0.0;
+  isKAdjusted = false;
 	
 };
 
@@ -333,6 +347,12 @@ int CapPlasticity::commitState(void)  {
 
 
 int CapPlasticity::revertToLastCommit(void)  {
+
+    strain = CStrain;
+    CStress = stress;
+    plastStrain = CPlastStrain;
+    hardening_k = CHardening_k;
+
   return 0;
 };
 
@@ -372,27 +392,69 @@ int CapPlasticity::getOrder(void) const  {
   return (ndm == 2) ? 3 : 6;
 };
 
+
+
+
+
 int CapPlasticity::sendSelf(int commitTag, Channel &theChannel)  {return 0;};
 
 int CapPlasticity::recvSelf(int commitTag, Channel &theChannel,  
 			    FEM_ObjectBroker &theBroker )  {return 0;};
 
+
+
   
 Response*
 CapPlasticity::setResponse (const char **argv, int argc, OPS_Stream &output) {
 
-  if (strcmp(argv[0],"stress") == 0 || strcmp(argv[0],"stresses") == 0)
-    return new MaterialResponse(this, 1, stress);
+    if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", this->getClassType());
+        output.attr("matTag", this->getTag());
+        output.tag("ResponseType", "sigma11");
+        output.tag("ResponseType", "sigma22");
+        output.tag("ResponseType", "sigma33");
+        output.tag("ResponseType", "sigma12");
+        output.tag("ResponseType", "sigma23");
+        output.tag("ResponseType", "sigma13");
+        MaterialResponse* retval = new MaterialResponse(this, 1, stress);
+        output.endTag();
+        return retval;
+    }
   
-  else if (strcmp(argv[0],"strain") == 0 || strcmp(argv[0],"strains") == 0)
-    return new MaterialResponse(this, 2, strain);
+    else if (strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", this->getClassType());
+        output.attr("matTag", this->getTag());
+        output.tag("ResponseType", "eps11");
+        output.tag("ResponseType", "eps22");
+        output.tag("ResponseType", "eps33");
+        output.tag("ResponseType", "eps12");
+        output.tag("ResponseType", "eps23");
+        output.tag("ResponseType", "eps13");
+        MaterialResponse* retval = new MaterialResponse(this, 2, strain);
+        output.endTag();
+        return retval;
+    }
   
   else if (strcmp(argv[0],"tangent") == 0 || strcmp(argv[0],"Tangent") == 0)
     return new MaterialResponse(this, 3, theTangent);
   
   
-  else if (strcmp(argv[0],"plasticStrain") == 0 || strcmp(argv[0],"plasticStrains") == 0)
-    return new MaterialResponse(this, 4, plastStrain);
+  else if (strcmp(argv[0], "plasticStrain") == 0 || strcmp(argv[0], "plasticStrains") == 0) {
+        output.tag("NdMaterialOutput");
+        output.attr("matType", this->getClassType());
+        output.attr("matTag", this->getTag());
+        output.tag("ResponseType", "eps11");
+        output.tag("ResponseType", "eps22");
+        output.tag("ResponseType", "eps33");
+        output.tag("ResponseType", "eps12");
+        output.tag("ResponseType", "eps23");
+        output.tag("ResponseType", "eps13");
+        MaterialResponse* retval = new MaterialResponse(this, 4, plastStrain);
+        output.endTag();
+        return retval;
+    }
   
   else if (strcmp(argv[0],"k") == 0)
     return new MaterialResponse(this, 5, hardening_k);
@@ -494,8 +556,7 @@ double CapPlasticity::hardeningParameter_H(double k2, double k1){
 
 int CapPlasticity::findMode(double normS, double I1, double k){
   
-  
-  int mode =-1;
+  int mode =-10;
   
   if ((I1 <= T) && (normS <= failureEnvelop(T)))
     mode =1;
@@ -521,7 +582,7 @@ int CapPlasticity::findMode(double normS, double I1, double k){
 double CapPlasticity::Newton_k(double tol, int mode /*, double normS, double I1, double k */){
   
   
-  double solution;
+  double solution = 0.0;
   int maxIter =200;
   
   if ( mode == 0){
@@ -577,7 +638,7 @@ double CapPlasticity::Newton_k(double tol, int mode /*, double normS, double I1,
 
 double CapPlasticity::Newton_I1(double tol, int mode, double normS, double I1_trial){
   
-  double solution;
+  double solution = 0.0;
   int maxIter =200;
   double relative_tol = tol*fabs(I1_trial);
   if (relative_tol<tol)  relative_tol =tol; 
@@ -849,7 +910,11 @@ double CapPlasticity::Bisection(double tol, double normS, double I1_trial ){
 
 
 const Matrix & CapPlasticity::getTangent(void) {
-	
+
+    if (theMode < 0) {
+        // call this to compute theTangent!
+        getStress();
+    }
   
   if (ndm==3) 
     return theTangent;
@@ -966,7 +1031,15 @@ const Vector & CapPlasticity::getStress(void) {
     } //if (TStressI1 == CHardening_k)
     
     this->stressI1 = TStressI1-3.0*bulkModulus*hardeningParameter_H(hardening_k, CHardening_k);
-    deltGammar2 =R*R*hardeningParameter_H(hardening_k, CHardening_k)*failureEnvelop(hardening_k)/(3.0*(stressI1-hardening_k));
+
+    /*deltGammar2 =R*R*hardeningParameter_H(hardening_k, CHardening_k)*failureEnvelop(hardening_k)/(3.0*(stressI1-hardening_k));*/
+    double _deltGammar2_num = R * R * hardeningParameter_H(hardening_k, CHardening_k) * failureEnvelop(hardening_k);
+    double _deltGammar2_den = (3.0 * (stressI1 - hardening_k));
+    if (_deltGammar2_den == 0.0) {
+        _deltGammar2_den = 1.0e-10;
+    }
+    deltGammar2 = _deltGammar2_num / _deltGammar2_den;
+
     normS=normTS/(1+2.0*shearModulus*deltGammar2/failureEnvelop(hardening_k));
     stressDev.addVector(0.0, TStressDev, normS/ normTS);
     this->stressI1=hardening_k+(TStressI1-hardening_k)/(1.0+9.0*bulkModulus*deltGammar2/(R*R*failureEnvelop(hardening_k)));
@@ -1031,7 +1104,6 @@ const Vector & CapPlasticity::getStress(void) {
   
   
   theMode = mode;  //  ÎªÁË±£´æmodeµ½³ÉÔ±º¯Êý£¬ÎªÁËgetTangent()µ÷ÊÔÓÃ¡£
-  
   
   if (ndm==3){
     tempVector.addVector(0.0, stress,-1.0);

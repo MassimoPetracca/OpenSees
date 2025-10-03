@@ -140,6 +140,7 @@ class CapPlasticity : public NDMaterial {
      (4) the compressive corner mode
      (5) the failure mode:   f1
      (6) the elastic region
+     (-10) the default (uninitialized) value
   */
   
   int ndm; 
@@ -188,7 +189,6 @@ private:
 	Matrix *SHVs;
 	int parameterID;
 	bool isKAdjusted; // 6-14-2013    0: not adjusted; 1: adjusted
-	
 
 } ; 
 
