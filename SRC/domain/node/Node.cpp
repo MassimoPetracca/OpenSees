@@ -2199,10 +2199,16 @@ Node::getResponse(NodeResponseType responseType)
   const Vector *result = NULL;
   if (responseType == Disp) 
     result  = &(this->getDisp());
+  else if (responseType == TrialDisp)
+      return &(this->getTrialDisp());
   else if (responseType == Vel) 
     return &(this->getVel());
+  else if (responseType == TrialVel)
+      return &(this->getTrialVel());
   else if (responseType == Accel) 
     return &(this->getAccel());
+  else if (responseType == TrialAccel)
+      return &(this->getTrialAccel());
   else if (responseType == IncrDisp) 
     return &(this->getIncrDisp());
   else if (responseType == IncrDeltaDisp) 

@@ -37,6 +37,32 @@
 //
 // What: "@(#) Analysis.h, revA"
 
+
+#include <string>
+#include <functional>
+class AnalysisCommitFilter
+{
+public:
+    using function_t = std::function<int(const std::string&)>;
+private:
+    AnalysisCommitFilter() = default;
+    AnalysisCommitFilter(const AnalysisCommitFilter&) = delete;
+    AnalysisCommitFilter& operator = (const AnalysisCommitFilter&) = delete;
+public:
+    static AnalysisCommitFilter& instance();
+    void setExpression(const std::string& x);
+    void unset();
+    void setCustomFunction(function_t the_custom_function);
+    int test();
+    inline bool isActive() const { return m_active; }
+private:
+    static function_t makeDefaultTclFunction();
+private:
+    bool m_active = false;
+    std::string m_expression;
+    function_t m_function = makeDefaultTclFunction();
+};
+
 class Domain;
 
 class Analysis

@@ -832,6 +832,18 @@ static PyObject *Py_ops_getTime(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+static PyObject* Py_ops_getCommittedTime(PyObject* self, PyObject* args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_getCommittedTime() < 0) {
+        opserr << (void*)0;
+        return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_setCreep(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3047,6 +3059,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("equalDOF", &Py_ops_equalDOF);
     addCommand("nodeEigenvector", &Py_ops_nodeEigenvector);
     addCommand("getTime", &Py_ops_getTime);
+    addCommand("getCommittedTime", &Py_ops_getCommittedTime);
     addCommand("setCreep", &Py_ops_setCreep);
     addCommand("eleResponse", &Py_ops_eleResponse);
     addCommand("sp", &Py_ops_SP);
