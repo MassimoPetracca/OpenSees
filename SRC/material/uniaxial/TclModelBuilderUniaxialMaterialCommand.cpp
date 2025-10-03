@@ -199,6 +199,7 @@ extern void *OPS_Masonryt(void);
 extern void *OPS_DowelType(void);
 extern void *OPS_DuctileFracture(void); // Kuanshi Zhong
 extern void *OPS_MultiplierMaterial(void);
+extern void* OPS_PluginUniaxialMaterial(void); // PluginFramework - Massimo Petracca 03/2020
 extern void *OPS_AxialSp(void);
 extern void *OPS_AxialSpHD(void);
 extern void *OPS_KikuchiAikenHDR(void);
@@ -2054,6 +2055,17 @@ TclModelBuilderUniaxialMaterialCommand (ClientData clientData, Tcl_Interp *inter
         return TCL_ERROR;            
     }
     
+    // plugin uniaxial material
+    if (strcmp(argv[1], "plugin") == 0) {
+        void *theMat = OPS_PluginUniaxialMaterial();
+        if (theMat != 0) {
+            theMaterial = (UniaxialMaterial*)(theMat);
+        }
+        else {
+            return TCL_ERROR;
+        }
+    }
+
     if (strcmp(argv[1],"UniaxialJ2Plasticity") == 0) {
       void *theMat = OPS_UniaxialJ2Plasticity();
       if (theMat != 0)

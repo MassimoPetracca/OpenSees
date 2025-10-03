@@ -325,6 +325,8 @@
 #define MAT_TAG_GNG 7001
 #define MAT_TAG_Ratchet 7002
 
+#define MAT_TAG_PluginUniaxialMaterial 8000
+
 #define SEC_TAG_Elastic2d                        3
 #define SEC_TAG_Elastic3d                        4
 #define SEC_TAG_Generic1d	                 5
@@ -548,6 +550,7 @@
 #define ND_TAG_InitStressNDMaterial 7009
 #define ND_TAG_MinMaxNDMaterial 70091
 
+#define ND_TAG_PluginNDMaterial 15000
 #define ND_TAG_IncrementalElasticIsotropicThreeDimensional 7010 //Chile
 
 #define ND_TAG_SAniSandMS 7011 //UANDES - Chile

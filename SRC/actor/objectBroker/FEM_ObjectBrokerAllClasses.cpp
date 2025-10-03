@@ -143,7 +143,7 @@
 #include "FRPConfinedConcrete.h"
 #include "ConcreteCM.h"
 #include "BarSlipMaterial.h"
-
+#include "PluginUniaxialMaterial.h"
 #include <HystereticPoly.h>					// Salvatore Sessa 14-Jan-2021
 #include <HystereticSmooth.h>					// Salvatore Sessa Apr-19-2022
 #include <HystereticAsym.h>					// Salvatore Sessa Apr-21-2022
@@ -303,6 +303,7 @@
 #include "InitStrainNDMaterial.h"
 #include "MinMaxNDMaterial.h"
 #include "ASDConcrete3DMaterial.h"
+#include "PluginNDMaterial.h"
 #include "PlasticDamageConcrete3d.h"
 #include "PlasticDamageConcretePlaneStress.h"
 #include "ConcreteS.h"
@@ -2051,6 +2052,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 
 	case MAT_TAG_DowelType:
 		return new DowelType();
+	
+	case MAT_TAG_PluginUniaxialMaterial:
+		return new PluginUniaxialMaterial();
 
 	case MAT_TAG_DuctileFracture:
 		return new DuctileFracture();
@@ -2406,6 +2410,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_ASDConcrete3DMaterial:
       return new ASDConcrete3DMaterial();
+	  
+  case ND_TAG_PluginNDMaterial:
+	  return new PluginNDMaterial();
 
   case ND_TAG_PlasticDamageConcrete3d:
       return new PlasticDamageConcrete3d();
