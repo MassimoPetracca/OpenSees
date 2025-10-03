@@ -481,6 +481,7 @@ int OPS_HomogeneousBC_Y();
 int OPS_HomogeneousBC_Z();
 int OPS_ShallowFoundationGen();
 int OPS_Pressure_Constraint();
+int OPS_DomainElementStiffnessOOM();
 int OPS_DomainModalProperties();
 int OPS_ResponseSpectrumAnalysis();
 

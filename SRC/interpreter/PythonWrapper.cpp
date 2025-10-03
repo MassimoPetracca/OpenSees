@@ -2881,6 +2881,17 @@ static PyObject *Py_ops_domainCommitTag(PyObject *self, PyObject *args) {
     return wrapper->getResults();
 }
 
+static PyObject* Py_ops_domainElementStiffnessOOM(PyObject* self, PyObject* args) {
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_DomainElementStiffnessOOM() < 0) {
+        opserr << (void*)0;
+        return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
 static PyObject *Py_ops_runFOSMAnalysis(PyObject *self, PyObject *args) {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
@@ -3210,6 +3221,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("partition", &Py_ops_partition);
     addCommand("pressureConstraint", &Py_ops_pc);
     addCommand("domainCommitTag", &Py_ops_domainCommitTag);
+    addCommand("EleStiffnessOOM", &Py_ops_domainElementStiffnessOOM);
     addCommand("runFOSMAnalysis", &Py_ops_runFOSMAnalysis);
     addCommand("findDesignPoint", &Py_ops_findDesignPoint);
     addCommand("findCurvatures", &Py_ops_findCurvatures);
