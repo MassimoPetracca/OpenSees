@@ -33,6 +33,7 @@
 #include <vector>
 
 class TimeSeries;
+class NDMaterial;
 
 class ASDAbsorbingBoundary3D : public Element
 {
@@ -62,7 +63,8 @@ public:
         int btype,
         TimeSeries* actionx,
         TimeSeries* actiony,
-        TimeSeries* actionz);
+        TimeSeries* actionz,
+        NDMaterial* theMaterial);
     virtual ~ASDAbsorbingBoundary3D();
 
     // class type
@@ -81,7 +83,10 @@ public:
     int getNumDOF();
 
     // methods dealing with committed state and update
+    int commitState();
     int revertToLastCommit();
+    int revertToStart();
+    int update();
 
     // methods to return the current linearized stiffness,
     // damping and mass matrices
@@ -116,13 +121,13 @@ private:
 
     // methods to get displacement/velocity
     void addDisplacement(Vector& U);
-    const Vector& getDisplacement();
+    const Vector& getDisplacement(bool absorbing_relative = true);
     const Vector& getVelocity();
     const Vector& getAcceleration();
     // update stage
     void updateStage();
     // compute a consistent penalty value
-    void penaltyFactor(double& sp, double& mp);
+    void penaltyFactor();
     // fills the penalty stiffness matrix in stage = 0
     void addKPenaltyStage0(Matrix& K);
     // fills the penalty resisting forces in stage = 0
@@ -140,13 +145,13 @@ private:
     // get ff mapping vector
     const ID& ffMapping();
     // fills the stiffness matrix of the free-field
-    void addKff(Matrix& K, double scale = 1.0);
+    void addKff(Matrix& K, bool initial, double scale = 1.0);
     // fills the resisting forces of the free-field
     void addRff(Vector& R);
     // obtain the N matrix
     const Matrix& computeNmatrix();
     // fills the stiffness matrix of the free-field forces transferred to the soil domain
-    void addKffToSoil(Matrix& K);
+    void addKffToSoil(Matrix& K, bool initial);
     // fills the forces transferred from the free-field to the soil domain
     void addRffToSoil(Vector& R);
     // compute damping parameters
@@ -170,10 +175,15 @@ private:
     std::vector<Node*> m_nodes = std::vector<Node*>(8, nullptr);
     // shear modulus
     double m_G = 0.0;
+    double m_G0 = 0.0;
     // poisson's ratio
     double m_v = 0.0;
+    double m_v0 = 0.0;
     // mass density
     double m_rho = 0.0;
+    // penalty values to be kept constant on constructions
+    double m_sp = 0.0;
+    double m_mp = 0.0;
     // sizes
     double m_lx = 0.0;
     double m_ly = 0.0;
@@ -190,6 +200,8 @@ private:
     // a vector containing the local node id mapping
     std::vector<std::size_t> m_node_map = std::vector<std::size_t>(8, 0);
     // initial displacement
+    // note: now we use this for both initial disp in construction stage and for absorbing stages.
+    // we may need to split them because of the custom material
     Vector m_U0;
     // reaction forces saved at the end of stage 0
     Vector m_R0;
@@ -201,6 +213,8 @@ private:
     TimeSeries* m_tsx = nullptr;
     TimeSeries* m_tsy = nullptr;
     TimeSeries* m_tsz = nullptr;
+    // material models
+    std::vector<NDMaterial*> m_materials; // todo: send-recv
 
 };
 
