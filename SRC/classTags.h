@@ -877,6 +877,7 @@
 #define ELE_TAG_ASDAbsorbingBoundary2D    219  // Massimo Petracca (ASDEA)
 #define ELE_TAG_ASDAbsorbingBoundary3D    220  // Massimo Petracca (ASDEA)
 #define ELE_TAG_ZeroLengthContactASDimplex  221  // Onur Deniz Akan (IUSS), Massimo Petracca (ASDEA)
+#define ELE_TAG_ASDConstraintEquationElement      222  // Massimo Petracca (ASDEA)
 #define ELE_TAG_IGALinePatch       	  250 // IGA Shell by Felipe Elgueta and jaabell (UANDES)
 #define ELE_TAG_IGASurfacePatch       	  251 // IGA Shell by Felipe Elgueta and jaabell (UANDES)
 #define ELE_TAG_IGAVolumePatch       	  252 // IGA Shell by Felipe Elgueta and jaabell (UANDES)
