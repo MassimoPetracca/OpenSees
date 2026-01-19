@@ -886,6 +886,12 @@
     <ClCompile Include="..\..\..\SRC\material\section\integration\RCSectionIntegration.cpp">
       <Filter>section\integration</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\SRC\material\section\integration\MVLEMSectionIntegration.cpp">
+      <Filter>section\integration</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\SRC\material\section\integration\SFIMVLEMSectionIntegration.cpp">
+      <Filter>section\integration</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\SRC\material\section\integration\RCTBeamSectionIntegration.cpp">
       <Filter>section\integration</Filter>
     </ClCompile>
@@ -1353,6 +1359,9 @@
       <Filter>nD\UWmaterials</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\SRC\material\nD\UWmaterials\PM4Silt.cpp">
+      <Filter>nD\UWmaterials</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\SRC\material\nD\UWmaterials\LinearElasticGGmax.cpp">
       <Filter>nD\UWmaterials</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\SRC\material\nD\UVCmultiaxial.cpp">
@@ -2741,6 +2750,9 @@
     <ClInclude Include="..\..\..\SRC\material\nD\UWmaterials\PM4Silt.h">
       <Filter>nD\UWmaterials</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\SRC\material\nD\UWmaterials\LinearElasticGGmax.h">
+      <Filter>nD\UWmaterials</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\..\SRC\material\nD\UVCmultiaxial.h">
       <Filter>nD</Filter>
     </ClInclude>
@@ -2857,3 +2869,4 @@
     </ClInclude>
   </ItemGroup>
 </Project>
+
