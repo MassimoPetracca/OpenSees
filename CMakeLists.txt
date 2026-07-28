@@ -707,7 +707,6 @@ target_link_libraries(OpenSees
   HDF5::HDF5
   tcl::tcl
   ZLIB::ZLIB
-  Eigen3::Eigen
 )
 
 
@@ -766,7 +765,6 @@ if(MPI_FOUND)
        HDF5::HDF5
        tcl::tcl
        ZLIB::ZLIB
-       Eigen3::Eigen
        ${MPI_CXX_LIBRARIES}
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
@@ -831,7 +829,6 @@ if(MPI_FOUND)
        HDF5::HDF5
        tcl::tcl	
        ZLIB::ZLIB		
-       Eigen3::Eigen
        ${MPI_CXX_LIBRARIES}
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
@@ -862,7 +859,6 @@ target_link_libraries(OpenSeesPy
    OPS_Numerics
    HDF5::HDF5	
    ZLIB::ZLIB	
-   Eigen3::Eigen	
    ${Python_LIBRARIES}
 )
 
