@@ -165,7 +165,6 @@ OBJS       = UniaxialMaterial.o \
 	CoulombDamperMaterial.o \
 	FlagShapeMaterial.o \
 	GMG_CyclicReinforcedConcrete.o \
-	CreepMaterial.o \
 	CreepShrinkageACI209.o \
 	APDFMD.o \
 	APDMD.o \
