@@ -432,7 +432,8 @@ RECORDER_LIBS = $(FE)/recorder/Recorder.o \
 	$(FE)/recorder/ElementRecorderRMS.o \
 	$(FE)/recorder/NodeRecorderRMS.o \
 	$(FE)/recorder/MPCORecorder.o \
-	$(FE)/recorder/VTK_Recorder.o
+	$(FE)/recorder/VTK_Recorder.o \
+	$(FE)/recorder/VTKHDF_Recorder.o
 
 
 DATABASE_LIBS = $(FE)/database/FileDatastore.o \
@@ -888,7 +889,6 @@ MATERIAL_LIBS   =  $(FE)/material/Material.o \
 	$(FE)/material/uniaxial/TDConcreteEXP.o \
 	$(FE)/material/uniaxial/TDConcreteMC10.o \
 	$(FE)/material/uniaxial/TDConcreteMC10NL.o \
-	$(FE)/material/uniaxial/CreepMaterial.o \
 	$(FE)/material/uniaxial/CreepShrinkageACI209.o \
 	$(FE)/material/uniaxial/DegradingPinchedBW.o \
 	$(FE)/material/uniaxial/HystereticPoly.o \
@@ -1009,6 +1009,7 @@ MATERIAL_LIBS   =  $(FE)/material/Material.o \
 	$(FE)/material/nD/UWmaterials/J2CyclicBoundingSurfacePlaneStrain.o \
 	$(FE)/material/nD/UWmaterials/PM4Sand.o \
 	$(FE)/material/nD/UWmaterials/PM4Silt.o \
+	$(FE)/material/nD/UWmaterials/LinearElasticGGmax.o \
 	$(FE)/material/nD/UANDESmaterials/SAniSandMS.o \
 	$(FE)/material/nD/UANDESmaterials/SAniSandMS3D.o \
 	$(FE)/material/nD/UANDESmaterials/SAniSandMSPlaneStrain.o \
@@ -1159,6 +1160,8 @@ SECTION_LIBS = $(FE)/material/section/SectionForceDeformation.o \
 	$(FE)/material/section/integration/RCSectionIntegration.o \
 	$(FE)/material/section/integration/RCCircularSectionIntegration.o \
 	$(FE)/material/section/integration/RCTunnelSectionIntegration.o \
+	$(FE)/material/section/integration/MVLEMSectionIntegration.o \
+	$(FE)/material/section/integration/SFIMVLEMSectionIntegration.o \
 	$(FE)/material/section/integration/WideFlangeSectionIntegration.o \
 	$(FE)/material/section/integration/RCTBeamSectionIntegration.o \
 	$(FE)/material/section/integration/TubeSectionIntegration.o \
@@ -1269,6 +1272,18 @@ SequentialSysOfEqn_LIBS =	$(FE)/system_of_eqn/linearSOE/LinearSOE.o \
 	$(SUPER_LU_OBJ) \
 	$(FE)/system_of_eqn/linearSOE/umfGEN/UmfpackGenLinSOE.o \
 	$(FE)/system_of_eqn/linearSOE/umfGEN/UmfpackGenLinSolver.o \
+	$(FE)/system_of_eqn/linearSOE/sparsePython/SparsePythonCommon.o \
+	$(FE)/system_of_eqn/linearSOE/sparsePython/SparsePythonFactory.o \
+	$(FE)/system_of_eqn/linearSOE/sparsePython/SparsePythonCOOLinSOE.o \
+	$(FE)/system_of_eqn/linearSOE/sparsePython/SparsePythonCOOLinSolver.o \
+	$(FE)/system_of_eqn/linearSOE/sparsePython/SparsePythonCompressedLinSOE.o \
+	$(FE)/system_of_eqn/linearSOE/sparsePython/SparsePythonCompressedLinSolver.o \
+	$(FE)/system_of_eqn/eigenSOE/sparsePython/SparsePythonEigenCommon.o \
+	$(FE)/system_of_eqn/eigenSOE/sparsePython/SparsePythonEigenFactory.o \
+	$(FE)/system_of_eqn/eigenSOE/sparsePython/SparsePythonCOOEigenSOE.o \
+	$(FE)/system_of_eqn/eigenSOE/sparsePython/SparsePythonCOOEigenSolver.o \
+	$(FE)/system_of_eqn/eigenSOE/sparsePython/SparsePythonCompressedEigenSOE.o \
+	$(FE)/system_of_eqn/eigenSOE/sparsePython/SparsePythonCompressedEigenSolver.o \
 	$(FE)/system_of_eqn/eigenSOE/FullGenEigenSOE.o \
 	$(FE)/system_of_eqn/eigenSOE/FullGenEigenSolver.o \
 	$(FE)/system_of_eqn/eigenSOE/SymmGeneralizedEigenSOE.o \
@@ -1306,6 +1321,7 @@ DOMAIN_LIBS =  $(FE)/domain/component/DomainComponent.o \
 	$(FE)/domain/domain/single/SingleDomPC_Iter.o \
 	$(FE)/domain/domain/single/SingleDomAllSP_Iter.o \
 	$(FE)/domain/domain/single/SingleDomMP_Iter.o \
+	$(FE)/domain/domain/single/SingleDomEQ_Iter.o \
 	$(FE)/domain/domain/single/SingleDomParamIter.o \
 	$(FE)/domain/domain/partitioned/PartitionedDomain.o \
 	$(FE)/domain/domain/partitioned/PartitionedDomainEleIter.o \
@@ -1316,6 +1332,7 @@ DOMAIN_LIBS =  $(FE)/domain/component/DomainComponent.o \
 	$(FE)/domain/node/NodalLoad.o \
 	$(FE)/domain/constraints/SP_Constraint.o \
 	$(FE)/domain/constraints/MP_Constraint.o \
+	$(FE)/domain/constraints/EQ_Constraint.o \
 	$(FE)/domain/constraints/Pressure_Constraint.o \
 	$(FE)/domain/constraints/ImposedMotionSP.o \
 	$(FE)/domain/constraints/ImposedMotionSP1.o \
@@ -1473,6 +1490,8 @@ ANALYSIS_LIBS = $(FE)/analysis/analysis/Analysis.o \
 	$(FE)/analysis/integrator/CentralDifferenceNoDamping.o \
 	$(FE)/analysis/integrator/WilsonTheta.o \
 	$(FE)/analysis/integrator/ExplicitDifference.o \
+	$(FE)/analysis/integrator/ExplicitDifferenceStatic.o \
+	$(FE)/analysis/integrator/ExplicitBathe.o \
 	$(FE)/analysis/integrator/NewmarkExplicit.o \
 	$(FE)/analysis/integrator/NewmarkHSIncrReduct.o \
 	$(FE)/analysis/integrator/NewmarkHSIncrLimit.o \
@@ -1517,8 +1536,10 @@ ANALYSIS_LIBS = $(FE)/analysis/analysis/Analysis.o \
 	$(FE)/analysis/fe_ele/FE_Element.o \
 	$(FE)/analysis/fe_ele/penalty/PenaltySP_FE.o \
 	$(FE)/analysis/fe_ele/penalty/PenaltyMP_FE.o \
+	$(FE)/analysis/fe_ele/penalty/PenaltyEQ_FE.o \
 	$(FE)/analysis/fe_ele/lagrange/LagrangeSP_FE.o \
 	$(FE)/analysis/fe_ele/lagrange/LagrangeMP_FE.o \
+	$(FE)/analysis/fe_ele/lagrange/LagrangeEQ_FE.o \
 	$(FE)/analysis/fe_ele/transformation/TransformationFE.o
 
 
