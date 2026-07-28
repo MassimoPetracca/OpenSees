@@ -3682,6 +3682,10 @@ int OPS_getEleClassTags()
 	  }
 
 	  Element *theEle = theDomain->getElement(eleTag);
+	  if (theEle == 0) {
+		  opserr << "getEleClassTags - element with tag " << eleTag << " not found" << endln;
+		  return -1;
+	  }
 
 	  data.push_back(theEle->getClassTag());
 

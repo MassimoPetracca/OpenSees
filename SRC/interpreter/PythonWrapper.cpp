@@ -232,6 +232,54 @@ void PythonWrapper::setOutputs(std::map<const char*, std::vector<const char*>>& 
     currentResult = dict;
 }
 
+void PythonWrapper::setGenericDictOutput(GenericDict& data) {
+    PyObject *dict = PyDict_New();
+    
+    for (auto& [key, value] : data) {
+        PyObject* pyValue = nullptr;
+        
+        // Use std::visit to convert variant to Python object
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            
+            if constexpr (std::is_same_v<T, int>) {
+                pyValue = Py_BuildValue("i", arg);
+                
+            } else if constexpr (std::is_same_v<T, double>) {
+                pyValue = Py_BuildValue("d", arg);
+                
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                pyValue = Py_BuildValue("s", arg.c_str());
+                
+            } else if constexpr (std::is_same_v<T, std::vector<int>>) {
+                pyValue = PyList_New(arg.size());
+                for (size_t i = 0; i < arg.size(); i++) {
+                    PyList_SET_ITEM(pyValue, i, Py_BuildValue("i", arg[i]));
+                }
+                
+            } else if constexpr (std::is_same_v<T, std::vector<double>>) {
+                pyValue = PyList_New(arg.size());
+                for (size_t i = 0; i < arg.size(); i++) {
+                    PyList_SET_ITEM(pyValue, i, Py_BuildValue("d", arg[i]));
+                }
+                
+            } else if constexpr (std::is_same_v<T, std::vector<std::string>>) {
+                pyValue = PyList_New(arg.size());
+                for (size_t i = 0; i < arg.size(); i++) {
+                    PyList_SET_ITEM(pyValue, i, Py_BuildValue("s", arg[i].c_str()));
+                }
+            }
+        }, value);
+        
+        if (pyValue != nullptr) {
+            PyDict_SetItemString(dict, key.c_str(), pyValue);
+            Py_DECREF(pyValue);
+        }
+    }
+    
+    currentResult = dict;
+}
+
 PyObject*
 PythonWrapper::getResults()
 {
@@ -280,6 +328,30 @@ static PyObject *Py_ops_setStrain(PyObject *self, PyObject *args)
     if (OPS_setStrain() < 0) {
 	opserr<<(void*)0;
 	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
+static PyObject* Py_ops_setTrialStrain(PyObject* self, PyObject* args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_setTrialStrain() < 0) {
+        opserr << (void*)0;
+        return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
+static PyObject* Py_ops_commitState(PyObject* self, PyObject* args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_commitState() < 0) {
+        opserr << (void*)0;
+        return NULL;
     }
 
     return wrapper->getResults();
@@ -801,6 +873,18 @@ static PyObject *Py_ops_equalDOF(PyObject *self, PyObject *args)
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
 
     if (OPS_EqualDOF() < 0) {
+	opserr<<(void*)0;
+	return NULL;
+    }
+
+    return wrapper->getResults();
+}
+
+static PyObject *Py_ops_equationConstraint(PyObject *self, PyObject *args)
+{
+    wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
+
+    if (OPS_EquationConstraint() < 0) {
 	opserr<<(void*)0;
 	return NULL;
     }
@@ -3015,6 +3099,8 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("uniaxialMaterial", &Py_ops_UniaxialMaterial);
     addCommand("testUniaxialMaterial", &Py_ops_testUniaxialMaterial);
     addCommand("setStrain", &Py_ops_setStrain);
+    addCommand("setTrialStrain", &Py_ops_setTrialStrain);
+    addCommand("commitState", &Py_ops_commitState);
     addCommand("getStrain", &Py_ops_getStrain);
     addCommand("getStress", &Py_ops_getStress);
     addCommand("getTangent", &Py_ops_getTangent);
@@ -3058,6 +3144,7 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("remove", &Py_ops_remove);
     addCommand("mass", &Py_ops_mass);
     addCommand("equalDOF", &Py_ops_equalDOF);
+    addCommand("equationConstraint", &Py_ops_equationConstraint);
     addCommand("nodeEigenvector", &Py_ops_nodeEigenvector);
     addCommand("getTime", &Py_ops_getTime);
     addCommand("getCommittedTime", &Py_ops_getCommittedTime);
