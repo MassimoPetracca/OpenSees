@@ -501,6 +501,12 @@ Tri31::setDomain(Domain *theDomain)
       return;
     }
 
+
+    // Capture the initial displacement offset (see m_U0). Not done again after a
+    // recvSelf, which brings m_U0 in already captured.
+    if (!m_U0_initialized)
+      this->captureInitialDisp();
+
     this->DomainComponent::setDomain(theDomain);
 
     // Compute consistent nodal loads due to pressure
@@ -555,12 +561,13 @@ Tri31::update()
 	
 	static double u[2][3];
 
-	u[0][0] = disp1(0);
-	u[1][0] = disp1(1);
-	u[0][1] = disp2(0);
-	u[1][1] = disp2(1);
-	u[0][2] = disp3(0);
-	u[1][2] = disp3(1);
+	// offset by the initial (artefact) displacements
+	u[0][0] = disp1(0) - m_U0(0);
+	u[1][0] = disp1(1) - m_U0(1);
+	u[0][1] = disp2(0) - m_U0(2);
+	u[1][1] = disp2(1) - m_U0(3);
+	u[0][2] = disp3(0) - m_U0(4);
+	u[1][2] = disp3(1) - m_U0(5);
 
 	static Vector eps(3);
 
@@ -938,7 +945,7 @@ Tri31::sendSelf(int commitTag, Channel &theChannel)
   
     // Tri31 packs its data into a Vector and sends this to theChannel
     // along with its dbTag and the commitTag passed in the arguments
-    static Vector data(10);
+    static Vector data(18);
     data(0) = this->getTag();
     data(1) = thickness;
     data(3) = b[0];
@@ -949,6 +956,13 @@ Tri31::sendSelf(int commitTag, Channel &theChannel)
     data(7) = betaK;
     data(8) = betaK0;
     data(9) = betaKc;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 6; iu++)
+        data(10 + iu) = m_U0(iu);
+    data(16) = m_U0_initialized ? 1.0 : 0.0;
+    // activation state: an element deactivated before the transfer must come back deactivated
+    data(17) = is_this_element_active ? 1.0 : 0.0;
   
     res += theChannel.sendVector(dataTag, commitTag, data);
     if (res < 0) {
@@ -1006,7 +1020,7 @@ Tri31::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 
 	// Tri31 creates a Vector, receives the Vector and then sets the 
 	// internal data with the data in the Vector
-	static Vector data(10);
+	static Vector data(18);
 	res += theChannel.recvVector(dataTag, commitTag, data);
 	if (res < 0) {
 		opserr << "WARNING Tri31::recvSelf() - failed to receive Vector\n";
@@ -1023,6 +1037,13 @@ Tri31::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 	betaK  = data(7);
 	betaK0 = data(8);
 	betaKc = data(9);
+	// initial displacement offset, so a restore does not re-capture it from the
+	// already displaced nodes
+	for (int iu = 0; iu < 6; iu++)
+		m_U0(iu) = data(10 + iu);
+	m_U0_initialized = data(16) > 0.0 ? true : false;
+	// activation state: an element deactivated before the transfer must come back deactivated
+	is_this_element_active = data(17) > 0.0 ? true : false;
 
 	static ID idData(2*numgp+numnodes+1);
 	// Tri31 now receives the tags of its four external nodes
@@ -1492,3 +1513,30 @@ Tri31::setPressureLoadAtNodes(void)
 
 
 
+
+void
+Tri31::captureInitialDisp(void)
+{
+  for (int i = 0; i < 3; i++) {
+    const Vector &iDisp = theNodes[i]->getTrialDisp();
+    m_U0(2*i) = iDisp(0);
+    m_U0(2*i + 1) = iDisp(1);
+  }
+  m_U0_initialized = true;
+}
+
+void
+Tri31::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved, and re-running it would also
+  // re-initialize the damping.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+Tri31::onDeactivate(void)
+{
+}

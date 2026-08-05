@@ -68,6 +68,8 @@ public:
     Node **getNodePtrs();
     int getNumDOF();
     void setDomain(Domain *theDomain);
+    void onActivate(void);
+    void onDeactivate(void);
     
     // public methods to set the state of the element
     int commitState();
@@ -128,6 +130,16 @@ private:
     Vector qb;          // forces in basic system
     Matrix kb;          // stiffness matrix in basic system
     Vector ul;          // displacements in local system
+
+    // Offset of the GLOBAL nodal displacements, so the element sees ug - m_U0 and
+    // one born in an already displaced mesh starts unstressed. The initial
+    // displacement is an artefact of the mesh being modelled undeformed and must not
+    // load the bearing. L, Tgl and Tlb come from the nodal coordinates and are
+    // therefore untouched. Velocities get NO offset: the relative velocity at the
+    // birth instant is physical and the friction model has to feel it.
+    Vector m_U0 = Vector(12);
+    bool m_U0_initialized = false;  // false until m_U0 has been captured
+    void captureInitialDisp(void);  // fills m_U0 from the trial displacements
     Matrix Tgl;         // transformation matrix from global to local system
     Matrix Tlb;         // transformation matrix from local to basic system
     

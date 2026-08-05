@@ -196,6 +196,9 @@ class ZeroLength : public Element
     // vector pointers to initial disp and vel if present
     Vector *d0;
     Vector *v0;
+    // (re)captures d0 at the current configuration, so that a staged element is
+    // born strain free. Called by setDomain() and by onActivate().
+    void captureInitialDisp(void);
 
     // static data - single copy for all objects of the class	
     static Matrix ZeroLengthM2;   // class wide matrix for 2*2

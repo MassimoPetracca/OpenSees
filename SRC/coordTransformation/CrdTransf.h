@@ -61,6 +61,11 @@ public:
   virtual int getRigidOffsets(Vector &offsets);
   
     virtual int    initialize(Node *node1Pointer, Node *node2Pointer) = 0;
+    // One-shot: discard the captured initial displacement offset so that the
+    // next initialize() re-captures it at the current configuration. Called by
+    // an element on activation, so a staged element is born strain free.
+    // Default: nothing to discard.
+    virtual void   forceCaptureInitialDisp(void) {}
     virtual int    update(void) = 0;
     virtual double getInitialLength(void) = 0;
     virtual double getDeformedLength(void) = 0;

@@ -73,6 +73,8 @@ public:
 	Node **getNodePtrs(void);
 	int getNumDOF(void);
 	void setDomain(Domain *theDomain);
+	void onActivate(void);
+	void onDeactivate(void);
 
 	// public methods to set the state of the element    
 	int commitState(void);
@@ -208,6 +210,17 @@ private:
 	Matrix T;
 	Matrix T6;
 	Matrix Tt;
+
+	// Initial displacement offset, in global cs, one entry per corner-node DOF. It holds
+	// the nodal displacement present when the element enters the domain - or when it is
+	// activated - and it is subtracted from the trial displacements, so that an element
+	// born in an already displaced mesh starts strain free. That displacement is an
+	// artefact of the mesh being modelled undeformed and must not generate strain.
+	// The reference configuration (nd*Crds, h, Lw, T, K1..K22) comes from the nodal
+	// coordinates and does not depend on it.
+	Vector m_U0 = Vector(24);
+	bool m_U0_initialized = false;      // false until m_U0 has been captured
+	void captureInitialDisp(void);      // fills m_U0 from the current trial displacements
 
 };
 #endif

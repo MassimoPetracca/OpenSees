@@ -41,6 +41,7 @@
 #include "SFI_MVLEM_3D.h"
 #include <Information.h>
 #include <Domain.h>
+#include <SP_Constraint.h>
 #include <Node.h>
 #include <Channel.h>
 #include <Message.h>
@@ -622,6 +623,7 @@ void SFI_MVLEM_3D::setDomain(Domain *theDomain)
 	h = (h1 + h2) / 2.0;
 
 	// Calculate average wall thickness
+	Tave = 0.0;
 	for (int i = 0; i < m; i++) {
 		Tave += t[i] * b[i] / Lw;
 	}
@@ -848,6 +850,10 @@ void SFI_MVLEM_3D::setDomain(Domain *theDomain)
 	K21 = (Eave * (Tave * Tave * Tave) * Lw * (NUelastic - 1.0)) / (180.0 * h * ((NUelastic * NUelastic) - 1.0)) - (Eave * h * (Tave * Tave * Tave)) / (36.0 * Lw * ((NUelastic * NUelastic) - 1.0));
 	K22 = -(Eave * (Tave * Tave * Tave) * (5.0 * (h * h) - NUelastic * (Lw * Lw) + (Lw * Lw))) / (45.0 * h * Lw * ((NUelastic * NUelastic) - 1.0));
 
+	// Capture the initial displacement offset (see m_U0). Not done again after a
+	// recvSelf, which brings m_U0 in from the wire already captured.
+	if (!m_U0_initialized)
+		this->captureInitialDisp();
 }
 
 // Commit state of the materials
@@ -937,12 +943,12 @@ double *SFI_MVLEM_3D::computeCurrentStrain(void)
 	Vector dispL_inPlan2N(6); // in-plane displacements of equlivalent 2D, 2N SFI model
 	dispL_inPlan2N.Zero();
 
-	// store nodal displacemnts in global vs
+	// store nodal displacemnts in global vs, offset by m_U0
 	for (int i = 0; i < 6; i++) {
-		dispG(i) = disp1(i);
-		dispG(i + 6) = disp2(i);
-		dispG(i + 12) = disp3(i);
-		dispG(i + 18) = disp4(i);
+		dispG(i) = disp1(i) - m_U0(i);
+		dispG(i + 6) = disp2(i) - m_U0(i + 6);
+		dispG(i + 12) = disp3(i) - m_U0(i + 12);
+		dispG(i + 18) = disp4(i) - m_U0(i + 18);
 	}
 
 	for (int i = 0; i < m; ++i) {
@@ -2394,12 +2400,12 @@ const Vector & SFI_MVLEM_3D::getResistingForce()
 	Vector dispL(24 + m); // Vector of total 24+m displacemets in local coordinates
 	dispL.Zero(); // 2020
 
-	// Assigning all displacements in global CS into one vector
+	// Assigning all displacements in global CS into one vector, offset by m_U0
 	for (int i = 0; i < 6; i++) {
-		dispG(i) = disp1(i);
-		dispG(i + 6) = disp2(i);
-		dispG(i + 12) = disp3(i);
-		dispG(i + 18) = disp4(i);
+		dispG(i) = disp1(i) - m_U0(i);
+		dispG(i + 6) = disp2(i) - m_U0(i + 6);
+		dispG(i + 12) = disp3(i) - m_U0(i + 12);
+		dispG(i + 18) = disp4(i) - m_U0(i + 18);
 	}
 
 	// Convert nodal displacements from global to local cs
@@ -2551,7 +2557,7 @@ int SFI_MVLEM_3D::sendSelf(int commitTag, Channel &theChannel)
 	int res;
 	int dataTag = this->getDbTag();
 
-	static Vector data(7);
+	static Vector data(33);
 
 	data(0) = this->getTag();
 	data(1) = density;
@@ -2560,6 +2566,11 @@ int SFI_MVLEM_3D::sendSelf(int commitTag, Channel &theChannel)
 	data(4) = NUelastic;
 	data(5) = Tfactor;
 	data(6) = Eave;
+	for (int i = 0; i < 24; i++)
+		data(7+i) = m_U0(i);
+	data(31) = m_U0_initialized ? 1.0 : 0.0;
+	// activation state: an element deactivated before the transfer must come back deactivated
+	data(32) = is_this_element_active ? 1.0 : 0.0;
 
 	// SFI_MVLEM_3D then sends the tags of it's nodes
 	res = theChannel.sendID(dataTag, commitTag, externalNodes);
@@ -2597,7 +2608,7 @@ int SFI_MVLEM_3D::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker 
 		delete[] theMaterial;
 	}
 
-	Vector data(7); 
+	Vector data(33); 
 	res = theChannel.recvVector(dataTag, commitTag, data);
 	if (res < 0) {
 		opserr << "WARNING SFI_MVLEM_3D::recvSelf() - failed to receive Vector\n";
@@ -2611,6 +2622,11 @@ int SFI_MVLEM_3D::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker 
 	NUelastic = data(4);
 	Tfactor = data(5);
 	Eave = data(6);
+	for (int i = 0; i < 24; i++)
+		m_U0(i) = data(7+i);
+	m_U0_initialized = data(31) > 0.0 ? true : false;
+	// activation state: an element deactivated before the transfer must come back deactivated
+	is_this_element_active = data(32) > 0.0 ? true : false;
 	
 	// SFI_MVLEM_3D now receives the tags of it's four external nodes
 	res = theChannel.recvID(dataTag, commitTag, externalNodes);
@@ -3164,3 +3180,105 @@ void  SFI_MVLEM_3D::setTransformationMatrix(void) {
 		T(24 + i, 24 + i) = 1.0; // Diagonal terms accounting for horizontal stiffness
 
 };
+
+void SFI_MVLEM_3D::captureInitialDisp(void)
+{
+	const Vector &iDisp1 = theNodes[0]->getTrialDisp();
+	const Vector &iDisp2 = theNodes[1]->getTrialDisp();
+	const Vector &iDisp3 = theNodes[2]->getTrialDisp();
+	const Vector &iDisp4 = theNodes[3]->getTrialDisp();
+
+	for (int i = 0; i < 6; i++) {
+		m_U0(i) = iDisp1(i);
+		m_U0(i + 6) = iDisp2(i);
+		m_U0(i + 12) = iDisp3(i);
+		m_U0(i + 18) = iDisp4(i);
+	}
+
+	m_U0_initialized = true;
+}
+
+void SFI_MVLEM_3D::onActivate(void)
+{
+	// Give the internal strain dofs back to the analysis before anything else: they were
+	// fixed while the element was off (see fixInternalDofs).
+	this->releaseInternalDofs();
+
+	// Re-capture the offset at the current configuration, so a staged element is born
+	// strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+	// from the nodal coordinates, which have not moved.
+	this->captureInitialDisp();
+	this->update();
+}
+
+void SFI_MVLEM_3D::onDeactivate(void)
+{
+	this->fixInternalDofs();
+}
+
+// Fix the m internal 1-dof nodes for as long as the element is switched off. They belong
+// to this element alone (tags -(eleTag*1000 + i + 1)) and appear in its own node list, so
+// once the element stops assembling, their equations are left with no stiffness at all and
+// the global matrix is singular. Fixing them removes the equations instead.
+void SFI_MVLEM_3D::fixInternalDofs(void)
+{
+	// Element::deactivate() calls the hook unconditionally, so guard against a second
+	// deactivation: adding the same constraint twice is refused by the Domain and would
+	// leave this element holding stale tags.
+	if (m_internal_sp_installed)
+		return;
+
+	Domain *theDomain = this->getDomain();
+	if (theDomain == 0 || theNodesX == 0)
+		return;
+
+	m_internal_sp_tags = ID(m);
+	for (int i = 0; i < m; i++)
+		m_internal_sp_tags(i) = -1;
+
+	for (int i = 0; i < m; i++) {
+		if (theNodesX[i] == 0)
+			continue;
+		// value 0, isConstant = true: in the staged flow the element is switched off before
+		// it has ever carried strain, so its internal dof is still zero, and while it is off
+		// the value of a dof nothing else touches makes no difference.
+		SP_Constraint *theSP = new SP_Constraint(theNodesX[i]->getTag(), 0, 0.0, true);
+		if (theSP == 0)
+			continue;
+		if (theDomain->addSP_Constraint(theSP) == false) {
+			opserr << "WARNING SFI_MVLEM_3D::fixInternalDofs() - element " << this->getTag()
+				<< " could not fix internal node " << theNodesX[i]->getTag()
+				<< "; the system will be singular while the element is deactivated\n";
+			delete theSP;
+			continue;
+		}
+		// The tag is NOT ours to choose: the SP_Constraint constructor takes it from a
+		// file-static counter (nextTag++), which only ever grows. It has to be read back
+		// from the object, otherwise releaseInternalDofs() would try to remove tags that
+		// no constraint carries and the dofs would stay fixed forever.
+		m_internal_sp_tags(i) = theSP->getTag();
+	}
+	m_internal_sp_installed = true;
+}
+
+// Undo fixInternalDofs(): hand the internal strain dofs back to the analysis.
+void SFI_MVLEM_3D::releaseInternalDofs(void)
+{
+	if (!m_internal_sp_installed)
+		return;
+
+	Domain *theDomain = this->getDomain();
+	if (theDomain != 0) {
+		for (int i = 0; i < m_internal_sp_tags.Size(); i++) {
+			int tag = m_internal_sp_tags(i);
+			if (tag < 0)
+				continue;
+			// removeSP_Constraint hands ownership back, so it is ours to delete
+			SP_Constraint *theSP = theDomain->removeSP_Constraint(tag);
+			if (theSP != 0)
+				delete theSP;
+		}
+	}
+	m_internal_sp_tags = ID(0);
+	m_internal_sp_installed = false;
+}

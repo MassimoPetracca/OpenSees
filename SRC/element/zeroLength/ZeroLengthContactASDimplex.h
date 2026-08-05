@@ -165,6 +165,8 @@ public:
     Node** getNodePtrs();
     int getNumDOF();
     void setDomain(Domain* theDomain);
+    void onActivate();
+    void onDeactivate();
 
     // public methods to set the state of the element
     int commitState();
@@ -208,6 +210,11 @@ private:
     // initial gap in global coordinates
     // it includes the initial gap in geometry and the initial displacement
     // (if any)
+    // Initial gap: the geometrical gap minus the relative displacement present when
+    // the element enters the domain, or when it is activated. Re-captured by
+    // onActivate() so a staged element is born with no contact force coming from a
+    // relative displacement it did not cause.
+    void computeInitialGap();
     Vector gap0 = Vector(3);
     bool gap0_initialized = false;
 

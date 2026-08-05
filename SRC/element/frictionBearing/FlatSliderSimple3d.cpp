@@ -410,6 +410,11 @@ void FlatSliderSimple3d::setDomain(Domain *theDomain)
         return;
     }
     
+    // Capture the initial displacement offset (see m_U0). Not done again after a
+    // recvSelf, which brings m_U0 in already captured.
+    if (!m_U0_initialized)
+        this->captureInitialDisp();
+    
     // call the base class method
     this->DomainComponent::setDomain(theDomain);
     
@@ -489,9 +494,10 @@ int FlatSliderSimple3d::update()
     const Vector &vel2 = theNodes[1]->getTrialVel();
     
     static Vector ug(12), ugdot(12), uldot(12), ubdot(6);
+    // displacements offset by the initial (artefact) ones; velocities are not
     for (int i=0; i<6; i++)  {
-        ug(i)   = dsp1(i);  ugdot(i)   = vel1(i);
-        ug(i+6) = dsp2(i);  ugdot(i+6) = vel2(i);
+        ug(i)   = dsp1(i) - m_U0(i);       ugdot(i)   = vel1(i);
+        ug(i+6) = dsp2(i) - m_U0(i+6);  ugdot(i+6) = vel2(i);
     }
     
     // transform response from the global to the local system
@@ -824,7 +830,7 @@ const Vector& FlatSliderSimple3d::getResistingForceIncInertia()
 int FlatSliderSimple3d::sendSelf(int commitTag, Channel &sChannel)
 {
     // send element parameters
-    static Vector data(14);
+    static Vector data(28);
     data(0)  = this->getTag();
     data(1)  = k0;
     data(2)  = shearDistI;
@@ -839,6 +845,14 @@ int FlatSliderSimple3d::sendSelf(int commitTag, Channel &sChannel)
     data(11) = betaK;
     data(12) = betaK0;
     data(13) = betaKc;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 12; iu++)
+        data(14 + iu) = m_U0(iu);
+    data(26) = m_U0_initialized ? 1.0 : 0.0;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    data(27) = is_this_element_active ? 1.0 : 0.0;
     sChannel.sendVector(0, commitTag, data);
     
     // send the two end nodes
@@ -881,7 +895,7 @@ int FlatSliderSimple3d::recvSelf(int commitTag, Channel &rChannel,
             delete theMaterials[i];
     
     // receive element parameters
-    static Vector data(14);
+    static Vector data(28);
     rChannel.recvVector(0, commitTag, data);
     this->setTag((int)data(0));
     k0 = data(1);
@@ -895,6 +909,14 @@ int FlatSliderSimple3d::recvSelf(int commitTag, Channel &rChannel,
     betaK = data(11);
     betaK0 = data(12);
     betaKc = data(13);
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 12; iu++)
+        m_U0(iu) = data(14 + iu);
+    m_U0_initialized = data(26) > 0.0 ? true : false;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    is_this_element_active = data(27) > 0.0 ? true : false;
     
     // receive the two end nodes
     rChannel.recvID(0, commitTag, connectedExternalNodes);
@@ -1268,4 +1290,31 @@ void FlatSliderSimple3d::setUp()
     Tlb(1,11) = -(1.0 - shearDistI)*L;
     Tlb(2,4) = -Tlb(1,5);
     Tlb(2,10) = -Tlb(1,11);
+}
+
+void FlatSliderSimple3d::captureInitialDisp(void)
+{
+    const Vector &dsp1 = theNodes[0]->getTrialDisp();
+    const Vector &dsp2 = theNodes[1]->getTrialDisp();
+    for (int i=0; i<6; i++)  {
+        m_U0(i)   = dsp1(i);
+        m_U0(i+6) = dsp2(i);
+    }
+    m_U0_initialized = true;
+}
+
+
+void FlatSliderSimple3d::onActivate(void)
+{
+    // Re-capture the offset at the current configuration, so a staged bearing is born
+    // unstressed. setDomain() is deliberately NOT re-run: setUp() would rebuild Tgl from
+    // x and y after having already overwritten y with z cross x, and everything it
+    // computes comes from the nodal coordinates, which have not moved.
+    this->captureInitialDisp();
+    this->update();
+}
+
+
+void FlatSliderSimple3d::onDeactivate(void)
+{
 }

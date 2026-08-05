@@ -1296,7 +1296,7 @@ ElasticBeam3d::sendSelf(int cTag, Channel &theChannel)
 {
     int res = 0;
 
-    static Vector data(21);
+    static Vector data(22);
     
     data(0) = A;
     data(1) = E; 
@@ -1326,7 +1326,9 @@ ElasticBeam3d::sendSelf(int cTag, Channel &theChannel)
     data(15) = betaK0;
     data(16) = betaKc;
     data(17) = releasez;
-    data(18) = releasey;    
+    data(18) = releasey;
+    // activation state: an element deactivated before the transfer must come back deactivated
+    data(21) = is_this_element_active ? 1.0 : 0.0;    
 
     data(19) = 0;
     data(20) = 0;
@@ -1371,7 +1373,7 @@ int
 ElasticBeam3d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
 {
   int res = 0;
-  static Vector data(21);
+  static Vector data(22);
 
   res += theChannel.recvVector(this->getDbTag(), cTag, data);
   if (res < 0) {
@@ -1397,6 +1399,8 @@ ElasticBeam3d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBrok
   betaKc = data(16);
   releasez = (int)data(17);
   releasey = (int)data(18);
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = data(21) > 0.0 ? true : false;
   
   // Check if the CoordTransf is null; if so, get a new one
   int crdTag = (int)data(11);
@@ -2066,3 +2070,22 @@ ElasticBeam3d::updateParameter (int parameterID, Information &info)
 	}
 }
 
+
+void
+ElasticBeam3d::onActivate(void)
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free. The offset lives in the coordinate
+    // transformation, together with the reference length and orientation - and those
+    // come from the nodal coordinates alone, so they are not affected.
+    // setDomain() is deliberately NOT re-run: it re-initializes the damping.
+    theCoordTransf->forceCaptureInitialDisp();
+    if (theCoordTransf->initialize(theNodes[0], theNodes[1]))
+        opserr << "ElasticBeam3d::onActivate() - error re-initializing coordinate transformation\n";
+    this->update();
+}
+
+void
+ElasticBeam3d::onDeactivate(void)
+{
+}

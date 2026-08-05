@@ -2062,7 +2062,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
        secDefSize   += size;
     }
 
-    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize + 4); 
+    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize + 4 + 1); 
     loc = 0;
 
     // place double variables into Vector
@@ -2093,6 +2093,8 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     dData(loc++) = betaK;
     dData(loc++) = betaK0;
     dData(loc++) = betaKc;
+    // activation state: an element deactivated before the transfer must come back deactivated
+    dData(loc++) = is_this_element_active ? 1.0 : 0.0;
     
     if (theChannel.sendVector(dbTag, commitTag, dData) < 0) {
        opserr << "ForceBeamColumn3d::sendSelf() - failed to send Vector data\n";
@@ -2335,7 +2337,7 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
        secDefSize   += size;
     }
 
-    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize+4);   
+    Vector dData(1+1+1+NEBD+NEBD*NEBD+secDefSize+4+1);   
 
     if (theChannel.recvVector(dbTag, commitTag, dData) < 0)  {
       opserr << "ForceBeamColumn3d::recvSelf() - failed to send Vector data\n";
@@ -2379,6 +2381,8 @@ ForceBeamColumn3d::computeSectionForceSensitivity(Vector &dspdh, int isec,
     betaK = dData(loc++);
     betaK0 = dData(loc++);
     betaKc = dData(loc++);
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = dData(loc++) > 0.0 ? true : false;
     
     initialFlag = 2;  
 
@@ -4495,4 +4499,24 @@ ForceBeamColumn3d::setSectionPointers(int numSec, SectionForceDeformation **secP
     opserr << "ForceBeamColumn3d::setSectionPointers -- failed to allocate vscommit array";   
   }
   
+}
+
+void
+ForceBeamColumn3d::onActivate(void)
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free. The offset lives in the coordinate
+    // transformation, together with the reference length and orientation - and those
+    // come from the nodal coordinates alone, so they are not affected.
+    // setDomain() is deliberately NOT re-run: it would re-initialize the damping and
+    // the sections, which must happen once and for all.
+    crdTransf->forceCaptureInitialDisp();
+    if (crdTransf->initialize(theNodes[0], theNodes[1]))
+        opserr << "ForceBeamColumn3d::onActivate() - error re-initializing coordinate transformation\n";
+    this->update();
+}
+
+void
+ForceBeamColumn3d::onDeactivate(void)
+{
 }

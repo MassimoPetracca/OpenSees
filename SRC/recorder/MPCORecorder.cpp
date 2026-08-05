@@ -73,6 +73,8 @@ while opensees is writing data. Warning: this is a new feature in hdf5 version 1
 #include "ID.h"
 #include "Pressure_ConstraintIter.h"
 #include "Pressure_Constraint.h"
+#include "MP_ConstraintIter.h"
+#include "MP_Constraint.h"
 #include "Node.h"
 #include "NodeIter.h"
 #include "Element.h"
@@ -4989,6 +4991,14 @@ int MPCORecorder::writeModel()
 	if (retval)
 		return retval;
 	/*
+	write the per-node / per-element activation flags. AFTER the two calls above: the node order
+	is the one writeModelNodes() just built, and the element collection is the one
+	writeModelElements() just mapped.
+	*/
+	retval = writeModelActivation();
+	if (retval)
+		return retval;
+	/*
 	write local axes
 	*/
 	retval = writeModelLocalAxes();
@@ -5216,6 +5226,131 @@ int MPCORecorder::writeModelElements()
 	close element group
 	*/
 	status = h5::group::close(h_gp_elements);
+	/*
+	return
+	*/
+#ifdef MPCO_TIMING
+	timer.stop();
+#endif // MPCO_TIMING
+	return retval;
+}
+
+int MPCORecorder::writeModelActivation()
+{
+#ifdef MPCO_TIMING
+	mpco::Timer timer("writeModelActivation"); timer.start();
+#endif // MPCO_TIMING
+	/*
+	error flags
+	*/
+	int retval = 0;
+	herr_t status = 0;
+	Domain *domain = m_data->info.domain;
+	/*
+	which nodes are reached by an ACTIVE element.
+	Computed over the WHOLE domain on purpose, not over m_data->elements: with -region or an
+	element set the recorder may not see the element that holds a recorded node, and that node is
+	active all the same.
+	*/
+	std::set<int> active_nodes;
+	{
+		ElementIter &ele_iter = domain->getElements();
+		Element *ele = 0;
+		while ((ele = ele_iter()) != 0) {
+			if (!ele->isActive())
+				continue;
+			const ID &conn = ele->getExternalNodes();
+			for (int i = 0; i < conn.Size(); ++i)
+				active_nodes.insert(conn(i));
+		}
+	}
+	/*
+	a node held ONLY by an MP constraint would otherwise come out inactive: the virtual master of a
+	rigid diaphragm is attached to no element at all and is held by its slaves alone, so the
+	post-processor would hide it while the diaphragm is live. Propagate constrained -> retained, to
+	a fixed point for master-of-master chains.
+	The reverse direction is deliberately NOT done: a slave that no active element touches has its
+	dofs eliminated into the master and is not part of the built structure. SP constraints confer
+	nothing either - a fixed node is exactly what a staged deck puts on the nodes that fall out of
+	the active set.
+	*/
+	bool grew = true;
+	while (grew) {
+		grew = false;
+		MP_ConstraintIter &mp_iter = domain->getMPs();
+		MP_Constraint *mp = 0;
+		while ((mp = mp_iter()) != 0) {
+			if (active_nodes.count(mp->getNodeConstrained()) > 0) {
+				if (active_nodes.insert(mp->getNodeRetained()).second)
+					grew = true;
+			}
+		}
+	}
+	/*
+	node flags, parallel to MODEL/NODES/ID: same order, same writeModel() call
+	*/
+	size_t num_nodes = m_data->nodes.size();
+	std::vector<int> buffer_node_active(num_nodes);
+	for (size_t i = 0; i < num_nodes; i++) {
+		Node *inode = m_data->nodes[i];
+		buffer_node_active[i] = (inode != 0 && active_nodes.count(inode->getTag()) > 0) ? 1 : 0;
+	}
+	/*
+	element flags as an (ID, ACTIVE) pair, the same shape MODEL/LOCAL_AXES uses: the element tags
+	are spread over the per-class datasets in MODEL/ELEMENTS, so there is no single global order to
+	be parallel to. Walked in the same nesting writeModelElements() used, so the two agree.
+	*/
+	std::vector<int> buffer_elem_id;
+	std::vector<int> buffer_elem_active;
+	for (mpco::element::ElementCollection::submap_type::iterator it1 = m_data->elements.items.begin();
+		it1 != m_data->elements.items.end(); ++it1) {
+		mpco::element::ElementWithSameClassTagCollection &elem_by_tag = it1->second;
+		for (mpco::element::ElementWithSameClassTagCollection::submap_type::iterator it2 = elem_by_tag.items.begin();
+			it2 != elem_by_tag.items.end(); ++it2) {
+			mpco::element::ElementWithSameIntRuleCollection &elem_by_rule = it2->second;
+			for (mpco::element::ElementWithSameIntRuleCollection::submap_type::iterator it3 = elem_by_rule.items.begin();
+				it3 != elem_by_rule.items.end(); ++it3) {
+				mpco::element::ElementWithSameCustomIntRuleCollection &elem_by_custom_rule = it3->second;
+				for (std::vector<Element*>::iterator it4 = elem_by_custom_rule.items.begin();
+					it4 != elem_by_custom_rule.items.end(); ++it4) {
+					Element *elem = *it4;
+					if (elem == 0)
+						continue;
+					buffer_elem_id.push_back(elem->getTag());
+					buffer_elem_active.push_back(elem->isActive() ? 1 : 0);
+				}
+			}
+		}
+	}
+	/*
+	create the activation group. Written on EVERY stage, staged model or not, so that the absence
+	of this group means unambiguously "written before this existed, everything is active" - there is
+	no file-format version in INFO to test instead.
+	*/
+	std::stringstream ss_gp_activation_dir;
+	ss_gp_activation_dir << "MODEL_STAGE[" << m_data->info.current_model_stage_id << "]/MODEL/ACTIVATION";
+	std::string gp_activation_dir = ss_gp_activation_dir.str();
+	hid_t h_gp_activation = h5::group::create(m_data->info.h_file_id, gp_activation_dir.c_str(), H5P_DEFAULT, m_data->info.h_group_proplist, H5P_DEFAULT);
+	/*
+	NODES: one flag per recorded node, in the order of MODEL/NODES/ID
+	*/
+	if (num_nodes > 0) {
+		hid_t dset_nodes = h5::dataset::createAndWrite(h_gp_activation, "NODES", buffer_node_active);
+		status = h5::dataset::close(dset_nodes);
+	}
+	/*
+	ID + ACTIVE: the element tags and their flags
+	*/
+	if (buffer_elem_id.size() > 0) {
+		hid_t dset_eid = h5::dataset::createAndWrite(h_gp_activation, "ID", buffer_elem_id);
+		status = h5::dataset::close(dset_eid);
+		hid_t dset_eactive = h5::dataset::createAndWrite(h_gp_activation, "ACTIVE", buffer_elem_active);
+		status = h5::dataset::close(dset_eactive);
+	}
+	/*
+	close activation group
+	*/
+	status = h5::group::close(h_gp_activation);
 	/*
 	return
 	*/

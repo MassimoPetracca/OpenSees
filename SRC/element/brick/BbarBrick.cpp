@@ -212,6 +212,11 @@ void  BbarBrick::setDomain( Domain *theDomain )
   for ( i=0; i<8; i++ )
      nodePointers[i] = theDomain->getNode( connectedExternalNodes(i) ) ;
 
+  // Capture the initial displacement offset (see m_U0). Not done again after a
+  // recvSelf, which brings m_U0 in already captured.
+  if (!m_U0_initialized)
+    this->captureInitialDisp();
+
   this->DomainComponent::setDomain(theDomain);
 
 }
@@ -936,12 +941,16 @@ void  BbarBrick::formResidAndTangent( int tang_flag )
 
       BJ = computeBbar( j, shp, shpBar ) ;
 
-      //nodal displacements
+      //nodal displacements, offset by m_U0
       const Vector &ul = nodePointers[j]->getTrialDisp( ) ;
+      static Vector ulOff(3) ;
+      ulOff(0) = ul(0) - m_U0(3*j) ;
+      ulOff(1) = ul(1) - m_U0(3*j + 1) ;
+      ulOff(2) = ul(2) - m_U0(3*j + 2) ;
 
       //compute the strain
       //strain += (BJ*ul) ;
-      strain.addMatrixVector(1.0,  BJ,ul,1.0 ) ;
+      strain.addMatrixVector(1.0,  BJ,ulOff,1.0 ) ;
 
     } // end for j
 
@@ -1187,9 +1196,11 @@ int  BbarBrick::sendSelf (int commitTag, Channel &theChannel)
   // Now quad sends the ids of its materials
   int matDbTag;
 
-  static ID idData(25);
+  static ID idData(26);
 
   idData(24) = this->getTag();
+  // activation state: an element deactivated before the transfer must come back deactivated
+  idData(25) = is_this_element_active ? 1 : 0;
 
   //if (alphaM != 0 || betaK != 0 || betaK0 != 0 || betaKc != 0)
   //  idData(25) = 1;
@@ -1226,7 +1237,7 @@ int  BbarBrick::sendSelf (int commitTag, Channel &theChannel)
   }
 
   // send damping coefficients & body forces
-  static Vector dData(7);
+  static Vector dData(32);
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -1234,6 +1245,11 @@ int  BbarBrick::sendSelf (int commitTag, Channel &theChannel)
   dData(4) = b[0];
   dData(5) = b[1];
   dData(6) = b[2];
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    dData(7 + i) = m_U0(i);
+  dData(31) = m_U0_initialized ? 1.0 : 0.0;
   
   if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
     opserr << "BbarBrick::sendSelf() - failed to send double data\n";
@@ -1260,7 +1276,7 @@ int  BbarBrick::recvSelf (int commitTag,
 
   int dataTag = this->getDbTag();
 
-  static ID idData(25);
+  static ID idData(26);
   // Quad now receives the tags of its four external nodes
   res += theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
@@ -1269,9 +1285,11 @@ int  BbarBrick::recvSelf (int commitTag,
   }
 
   this->setTag(idData(24));
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = idData(25) == 1 ? true : false;
 
   // recv damping & body forces coefficients
-  static Vector dData(7);
+  static Vector dData(32);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
     return -1;
@@ -1283,6 +1301,11 @@ int  BbarBrick::recvSelf (int commitTag,
   b[0] = dData(4);
   b[1] = dData(5);
   b[2] = dData(6);
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    m_U0(i) = dData(7 + i);
+  m_U0_initialized = dData(31) > 0.0 ? true : false;
 
   connectedExternalNodes(0) = idData(16);
   connectedExternalNodes(1) = idData(17);
@@ -1650,4 +1673,31 @@ BbarBrick::updateParameter(int parameterID, Information &info)
 		}
 		return res;
     }
+}
+
+void
+BbarBrick::captureInitialDisp(void)
+{
+  for (int i = 0; i < 8; i++) {
+    const Vector &iDisp = nodePointers[i]->getTrialDisp();
+    m_U0(3*i)     = iDisp(0);
+    m_U0(3*i + 1) = iDisp(1);
+    m_U0(3*i + 2) = iDisp(2);
+  }
+  m_U0_initialized = true;
+}
+
+void
+BbarBrick::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+BbarBrick::onDeactivate(void)
+{
 }

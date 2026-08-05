@@ -330,9 +330,10 @@ void  FourNodeTetrahedron::setDomain( Domain *theDomain )
       nodePointers[i] = theDomain->getNode( connectedExternalNodes(i) ) ;
 
 
-      if(do_init_disp)
+      if ((do_init_disp && !initDispCaptured) || m_force_capture_initial_disp)
       {
         initDisp[i] = nodePointers[i]->getDisp();
+        initDispCaptured = true;
       }
   }
 
@@ -1484,7 +1485,7 @@ int  FourNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
   // Now quad sends the ids of its materials
   int matDbTag;
   
-  static ID idData(28);
+  static ID idData(29);
 
   idData(24) = this->getTag();
   if (alphaM != 0 || betaK != 0 || betaK0 != 0 || betaKc != 0) 
@@ -1516,6 +1517,8 @@ int  FourNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
   idData(19) = connectedExternalNodes(3);
   idData(26) = (int) do_update;
   idData(27) = (int) do_init_disp;
+  // activation state: an element deactivated before the transfer must come back deactivated
+  idData(28) = is_this_element_active ? 1 : 0;
   // idData(20) = connectedExternalNodes(4);
   // idData(21) = connectedExternalNodes(5);
   // idData(22) = connectedExternalNodes(6);
@@ -1527,7 +1530,7 @@ int  FourNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
     return res;
   }
 
-  static Vector dData(7);
+  static Vector dData(20);
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -1535,6 +1538,12 @@ int  FourNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
   dData(4) = b[0];
   dData(5) = b[1];
   dData(6) = b[2];
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 4; i++)
+    for (int j = 0; j < 3; j++)
+      dData(7 + 3*i + j) = initDisp[i](j);
+  dData(19) = initDispCaptured ? 1.0 : 0.0;
 
   if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
     opserr << "FourNodeTetrahedron::sendSelf() - failed to send double data\n";
@@ -1563,7 +1572,7 @@ int  FourNodeTetrahedron::recvSelf (int commitTag,
   
   int dataTag = this->getDbTag();
 
-  static ID idData(28);
+  static ID idData(29);
   res += theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
     opserr << "WARNING FourNodeTetrahedron::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1572,7 +1581,7 @@ int  FourNodeTetrahedron::recvSelf (int commitTag,
 
   this->setTag(idData(24));
 
-  static Vector dData(7);
+  static Vector dData(20);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
     return -1;
@@ -1584,6 +1593,12 @@ int  FourNodeTetrahedron::recvSelf (int commitTag,
   b[0] = dData(4);
   b[1] = dData(5);
   b[2] = dData(6);
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 4; i++)
+    for (int j = 0; j < 3; j++)
+      initDisp[i](j) = dData(7 + 3*i + j);
+  initDispCaptured = dData(19) > 0.0 ? true : false;
 
 
   connectedExternalNodes(0) = idData(16);
@@ -1592,6 +1607,8 @@ int  FourNodeTetrahedron::recvSelf (int commitTag,
   connectedExternalNodes(3) = idData(19);
   do_update = (bool) idData(26);
   do_init_disp = (bool) idData(27);
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = idData(28) == 1 ? true : false;
   // connectedExternalNodes(4) = idData(20);
   // connectedExternalNodes(5) = idData(21);
   // connectedExternalNodes(6) = idData(22);
@@ -2091,9 +2108,15 @@ FourNodeTetrahedron::shp3d( const double ss[4], double &xsj, double shp[4][4], c
 void
 FourNodeTetrahedron::onActivate()
 {
-
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free: strain = B * (trial - initDisp). The
+    // reference geometry stays undeformed, only the strain measure is offset.
+    // Forced regardless of do_init_disp: that option only governs the capture at
+    // the time the element enters the domain, on activation it is not optional.
     Domain* theDomain = this->getDomain();
+    m_force_capture_initial_disp = true;
     this->setDomain(theDomain);
+    m_force_capture_initial_disp = false;
     this->update();
 }
 

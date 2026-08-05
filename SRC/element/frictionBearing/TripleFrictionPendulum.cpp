@@ -319,6 +319,11 @@ void TripleFrictionPendulum::setDomain(Domain *theDomain)
         opserr << "TripleFrictionPendulum::setDomain(): 6 dof required at nodes\n";
         return;
     }
+    
+    // Capture the initial displacement offset (see m_U0). Not done again after a
+    // recvSelf, which brings m_U0 in already captured.
+    if (!m_U0_initialized)
+        this->captureInitialDisp();
 }
 
 
@@ -451,18 +456,19 @@ int TripleFrictionPendulum::update()
     const Vector &end1Crd = theNodes[0]->getCrds();
     const Vector &end2Crd = theNodes[1]->getCrds();
     
+    // all relative displacements below are offset by the initial (artefact) ones, m_U0
     Vector u(2);
-    u(0) = uNd2(0) - uNd1(0);  // converged displacement from previous step
-    u(1) = uNd2(1) - uNd1(1);
+    u(0) = uNd2(0) - uNd1(0) - m_U0(0);  // converged displacement from previous step
+    u(1) = uNd2(1) - uNd1(1) - m_U0(1);
     Vector utrial(2);
-    Dx = utrial(0) = utrialNd2(0) - utrialNd1(0);  // trial displacement (target displacement)
-    Dy = utrial(1) = utrialNd2(1) - utrialNd1(1);
-    Dz = utrialNd2(2) - utrialNd1(2);
+    Dx = utrial(0) = utrialNd2(0) - utrialNd1(0) - m_U0(0);  // trial displacement (target displacement)
+    Dy = utrial(1) = utrialNd2(1) - utrialNd1(1) - m_U0(1);
+    Dz = utrialNd2(2) - utrialNd1(2) - m_U0(2);
     
     Vector r(3), rdot(3);
-    r(0) = utrialNd2(3) - utrialNd1(3);
-    r(1) = utrialNd2(4) - utrialNd1(4);
-    r(2) = utrialNd2(5) - utrialNd1(5);
+    r(0) = utrialNd2(3) - utrialNd1(3) - m_U0(3);
+    r(1) = utrialNd2(4) - utrialNd1(4) - m_U0(4);
+    r(2) = utrialNd2(5) - utrialNd1(5) - m_U0(5);
     rdot(0) = vtrialNd2(3) - vtrialNd1(3);
     rdot(1) = vtrialNd2(4) - vtrialNd1(4);
     rdot(2) = vtrialNd2(5) - vtrialNd1(5);
@@ -525,8 +531,10 @@ int TripleFrictionPendulum::update()
         Fy1 = Fy1 + dFy1; Fy3 = Fy3 + dFy3; Fy5 = Fy5 + dFy5;
         TFPElement(Conv, ep1tmp, ep3tmp, ep5tmp, q1tmp, q3tmp, q5tmp, K, f, k12, k34, k56, d1, d3, d5, ep1, ep3, ep5, q1, q3, q5, u, dusub, Fy1, Fy3, Fy5, E1, E3, E5, H1, H3, H5, E2, E4, E6, Gap2, Gap4, Gap6, Tol, Niter);
         if ((!Conv) && (nDiv < 7)){
-            u(0) = uNd2(0) - uNd1(0);
-            u(1) = uNd2(1) - uNd1(1);
+            // same offset as above - this restarts the substepping from the last
+            // converged state, so missing it here would drift by m_U0 on every retry
+            u(0) = uNd2(0) - uNd1(0) - m_U0(0);
+            u(1) = uNd2(1) - uNd1(1) - m_U0(1);
             dFy1 /= 2.0; dFy3 /= 2.0; dFy5 /= 2.0;
             Fy1 = Fy1pr; Fy3 = Fy3pr; Fy5 = Fy5pr;
             K = Kpr;
@@ -720,7 +728,7 @@ int TripleFrictionPendulum::sendSelf(int commitTag, Channel &theChannel)
     // send element parameters
     int res;
     int dataTag = this->getDbTag();
-    static Vector data(12);
+    static Vector data(20);
     data(0)  = this->getTag();
     data(1)  = L1;
     data(2)  = L2;
@@ -733,6 +741,14 @@ int TripleFrictionPendulum::sendSelf(int commitTag, Channel &theChannel)
     data(9) = Kvt;
     data(10) = MinFv;
     data(11) = TOL;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 6; iu++)
+        data(12 + iu) = m_U0(iu);
+    data(18) = m_U0_initialized ? 1.0 : 0.0;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    data(19) = is_this_element_active ? 1.0 : 0.0;
     res = theChannel.sendVector(dataTag, commitTag, data);
     if (res < 0) {
         opserr << "WARNING TripleFrictionPendulum::sendSelf() - failed to send Vector\n";
@@ -792,7 +808,7 @@ int TripleFrictionPendulum::recvSelf(int commitTag, Channel &theChannel, FEM_Obj
     
     int res;
     int dataTag = this->getDbTag();
-    static Vector data(12);
+    static Vector data(20);
     res = theChannel.recvVector(dataTag, commitTag, data);
     if (res < 0) {
         opserr << "WARNING TripleFrictionPendulum::recvSelf() - failed to receive Vector\n";
@@ -811,6 +827,14 @@ int TripleFrictionPendulum::recvSelf(int commitTag, Channel &theChannel, FEM_Obj
     Kvt = data(9);
     MinFv = data(10);
     TOL = data(11);
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 6; iu++)
+        m_U0(iu) = data(12 + iu);
+    m_U0_initialized = data(18) > 0.0 ? true : false;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    is_this_element_active = data(19) > 0.0 ? true : false;
     
     // receive the two end nodes
     res = theChannel.recvID(dataTag, commitTag, externalNodes);
@@ -1366,4 +1390,29 @@ void TripleFrictionPendulum::StiffnessForm(Matrix &K, Matrix k12, Matrix k34, Ma
             K(i,j) = Ktmp2(i+2,j+2);
         }
     }
+}
+
+void TripleFrictionPendulum::captureInitialDisp(void)
+{
+    // relative, not per-node: this element only ever uses nodal differences
+    const Vector &dsp1 = theNodes[0]->getTrialDisp();
+    const Vector &dsp2 = theNodes[1]->getTrialDisp();
+    for (int i=0; i<6; i++)
+        m_U0(i) = dsp2(i) - dsp1(i);
+    m_U0_initialized = true;
+}
+
+
+void TripleFrictionPendulum::onActivate(void)
+{
+    // Re-capture the offset at the current configuration, so a staged bearing is born
+    // unstressed. setDomain() is deliberately NOT re-run: everything it computes comes from
+    // the nodal coordinates, which have not moved.
+    this->captureInitialDisp();
+    this->update();
+}
+
+
+void TripleFrictionPendulum::onDeactivate(void)
+{
 }

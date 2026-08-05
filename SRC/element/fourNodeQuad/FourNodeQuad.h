@@ -65,6 +65,8 @@ class FourNodeQuad : public Element
 
     int getNumDOF(void);
     void setDomain(Domain *theDomain);
+    void onActivate(void);
+    void onDeactivate(void);
     int setDamping(Domain *theDomain, Damping *theDamping);
 
     // public methods to set the state of the element    
@@ -121,6 +123,15 @@ class FourNodeQuad : public Element
     static Matrix K;		// Element stiffness, damping, and mass Matrix
     static Vector P;		// Element resisting force vector
     Vector Q;		        // Applied nodal loads
+    // Offset of the nodal displacements, so the strain is B*(u - m_U0) and an element
+    // born in an already displaced mesh starts strain free. The initial displacement is
+    // an artefact of the mesh being modelled undeformed and must not generate strain.
+    // The reference geometry (nodal coordinates, shape functions) comes from the
+    // coordinates and does not depend on it.
+    Vector m_U0 = Vector(8);
+    bool m_U0_initialized = false;      // false until m_U0 has been captured
+    void captureInitialDisp(void);      // fills m_U0 from the trial displacements
+
     double b[2];		// Body forces
 
 	double appliedB[2]; // Body forces applied with load pattern, C.McGann, U.Washington

@@ -82,6 +82,7 @@ private:
 	int writeModelNodes();
 	int writeModelElements();
 	int writeModelLocalAxes();
+	int writeModelActivation();
 	int writeSections();
 	int writeSets();
 

@@ -691,10 +691,18 @@ ZeroLength::setDomain(Domain *theDomain)
     // when using database commands
     if (mInitialize == 1) {
       if (diffD != 0.0)
-        d0 = new Vector(diffD);
+        this->captureInitialDisp();
 
-      if (diffV != 0)
-        v0 = new Vector(diffV);
+      if (diffV != 0) {
+        if (v0 != 0 && v0->Size() != diffV.Size()) {
+          delete v0;
+          v0 = 0;
+        }
+        if (v0 == 0)
+          v0 = new Vector(diffV);
+        else
+          *v0 = diffV;
+      }
     }      
 
     if (theDamping)
@@ -1101,6 +1109,8 @@ ZeroLength::sendSelf(int commitTag, Channel &theChannel)
 	idData(4) = connectedExternalNodes(0);
 	idData(5) = connectedExternalNodes(1);
 	idData(6) = useRayleighDamping;
+	// activation state: an element deactivated before the transfer must come back deactivated
+	idData(9) = is_this_element_active ? 1 : 0;
 
   idData(7) = 0;
   idData(8) = 0;
@@ -1126,6 +1136,31 @@ ZeroLength::sendSelf(int commitTag, Channel &theChannel)
 	res += theChannel.sendMatrix(dataTag, commitTag, transformation);
 	if (res < 0) {
 	  opserr <<  "ZeroLength::sendSelf -- failed to send transformation Matrix\n";
+	  return res;
+	}
+
+	// Initial displacement and velocity offsets. They are captured in setDomain, which the
+	// null (broker) constructor disables through mInitialize, so a restore has no other way
+	// of getting them back and the element would be born carrying the whole strain. Both are
+	// numDOF/2 long; the last two slots say whether the sender had them at all, because a
+	// null pointer here means "no offset" and not "a zero offset". This is the only Vector
+	// this sendSelf pushes, so its size cannot collide with another message.
+	int nh = numDOF/2;
+	Vector d0v0Data(numDOF + 2);
+	d0v0Data.Zero();
+	if (d0 != 0 && d0->Size() == nh) {
+	  for (int i = 0; i < nh; i++)
+	    d0v0Data(i) = (*d0)(i);
+	  d0v0Data(numDOF) = 1.0;
+	}
+	if (v0 != 0 && v0->Size() == nh) {
+	  for (int i = 0; i < nh; i++)
+	    d0v0Data(nh + i) = (*v0)(i);
+	  d0v0Data(numDOF + 1) = 1.0;
+	}
+	res += theChannel.sendVector(dataTag, commitTag, d0v0Data);
+	if (res < 0) {
+	  opserr << "ZeroLength::sendSelf -- failed to send d0/v0 Vector\n";
 	  return res;
 	}
 
@@ -1208,6 +1243,47 @@ ZeroLength::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBr
   connectedExternalNodes(0) = idData(4);
   connectedExternalNodes(1) = idData(5);
   useRayleighDamping = idData(6);
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = idData(9) == 1 ? true : false;
+
+  // Initial displacement and velocity offsets, see the matching block in sendSelf. It has
+  // to come after numDOF above, and before the early return below that mirrors the
+  // `if (numMaterials1d < 1)` of sendSelf.
+  int nh = numDOF/2;
+  Vector d0v0Data(numDOF + 2);
+  res += theChannel.recvVector(dataTag, commitTag, d0v0Data);
+  if (res < 0) {
+    opserr << "ZeroLength::recvSelf -- failed to receive d0/v0 Vector\n";
+    return res;
+  }
+  if (d0v0Data(numDOF) > 0.0) {
+    if (d0 != 0 && d0->Size() != nh) {
+      delete d0;
+      d0 = 0;
+    }
+    if (d0 == 0)
+      d0 = new Vector(nh);
+    for (int i = 0; i < nh; i++)
+      (*d0)(i) = d0v0Data(i);
+  }
+  else if (d0 != 0) {
+    delete d0;
+    d0 = 0;
+  }
+  if (d0v0Data(numDOF + 1) > 0.0) {
+    if (v0 != 0 && v0->Size() != nh) {
+      delete v0;
+      v0 = 0;
+    }
+    if (v0 == 0)
+      v0 = new Vector(nh);
+    for (int i = 0; i < nh; i++)
+      (*v0)(i) = d0v0Data(nh + i);
+  }
+  else if (v0 != 0) {
+    delete v0;
+    v0 = 0;
+  }
   
   if (idData(3) < 1) {
     numMaterials1d = 0;
@@ -2022,9 +2098,12 @@ ZeroLength::updateDir(const Vector& x, const Vector& y)
 void
 ZeroLength::onActivate()
 {
-
-    Domain* theDomain = this->getDomain();
-    this->setDomain(theDomain);
+    // Re-capture the initial relative displacement at the current configuration, so
+    // a staged element is born strain free.
+    // setDomain() is deliberately NOT re-run: setTran1d() re-allocates t1d, and the
+    // damping branch re-allocates fd and the damping history, none of them freeing
+    // what they replace. Nothing setDomain computes depends on the offset anyway.
+    this->captureInitialDisp();
     this->update();
 }
 
@@ -2033,4 +2112,26 @@ void
 ZeroLength::onDeactivate()
 {
 
+}
+
+void
+ZeroLength::captureInitialDisp(void)
+{
+    // Offset of the relative displacement, so the materials see (u2 - u1) - d0 and a
+    // staged element is born strain free. The initial relative displacement is an
+    // artefact of the mesh being modelled undeformed and must not generate strain.
+    // v0 is deliberately left alone: the relative VELOCITY at the birth instant is
+    // physical, a viscous device installed then has to feel it.
+    const Vector& disp1 = theNodes[0]->getTrialDisp();
+    const Vector& disp2 = theNodes[1]->getTrialDisp();
+    Vector diffD = disp2 - disp1;
+
+    if (d0 != 0 && d0->Size() != diffD.Size()) {
+        delete d0;
+        d0 = 0;
+    }
+    if (d0 == 0)
+        d0 = new Vector(diffD);
+    else
+        *d0 = diffD;
 }

@@ -50,6 +50,7 @@ public:
     ~CorotCrdTransfWarping3d();
     
     int initialize(Node *nodeIPointer, Node *nodeJPointer);
+    void forceCaptureInitialDisp(void);
     int update(void);
     double getInitialLength(void);
     double getDeformedLength(void);

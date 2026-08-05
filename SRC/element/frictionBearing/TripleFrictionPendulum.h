@@ -71,6 +71,8 @@ public:
     Node **getNodePtrs();
     int getNumDOF();
     void setDomain(Domain *theDomain);
+    void onActivate(void);
+    void onDeactivate(void);
     
     // public methods to set the state of the element
     int commitState();
@@ -175,6 +177,17 @@ private:
     double TorqZ, KrotZ;
     double Hisolator;
     double Dx, Dy, Dz;
+
+    // Offset of the RELATIVE nodal displacements (disp2 - disp1 at birth), so a bearing
+    // born in an already displaced mesh starts unstressed. Relative and 6 long, not the
+    // 12-component global vector of the other bearings, because this element works
+    // directly on nodal differences and has no Tgl. Applied to the trial AND to the last
+    // converged displacement, never to the increment (offset-free by construction) nor to
+    // the velocities (physical at the birth instant). Hisolator comes from the nodal
+    // coordinates and is untouched.
+    Vector m_U0 = Vector(6);
+    bool m_U0_initialized = false;  // false until m_U0 has been captured
+    void captureInitialDisp(void);  // fills m_U0 from the trial displacements
     bool Conv;
     
     // private attributes - a copy for each object of the class

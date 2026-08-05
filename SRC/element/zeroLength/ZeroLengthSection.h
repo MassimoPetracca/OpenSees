@@ -68,6 +68,8 @@ class ZeroLengthSection : public Element
 
     int getNumDOF(void);	
     void setDomain(Domain *theDomain);
+    void onActivate(void);
+    void onDeactivate(void);
 
     // public methods to set the state of the element    
     int update(void);       // added by MSN to allow errors in setting section trial deformation
@@ -110,6 +112,7 @@ class ZeroLengthSection : public Element
     void setUp (int Nd1, int Nd2, const Vector& x, const Vector& y);
     void setTransformation(void);
     void computeSectionDefs(void);
+    void captureInitialDisp(void);
 
     // private attributes - a copy for each object of the class
     ID  connectedExternalNodes;         // contains the tags of the end nodes
@@ -120,6 +123,15 @@ class ZeroLengthSection : public Element
 	
     Matrix *A;	// Transformation matrix ... e = A*(u2-u1)
     Vector *v;	// Section deformation vector, the element basic deformations
+
+    // Offset of the relative displacement, so the section sees (u2 - u1) - d0 and an
+    // element born in an already displaced mesh starts strain free. That initial
+    // relative displacement is an artefact of the mesh being modelled undeformed.
+    // A null pointer means it has not been captured yet.
+    Vector *d0 = 0;
+    // set by recvSelf: without it a restore would re-capture the offset from the
+    // nodes, which Domain::recvSelf has already put back at their displacements
+    bool d0Restored = false;
     
     Matrix *K;	// Pointer to element stiffness matrix
     Vector *P;	// Pointer to element force vector

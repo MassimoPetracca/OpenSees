@@ -73,6 +73,8 @@ public:
 	Node **getNodePtrs(void);
 	int getNumDOF(void);
 	void setDomain(Domain *theDomain);
+	void onActivate(void);
+	void onDeactivate(void);
 
 	// Public methods to set the state of the element
 	int commitState(void);
@@ -224,6 +226,27 @@ private:
 	Matrix T;							// Transform dofs
 	Matrix T6;							// Transform Node DOFs
 	Matrix Tt;							// Transform crds
+
+	// Initial displacement offset, in global cs, one entry per corner-node DOF. It holds
+	// the nodal displacement present when the element enters the domain - or when it is
+	// activated - and it is subtracted from the trial displacements, so that an element
+	// born in an already displaced mesh starts strain free. That displacement is an
+	// artefact of the mesh being modelled undeformed and must not generate strain.
+	// The reference configuration (nd*Crds, h, Lw, T, K1..K22) comes from the nodal
+	// coordinates and does not depend on it.
+	// While the element is deactivated its m internal 1-dof nodes would keep their
+	// equations but receive stiffness from nobody, leaving the global matrix singular.
+	// onDeactivate() therefore fixes them and onActivate() releases them again. The tags
+	// of the SP_Constraints we created are kept so they can be removed; the bool is the
+	// idempotency guard, since Element::deactivate() calls the hook unconditionally.
+	ID m_internal_sp_tags;
+	bool m_internal_sp_installed = false;
+	void fixInternalDofs(void);
+	void releaseInternalDofs(void);
+
+	Vector m_U0 = Vector(24);
+	bool m_U0_initialized = false;      // false until m_U0 has been captured
+	void captureInitialDisp(void);      // fills m_U0 from the current trial displacements
 };
 #endif
 #pragma once

@@ -266,6 +266,11 @@ void  Brick::setDomain( Domain *theDomain )
     }
   }
 
+  // Capture the initial displacement offset (see m_U0). Not done again after a
+  // recvSelf, which brings m_U0 in already captured.
+  if (!m_U0_initialized)
+    this->captureInitialDisp();
+
   this->DomainComponent::setDomain(theDomain);
 
 }
@@ -1052,9 +1057,9 @@ Brick::update(void)
 
       const Vector &ul = nodePointers[j]->getTrialDisp();
 
-      double ul0 = ul(0);
-      double ul1 = ul(1);
-      double ul2 = ul(2);
+      double ul0 = ul(0) - m_U0(3*j);
+      double ul1 = ul(1) - m_U0(3*j + 1);
+      double ul2 = ul(2) - m_U0(3*j + 2);
 
       strain(0) += b00 * ul0;
       strain(1) += b11 * ul1;
@@ -1402,7 +1407,7 @@ int  Brick::sendSelf (int commitTag, Channel &theChannel)
   // Now quad sends the ids of its materials
   int matDbTag;
   
-  static ID idData(28);
+  static ID idData(29);
 
   idData(24) = this->getTag();
   if (alphaM != 0 || betaK != 0 || betaK0 != 0 || betaKc != 0) 
@@ -1447,13 +1452,15 @@ int  Brick::sendSelf (int commitTag, Channel &theChannel)
     idData(27) = dbTag;
   }
 
+  // activation state: an element deactivated before the transfer must come back deactivated
+  idData(28) = is_this_element_active ? 1 : 0;
   res += theChannel.sendID(dataTag, commitTag, idData);
   if (res < 0) {
     opserr << "WARNING Brick::sendSelf() - " << this->getTag() << " failed to send ID\n";
     return res;
   }
 
-  static Vector dData(7);
+  static Vector dData(32);
   dData(0) = alphaM;
   dData(1) = betaK;
   dData(2) = betaK0;
@@ -1461,6 +1468,11 @@ int  Brick::sendSelf (int commitTag, Channel &theChannel)
   dData(4) = b[0];
   dData(5) = b[1];
   dData(6) = b[2];
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    dData(7 + i) = m_U0(i);
+  dData(31) = m_U0_initialized ? 1.0 : 0.0;
 
   if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
     opserr << "Brick::sendSelf() - failed to send double data\n";
@@ -1499,7 +1511,7 @@ int  Brick::recvSelf (int commitTag,
   
   int dataTag = this->getDbTag();
 
-  static ID idData(28);
+  static ID idData(29);
   res += theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
     opserr << "WARNING Brick::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1507,8 +1519,10 @@ int  Brick::recvSelf (int commitTag,
   }
 
   this->setTag(idData(24));
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = idData(28) == 1 ? true : false;
 
-  static Vector dData(7);
+  static Vector dData(32);
   if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
     opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
     return -1;
@@ -1520,6 +1534,11 @@ int  Brick::recvSelf (int commitTag,
   b[0] = dData(4);
   b[1] = dData(5);
   b[2] = dData(6);
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    m_U0(i) = dData(7 + i);
+  m_U0_initialized = dData(31) > 0.0 ? true : false;
 
 
   connectedExternalNodes(0) = idData(16);
@@ -2008,3 +2027,30 @@ Brick::updateParameter(int parameterID, Information &info)
     }
 }
 
+
+void
+Brick::captureInitialDisp(void)
+{
+  for (int i = 0; i < 8; i++) {
+    const Vector &iDisp = nodePointers[i]->getTrialDisp();
+    m_U0(3*i)     = iDisp(0);
+    m_U0(3*i + 1) = iDisp(1);
+    m_U0(3*i + 2) = iDisp(2);
+  }
+  m_U0_initialized = true;
+}
+
+void
+Brick::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+Brick::onDeactivate(void)
+{
+}

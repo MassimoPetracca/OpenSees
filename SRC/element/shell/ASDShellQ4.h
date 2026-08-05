@@ -154,6 +154,8 @@ public:
     int revertToLastCommit();
     int revertToStart();
     int update();
+    void onActivate();
+    void onDeactivate();
 
     // methods to return the current linearized stiffness,
     // damping and mass matrices
@@ -230,6 +232,11 @@ private:
 
     // initialization flag
     bool m_initialized = false;
+
+    // one-shot request set by onActivate(): makes setDomain() re-capture the
+    // initial displacement offset at the current configuration, so a staged
+    // element is born strain free. Not serialized: it is a request, not state.
+    bool m_force_capture_initial_disp = false;
 };
 
 #endif // ASDShellQ4_h

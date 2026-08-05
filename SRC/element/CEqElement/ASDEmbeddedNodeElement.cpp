@@ -465,12 +465,10 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
         }
     }
 
-    // compute initial displacement vector
-    if (!m_U0_computed) {
-        m_U0.resize(m_num_dofs);
-        m_U0 = getGlobalDisplacements();
-        m_U0_computed = true;
-    }
+    // compute initial displacement vector. Not done again after a recvSelf, which
+    // brings m_U0 in already captured.
+    if (!m_U0_computed)
+        this->captureInitialDisp();
 
     // call base class implementation
     DomainComponent::setDomain(theDomain);
@@ -685,9 +683,13 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     idData(11) = m_p_flag ? 1 : 0;
     idData(12) = m_up ? 1 : 0;
     idData(13) = m_U0_computed ? 1 : 0;
+    // the mapping starts at 15, NOT at 14: writing it from 14 overwrote the size with
+    // m_mapping(0), and recvSelf then read that as the size - zero for the usual
+    // layout, so the mapping came back empty and the element lost all its stiffness.
+    // idData(35) still fits: the mapping is at most 20 long, hence 15..34.
     idData(14) = m_mapping.Size();
     for (int i = 0; i < m_mapping.Size(); ++i)
-        idData(14 + i) = m_mapping(i);
+        idData(15 + i) = m_mapping(i);
     res += theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send ID\n";
@@ -698,12 +700,15 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     // K
     // KP
     // initial displacement (at most we can have 30 dofs)
-    static Vector vectData(32);
+    static Vector vectData(33);
     vectData.Zero();
     vectData(0) = m_K;
     vectData(1) = m_KP;
     for (int i = 0; i < m_num_dofs; ++i)
         vectData(2 + i) = m_U0(i);
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    vectData(32) = is_this_element_active ? 1.0 : 0.0;
     res += theChannel.sendVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send Vector\n";
@@ -760,12 +765,12 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int num_local_dofs = idData(14);
     m_mapping.resize(num_local_dofs);
     for (int i = 0; i < m_mapping.Size(); ++i)
-        m_mapping(i) = idData(14 + i);
+        m_mapping(i) = idData(15 + i);
 
     // DOUBLE data
     // K
     // KP
-    static Vector vectData(32);
+    static Vector vectData(33);
     res += theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -776,6 +781,9 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     m_U0.resize(m_num_dofs);
     for (int i = 0; i < m_num_dofs; ++i)
         m_U0(i) = vectData(2 + i);
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    is_this_element_active = vectData(32) > 0.0 ? true : false;
 
     // done
     return res;
@@ -1437,4 +1445,30 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UP()
 
     // done
     return K;
+}
+
+void ASDEmbeddedNodeElement::captureInitialDisp(void)
+{
+    // getGlobalDisplacements() subtracts m_U0 as soon as m_U0_computed is set, so the flag
+    // has to be cleared for it to return the RAW nodal displacements. That is also the only
+    // reason setDomain() can do this capture in a single line while the flag is still false.
+    m_U0_computed = false;
+    m_U0.resize(m_num_dofs);
+    m_U0 = getGlobalDisplacements();
+    m_U0_computed = true;
+}
+
+void ASDEmbeddedNodeElement::onActivate(void)
+{
+    // Re-capture the offset at the current configuration, so a staged element is born with
+    // no constraint force. setDomain() is deliberately NOT re-run: everything else it
+    // computes (dof mapping, node pointers) comes from the topology, which has not changed.
+    // update() is not called either - it is a no-op here, the element keeps no trial state
+    // and getTangentStiff()/getResistingForce() rebuild from getGlobalDisplacements() on
+    // demand, so the new offset is already in effect within this iteration.
+    this->captureInitialDisp();
+}
+
+void ASDEmbeddedNodeElement::onDeactivate(void)
+{
 }

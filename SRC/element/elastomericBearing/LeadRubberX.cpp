@@ -465,6 +465,11 @@ void LeadRubberX::setDomain(Domain *theDomain)
         return;
     }
     
+    // Capture the initial displacement offset (see m_U0). Not done again after a
+    // recvSelf, which brings m_U0 in already captured.
+    if (!m_U0_initialized)
+        this->captureInitialDisp();
+    
     // call the base class method
     this->DomainComponent::setDomain(theDomain);
     
@@ -576,9 +581,10 @@ int LeadRubberX::update()
     const Vector &vel2 = theNodes[1]->getTrialVel();
     
     static Vector ug(12), ugdot(12), uldot(12);
+    // displacements offset by the initial (artefact) ones; velocities are not
     for (int i=0; i<6; i++)  {
-        ug(i)   = dsp1(i);  ugdot(i)   = vel1(i);
-        ug(i+6) = dsp2(i);  ugdot(i+6) = vel2(i);
+        ug(i)   = dsp1(i) - m_U0(i);       ugdot(i)   = vel1(i);
+        ug(i+6) = dsp2(i) - m_U0(i+6);  ugdot(i+6) = vel2(i);
     }
     
     // transform response from the global to the local system
@@ -927,7 +933,7 @@ const Vector& LeadRubberX::getResistingForceIncInertia()
 int LeadRubberX::sendSelf(int commitTag, Channel &sChannel)
 {
     // send element parameters
-    static Vector data(28);
+    static Vector data(42);
     data(0)  = this->getTag();
     data(1)  = qYield0;
     data(2)  = alpha;
@@ -956,6 +962,14 @@ int LeadRubberX::sendSelf(int commitTag, Channel &sChannel)
     data(25) = tag3;
     data(26) = tag4;
     data(27) = tag5;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 12; iu++)
+        data(28 + iu) = m_U0(iu);
+    data(40) = m_U0_initialized ? 1.0 : 0.0;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    data(41) = is_this_element_active ? 1.0 : 0.0;
     
     sChannel.sendVector(0, commitTag, data);
     
@@ -976,7 +990,7 @@ int LeadRubberX::recvSelf(int commitTag, Channel &rChannel,
     FEM_ObjectBroker &theBroker)
 {
     // receive element parameters
-    static Vector data(28);
+    static Vector data(42);
     rChannel.recvVector(0, commitTag, data);
     this->setTag((int)data(0));
     
@@ -1005,6 +1019,14 @@ int LeadRubberX::recvSelf(int commitTag, Channel &rChannel,
     tag3 = (int)data(25);
     tag4 = (int)data(26);
     tag5 = (int)data(27);
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 12; iu++)
+        m_U0(iu) = data(28 + iu);
+    m_U0_initialized = data(40) > 0.0 ? true : false;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    is_this_element_active = data(41) > 0.0 ? true : false;
     
     // receive the two end nodes
     rChannel.recvID(0, commitTag, connectedExternalNodes);
@@ -1484,4 +1506,31 @@ double LeadRubberX::getCurrentTemp(double qYield, double TL_commit, double v)
     double TL_trial = TL_commit + 0.5*(deltaT1+deltaT2);
     
     return TL_trial;
+}
+
+void LeadRubberX::captureInitialDisp(void)
+{
+    const Vector &dsp1 = theNodes[0]->getTrialDisp();
+    const Vector &dsp2 = theNodes[1]->getTrialDisp();
+    for (int i=0; i<6; i++)  {
+        m_U0(i)   = dsp1(i);
+        m_U0(i+6) = dsp2(i);
+    }
+    m_U0_initialized = true;
+}
+
+
+void LeadRubberX::onActivate(void)
+{
+    // Re-capture the offset at the current configuration, so a staged bearing is born
+    // unstressed. setDomain() is deliberately NOT re-run: setUp() would rebuild Tgl from
+    // x and y after having already overwritten y with z cross x, and everything it
+    // computes comes from the nodal coordinates, which have not moved.
+    this->captureInitialDisp();
+    this->update();
+}
+
+
+void LeadRubberX::onDeactivate(void)
+{
 }

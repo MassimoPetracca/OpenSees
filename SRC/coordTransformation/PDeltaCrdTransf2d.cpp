@@ -268,16 +268,6 @@ PDeltaCrdTransf2d::computeElemtLengthAndOrient()
     dx(0) = ndJCoords(0) - ndICoords(0);
     dx(1) = ndJCoords(1) - ndICoords(1);
     
-    if (nodeIInitialDisp != 0) {
-        dx(0) -= nodeIInitialDisp[0];
-        dx(1) -= nodeIInitialDisp[1];
-    }
-    
-    if (nodeJInitialDisp != 0) {
-        dx(0) += nodeJInitialDisp[0];
-        dx(1) += nodeJInitialDisp[1];
-    }
-    
     if (nodeJOffset != 0) {
         dx(0) += nodeJOffset[0];
         dx(1) += nodeJOffset[1];
@@ -1329,4 +1319,23 @@ PDeltaCrdTransf2d::getRigidOffsets(Vector &offsets)
   }
 
   return 0;
+}
+
+void
+PDeltaCrdTransf2d::forceCaptureInitialDisp(void)
+{
+    // One-shot: discard the captured initial displacement offset so that the next
+    // initialize() re-captures it at the current configuration. Called by an element
+    // on activation, so that a staged element is born strain free. The arrays are
+    // freed here because initialize() allocates without checking, and the latch is
+    // reset so the capture happens exactly once more.
+    if (nodeIInitialDisp != 0) {
+        delete [] nodeIInitialDisp;
+        nodeIInitialDisp = 0;
+    }
+    if (nodeJInitialDisp != 0) {
+        delete [] nodeJInitialDisp;
+        nodeJInitialDisp = 0;
+    }
+    initialDispChecked = false;
 }

@@ -312,16 +312,8 @@ void ZeroLengthContactASDimplex::setDomain(Domain* theDomain)
 
     // compute the initial gap vector in global coordinates
     // accounting for the geometrical gap and initial displacement
-    if (!gap0_initialized) {
-        const Vector& P0 = theNodes[0]->getCrds();
-        const Vector& P1 = theNodes[1]->getCrds();
-        const Vector& U0 = theNodes[0]->getTrialDisp();
-        const Vector& U1 = theNodes[1]->getTrialDisp();
-        gap0.Zero();
-        for (int i = 0; i < numDIM; ++i)
-            gap0(i) = P1(i) - U1(i) - P0(i) + U0(i);
-        gap0_initialized = true;
-    }
+    if (!gap0_initialized)
+        this->computeInitialGap();
 
     // call the base class method
     DomainComponent::setDomain(theDomain);
@@ -491,7 +483,7 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     int dataTag = this->getDbTag();
 
     // int data
-    static ID idata(10);
+    static ID idata(13);
     idata(0) = getTag();
     idata(1) = numDIM;
     idata(2) = numDOF[0];
@@ -502,6 +494,10 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     idata(7) = sv.dtime_is_user_defined ? 1 : 0;
     idata(8) = sv.dtime_first_set ? 1 : 0;
     idata(9) = gap0_initialized ? 1 : 0;
+    idata(10) = nup;
+    idata(11) = static_cast<int>(UPDepExplicit);
+    // activation state: an element deactivated before the transfer must come back deactivated
+    idata(12) = is_this_element_active ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::sendSelf() - " << this->getTag() << " failed to send ID\n";
@@ -557,7 +553,7 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     int dataTag = this->getDbTag();
 
     // int data
-    static ID idata(10);
+    static ID idata(13);
     res = theChannel.recvID(dataTag, commitTag, idata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::recvSelf() - failed to receive ID\n";
@@ -573,6 +569,11 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     sv.dtime_is_user_defined = idata(7) == 1;
     sv.dtime_first_set = idata(8) == 1;
     gap0_initialized = idata(9) == 1;
+    int nup = idata(10);
+    theUPNodes.resize(nup);
+    UPDepExplicit = static_cast<bool>(idata(11));
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = idata(12) == 1 ? true : false;
 
     // double data
     static Vector ddata(31);
@@ -610,7 +611,7 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     sv.dtime_n = ddata(26);
     sv.dtime_n_commit = ddata(27);
     gap0(0) = ddata(28);
-    gap0(1) = ddata(39);
+    gap0(1) = ddata(29);
     gap0(2) = ddata(30);
 
     return 0;
@@ -1136,4 +1137,29 @@ const Matrix& ZeroLengthContactASDimplex::theBMatrix()
         B(i, i) = -1;
     }
     return B;
+}
+
+void ZeroLengthContactASDimplex::computeInitialGap()
+{
+    const Vector& P0 = theNodes[0]->getCrds();
+    const Vector& P1 = theNodes[1]->getCrds();
+    const Vector& U0 = theNodes[0]->getTrialDisp();
+    const Vector& U1 = theNodes[1]->getTrialDisp();
+    gap0.Zero();
+    for (int i = 0; i < numDIM; ++i)
+        gap0(i) = P1(i) - U1(i) - P0(i) + U0(i);
+    gap0_initialized = true;
+}
+
+void ZeroLengthContactASDimplex::onActivate()
+{
+    // Re-capture the initial gap at the current configuration, so a staged element is
+    // born with no contact force from a relative displacement it did not cause.
+    // setDomain() is deliberately not re-run: nothing else it computes depends on it.
+    this->computeInitialGap();
+    this->update();
+}
+
+void ZeroLengthContactASDimplex::onDeactivate()
+{
 }
