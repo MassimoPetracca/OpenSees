@@ -66,7 +66,9 @@
 
 #endif
 
-SuperLUStat_t stat;
+// note: do not name this 'stat': on Windows the UCRT <sys/stat.h> declares a
+// global function 'stat', and the two clash at namespace scope (C2373)
+static SuperLUStat_t sluStat;
 SuperMatrix A;
 gridinfo_t grid;
 MPI_Comm comm_SuperLU;
@@ -188,7 +190,7 @@ DistributedSuperLU::solve(void)
     //
 
     pdgssvx_ABglobal(&options, &A, &ScalePermstruct, Xptr, ldb, nrhs, &grid,
-		     &LUstruct, berr, &stat, &info);
+		     &LUstruct, berr, &sluStat, &info);
 
     if (theSOE->factored == false) {
       options.Fact = FACTORED;      
@@ -254,7 +256,7 @@ DistributedSuperLU::setSize()
   //
   // Initialize the statistics variables.
   //
-  PStatInit(&stat);
+  PStatInit(&sluStat);
   
   //
   // Create compressed column matrix for A. 
@@ -294,7 +296,7 @@ DistributedSuperLU::setSize()
   //
   // Initialize the statistics variables. 
   //
-  PStatInit(&stat);
+  PStatInit(&sluStat);
 
   return 0;
 }
