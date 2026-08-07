@@ -152,6 +152,9 @@ bool setMPIDSOEFlag = false;
 // active object
 static OpenSeesCommands* cmds = 0;
 
+// so that a command implemented in a file of its own can reach the analysis state
+OpenSeesCommands* OPS_GetOpenSeesCommands() { return cmds; }
+
 OpenSeesCommands::OpenSeesCommands(DL_Interpreter* interp)
     :interpreter(interp), theDomain(0), 
      ndf(0), ndm(0),

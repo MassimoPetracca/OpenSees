@@ -99,6 +99,7 @@ OBJS       = NDMaterial.o \
 	ElasticPlaneStress.o \
 	ElasticOrthotropicPlaneStress.o \
 	VonPapaDamage.o \
+	ASDPlasticDamageConcrete3DMaterial.o \
 	ASDConcrete3DMaterial.o
 
 

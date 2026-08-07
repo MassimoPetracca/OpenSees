@@ -894,6 +894,11 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "test", &specifyCTest, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);    
+    // wraps the test declared above with the IMPL-EX error criterion.
+    // See SRC/convergenceTest/TclImplexTestCommand.cpp
+    extern int TclImplexTestCommand(ClientData, Tcl_Interp *, int, TCL_Char **);
+    Tcl_CreateCommand(interp, "implexTest", &TclImplexTestCommand,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "testNorm", &getCTestNorms, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "testNorms", &getCTestNorms, 

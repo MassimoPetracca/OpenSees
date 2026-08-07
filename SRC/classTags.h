@@ -80,6 +80,7 @@
 #define CONVERGENCE_TEST_NormDispAndUnbalance               9
 #define CONVERGENCE_TEST_NormDispOrUnbalance               10
 #define CONVERGENCE_TEST_CTestPFEM                         11
+#define CONVERGENCE_TEST_CTestImplexWrapper                 12
 
 
 #define GRND_TAG_ElCentroGroundMotion                 1
@@ -265,6 +266,7 @@
 #define MAT_TAG_QbSandCPT 234
 #define MAT_TAG_ASDSteel1DMaterial 235
 #define MAT_TAG_CreepShrinkageACI209 236
+#define MAT_TAG_ASDHysteretic1DMaterial 237
 
 #define MAT_TAG_FedeasMaterial    1000
 #define MAT_TAG_FedeasBond1       1001
@@ -568,6 +570,7 @@
 #define ND_TAG_SmearedSteelDoubleLayerT2DMaterial01 7019		  // M. J. Nunez - UChile
 
 #define ND_TAG_InitStrainNDMaterial 7020 // Massimo Petracca ASDEA Software
+#define ND_TAG_ASDPlasticDamageConcrete3DMaterial 7021 // Massimo Petracca ASDEA Software
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
 
 

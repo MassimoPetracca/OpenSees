@@ -9,8 +9,13 @@
 target_sources(OPS_Material
     PRIVATE
       Material.cpp
+      ASDHardeningLaw.cpp
+      IMPLEXManager.cpp
     PUBLIC
       Material.h
+      ASDHardeningLaw.h
+      IMPLEXManager.h
+      ASDSpectralSplit.h
 )
 
 target_include_directories(OPS_Material PUBLIC ${CMAKE_CURRENT_LIST_DIR})

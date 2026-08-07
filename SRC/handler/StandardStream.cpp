@@ -125,7 +125,15 @@ StandardStream::tag(const char *tagName, const char *value)
   (*this) << tagName << " " << value << "\n";
 
 
-  numIndent++;
+  // SELF-CLOSING, like the same call on FileStream and XmlFileStream: a tag
+  // given its value on the spot has nothing left to open, so it must not leave
+  // the indentation one level deeper. It used to, and since the idiom of the
+  // whole codebase is ONE endTag() for the enclosing one-argument tag (549
+  // one-argument tags, 4019 two-argument ones, 502 endTag() calls), every
+  // labelled response leaked one level per label on this stream - which is
+  // opserr. Harmless in a model built once, quadratic where setResponse is
+  // called in a loop: the pointwise NDTest driver reached lines 10011 characters
+  // wide and 93 MB of output in a suite that should print nothing.
 
   return 0;
 }

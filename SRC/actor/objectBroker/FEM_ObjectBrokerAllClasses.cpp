@@ -48,6 +48,7 @@
 #include "convergenceTest/CTestEnergyIncr.h" 
 #include "convergenceTest/CTestRelativeEnergyIncr.h"
 #include "convergenceTest/CTestFixedNumIter.h"
+#include "convergenceTest/CTestImplexWrapper.h"
 
 // graph numbering schemes
 #include "graph/numberer/RCM.h"
@@ -75,6 +76,7 @@
 #include "TensionOnlyMaterial.h"
 #include "ASD_SMA_3K.h"
 #include "ASDConcrete1DMaterial.h"
+#include "ASDHysteretic1DMaterial.h"
 #include "ASDSteel1DMaterial.h"
 #include "Concrete01.h"
 #include "Concrete01WithSITC.h"
@@ -311,6 +313,7 @@
 #include "InitStrainNDMaterial.h"
 #include "MinMaxNDMaterial.h"
 #include "ASDConcrete3DMaterial.h"
+#include "ASDPlasticDamageConcrete3DMaterial.h"
 #include "PlasticDamageConcrete3d.h"
 #include "PlasticDamageConcretePlaneStress.h"
 #include "ConcreteS.h"
@@ -1765,6 +1768,9 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 	case MAT_TAG_ASDConcrete1DMaterial:  
 	     return new ASDConcrete1DMaterial();
 
+	case MAT_TAG_ASDHysteretic1DMaterial:
+	     return new ASDHysteretic1DMaterial();
+
 	case MAT_TAG_ASDSteel1DMaterial:  
 	     return new ASDSteel1DMaterial();
 
@@ -2453,6 +2459,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
   case ND_TAG_ASDConcrete3DMaterial:
       return new ASDConcrete3DMaterial();
 
+  case ND_TAG_ASDPlasticDamageConcrete3DMaterial:
+      return new ASDPlasticDamageConcrete3DMaterial();
+
   case ND_TAG_PlasticDamageConcrete3d:
       return new PlasticDamageConcrete3d();
 
@@ -2555,6 +2564,9 @@ FEM_ObjectBrokerAllClasses::getNewConvergenceTest(int classTag)
 	     
 	case CONVERGENCE_TEST_CTestFixedNumIter:  
 	     return new CTestFixedNumIter();
+	     
+	case CONVERGENCE_TEST_CTestImplexWrapper:
+	     return new CTestImplexWrapper();
 	     
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getNewConvergenceTest - ";
