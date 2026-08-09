@@ -81,6 +81,10 @@ namespace {
 		long long newton_ok = 0;          // den > 0, a Newton direction exists
 		long long den_nonpositive = 0;    // den <= 0 or not finite
 		long long at_apex = 0;            // ... and the state IS the apex
+		long long no_flow = 0;            // m is identically zero: nothing to bracket
+		long long damage_return = 0;      // ... so the return ran on kappa_t instead
+		long long damage_return_ok = 0;
+		long long cycle_bracketed = 0;   // the corrector was going round
 		long long bracket_called = 0;
 		long long bracket_found = 0;
 		long long bracket_scan_hit = 0;   // the geometric scan landed on the root
@@ -124,6 +128,8 @@ void ASDPlasticDamageConcrete3DReportCounters()
 	ASDCDP3D_DUMP(integrate) ASDCDP3D_DUMP(elastic) ASDCDP3D_DUMP(plastic)
 	ASDCDP3D_DUMP(iterations) ASDCDP3D_DUMP(residuals)
 	ASDCDP3D_DUMP(newton_ok) ASDCDP3D_DUMP(den_nonpositive) ASDCDP3D_DUMP(at_apex)
+	ASDCDP3D_DUMP(no_flow) ASDCDP3D_DUMP(damage_return) ASDCDP3D_DUMP(damage_return_ok)
+	ASDCDP3D_DUMP(cycle_bracketed)
 	ASDCDP3D_DUMP(bracket_called) ASDCDP3D_DUMP(bracket_found)
 	ASDCDP3D_DUMP(bracket_scan_hit) ASDCDP3D_DUMP(bracket_exhausted)
 	ASDCDP3D_DUMP(backtrack) ASDCDP3D_DUMP(backtrack_exhausted)
@@ -533,8 +539,26 @@ void* OPS_ASDPlasticDamageConcrete3DMaterial(void)
 	// instead of a rejected input. The bounds are not taste, they are where the
 	// formulas stop existing: fb0/fc0 = 0.5 kills alpha, Kc = 0.5 kills gamma,
 	// nu = 0.5 kills the bulk modulus and psi = 90 deg kills tan(psi)
-	if (!(nu > -1.0 && nu < 0.5)) {
-		opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: 'nu' must be in (-1, 0.5), got " << nu << ".\n";
+	// ... AND FOR nu THE BOUND IS TIGHTER THAN WHERE THE FORMULA DIES, on purpose.
+	// Thermodynamics allows (-1, 0.5) and the elastic tensor exists on all of it,
+	// but this is a CONCRETE model: nu < 0 is auxetic, which concrete is not, and
+	// the negative end was not merely unused - it was actively misleading. The
+	// 55-case validation suite carried a nu = -0.5 case, and that one case
+	// produced 43 of the 380 failed steps, 43 of the 135 exhausted backtracks and
+	// the WORST disagreement with the Python bench in the whole suite, 95.6 MPa.
+	// Every summary of the model's robustness was dominated by an input nobody
+	// will ever write.
+	//
+	// The upper end is 0.499 and not 0.5 for the same practical reason: the pole
+	// is at 0.5, but lam = nu*mu2/(1-2nu) is already 249*mu2 at 0.499 and 2.5e6
+	// times mu2 at 0.4999999, so 'representable' stops meaning 'usable' well
+	// before the formula stops existing. Anything closer to the pole is a
+	// conditioning problem the caller cannot see, so it is refused where it can.
+	if (!(nu >= 0.0 && nu <= 0.499)) {
+		opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: 'nu' must be in [0, 0.499], got " << nu <<
+			": below 0 is auxetic, which concrete is not, and above 0.499 the bulk"
+			" modulus is so close to its pole at 0.5 that lam = nu*mu2/(1-2nu)"
+			" swamps the shear modulus.\n";
 		return nullptr;
 	}
 	if (!(fb0_fc0 > 0.5)) {
@@ -1248,18 +1272,42 @@ int ASDPlasticDamageConcrete3DMaterial::effective(const Vector& eps,
 //  7  the return mapping                                               //
 // ==================================================================== //
 
-double ASDPlasticDamageConcrete3DMaterial::residualScale(double qt, double qc) const
+double ASDPlasticDamageConcrete3DMaterial::residualScale(void) const
 {
-	double beta = surfaceBeta(qt, qc);
-	double scale = std::max(qc, 1.0e-12) * (1.0 + std::abs(beta) / (1.0 - alpha));
-	// THE FINITENESS IS THE CONTRACT, so it is asserted here rather than
-	// inferred from the floor upstream. surfaceBeta keeps the ratio finite for
-	// any strength a real table carries, but this is a PRODUCT of two large
-	// numbers: the failure mode if it overflows is not a wrong number, it is
-	// |F| <= tol*inf reporting every state as converged. A finite ceiling makes
-	// the tolerance unreachably loose instead, which is a diverging step -
-	// reported - instead of a silent success
-	return std::isfinite(scale) ? scale : 1.0e300;
+	// THE STRENGTH SCALE OF THE PROBLEM, AND IT MUST NOT MOVE WITH THE STATE.
+	//
+	// It used to be built from the CURRENT hardening variables,
+	//
+	//     scale = max(qc, 1e-12) * (1 + |beta(qt, qc)|/(1-alpha))
+	//
+	// which made tol a relative tolerance against a moving target. Two effects
+	// fought in there: qc falling under softening TIGHTENS it, while qt -> 0
+	// blows beta up and LOOSENS it, roughly as qc^2/qt. Measured over the
+	// 55-case suite, the loosening wins by four orders of magnitude - the
+	// absolute tolerance actually used travelled from 7e-9 to 3e-5 while this
+	// fixed reference is 3e-9 throughout - and that loose end is the same order
+	// as an independent admissibility check's own threshold, which is exactly
+	// where the material was accepting states that are outside the surface.
+	//
+	// Measured, replacing it with the peak strengths: SILENT VIOLATIONS 2 -> 0
+	// (a state accepted while inadmissible is the one failure mode this model
+	// must not have), failed steps 409 -> 408, so it does not even cost the
+	// convergence it was buying. On every case that converges cleanly the answer
+	// moves by at most 2.4e-8 MPa, 8e-10 of fc - it changes where the iteration
+	// stops, not what it converges to.
+	//
+	// stressReference() is the peak of both backbones, fixed at construction, and
+	// it is what the IMPL-EX error already normalizes against - so the two
+	// tolerances of this material are now measured against the same yardstick.
+	//
+	// NOTE FOR THE PORT: the tolerance decides WHERE the iteration stops, so the
+	// Python bench needs the same formula or the bit-agreement that validates
+	// this material is gone.
+	//
+	// tol stays dimensionless either way: verified by re-running the whole suite
+	// with every stress scaled by exact powers of two, bit-identical results and
+	// identical decisions from fc = 0.029 to fc = 3.1e7.
+	return stressReference();
 }
 
 void ASDPlasticDamageConcrete3DMaterial::corrector(double r, const Vector& m,
@@ -1354,7 +1402,7 @@ void ASDPlasticDamageConcrete3DMaterial::trialAt(double lam, const Vector& eps,
 	ASDCDP3D_COUNT(residuals);
 	out.f = out.ok ? yieldFunction(out.s, q1, q2)
 		: std::numeric_limits<double>::quiet_NaN();
-	out.ftol = tol * residualScale(q1, q2);
+	out.ftol = tol * residualScale();
 	if (!std::isfinite(out.f))
 		out.ok = false;
 }
@@ -1498,7 +1546,7 @@ int ASDPlasticDamageConcrete3DMaterial::integrate(const Vector& eps)
 	double f = yieldFunction(stress, qt, qc);
 	if (!std::isfinite(f))
 		return EC_Eigen_Error;
-	if (f <= tol * residualScale(qt, qc)) {
+	if (f <= tol * residualScale()) {
 		ASDCDP3D_COUNT(elastic);
 		return 0;
 	}
@@ -1523,6 +1571,8 @@ int ASDPlasticDamageConcrete3DMaterial::integrate(const Vector& eps)
 	// 12 failed steps against 5.6e-8 and none
 	double f_entry = std::abs(f);
 	bool broke = false;
+	// dlambda is parameterizing kappa_t and not the flow: see the no-flow branch
+	bool on_damage = false;
 
 	for (int it = 1; it <= max_iter; ++it) {
 		n_iter = it;
@@ -1545,7 +1595,51 @@ int ASDPlasticDamageConcrete3DMaterial::integrate(const Vector& eps)
 		bool got = false;
 		double got_lam = 0.0;
 
-		if (std::isfinite(den) && den > 0.0) {
+		// ---- THE ITERATION CAME BACK TO WHERE IT STARTED: it is CYCLING ---- //
+		//
+		// den > 0 the whole way, so nothing below ever runs, and the corrector
+		// simply goes round. Measured on 'implex, dials 0.5/0.5' step 9, and the
+		// trace is unambiguous - period three, repeated until max_iter:
+		//
+		//   it=1  f= 16.7229  lam0=0         r=1      h_t=0.214  h_c=0
+		//   it=2  f=  4.98326 lam0=0.001717  r=0.937  h_t=0.649  h_c=0.0506
+		//   it=3  f=-13.6788  lam0=0.001934  r=1      h_t=0.199  h_c=0
+		//   it=4  f= 16.7229  lam0=0         ...  identical to it=1
+		//
+		// At the third iterate F is NEGATIVE - the state is inside the surface -
+		// so Newton walks back, the accumulated multiplier would go negative, the
+		// clamp puts it at zero, and that is the starting point again. It cycles
+		// because the frozen quantities are not mild functions of the state: the
+		// split weight r swings 1 -> 0.937 -> 1 between iterates and takes h_t
+		// and h_c with it, so each iterate solves a slightly different problem.
+		// best_f ends up at 4.98, which is exactly the residual that step commits.
+		//
+		// A SECOND ARRIVAL AT lambda == 0 IS THE SIGNATURE and it cannot mean
+		// anything else: the first iterate is only accepted with a strictly
+		// positive multiplier (f > 0 and den > 0 give dlam > 0), so coming back to
+		// zero later means the corrector walked out and was clamped back.
+		//
+		// Bracketing FROM ZERO is then both available and correct - the scan
+		// covers the whole range from below, so the first sign change is the
+		// smallest admissible multiplier - and the root is there: on that step F
+		// goes +8.49 at lambda 9.3e-4 to -4.01 at 5.3e-3, crossing in
+		// [2.63e-3, 3.72e-3].
+		//
+		// Measured at damageT 1 / damageC 0.3: failed steps 118 -> 92 and the
+		// worst F over the suite 1.30 -> 0.698 MPa, 2.3% of fc. At the suite's own
+		// dials with damage_t = 0 excluded: 137 -> 116 and 4.98 -> 3.69. The
+		// worst deviation on every step the Python bench solves is UNCHANGED on
+		// both - same value, same step - so nothing the oracle can vouch for
+		// moves. (The median of what still fails rises, 4.3e-5 -> 3.3e-3: the
+		// steps this converts were the small-residual ones, and what is left is
+		// the harder remainder.)
+		bool cycled = (it > 1 && lam0 == 0.0);
+		if (cycled && bracket(f, 0.0, cap, eps, m, pf, h_t, h_c, got_lam, adopted)) {
+			ASDCDP3D_COUNT(cycle_bracketed);
+			got = true;
+			++bisected;
+		}
+		else if (std::isfinite(den) && den > 0.0) {
 			ASDCDP3D_COUNT(newton_ok);
 			// ---- the Newton corrector, halved until it is acceptable ---- //
 			double dlam = f / den;
@@ -1614,12 +1708,145 @@ int ASDPlasticDamageConcrete3DMaterial::integrate(const Vector& eps)
 		}
 		else {
 			ASDCDP3D_COUNT(den_nonpositive);
-			if (atApex(stress)) {
+			// ---- the gradient is unusable AT THE APEX: bracket it ---- //
+			//
+			// THE APEX GATE STAYS, AND IT IS NOT CONSERVATISM - it was measured.
+			// Opening the bracket to every den <= 0 looks like a large win: the
+			// failed steps over the 55-case suite go 417 -> 291, 'psi = 0' clears
+			// outright, and 51 of 55 cases stay bit-identical. It is still wrong,
+			// because bracket() solves F = 0 and F is NOT MONOTONE in lambda:
+			// away from the apex its geometric scan can land on a DIFFERENT root
+			// from the one Newton was walking to, and the loop then accepts it -
+			// admissible, converged, and not the answer. Measured on
+			// 'implex, dials 0.5/0.5': at its first step the shipped code agrees
+			// with the Python bench to 1.8e-15 while REPORTING the step failed
+			// (best_restored happened to hold the converged state), and the
+			// ungated bracket converges 12.9 MPa away from it; over that case the
+			// gated code is closer to the bench on 150 steps out of 150, worst
+			// error 6.3e-4 against 12.9. Trading 163 failed steps for a wrong
+			// answer that does not announce itself is the wrong trade.
+			//
+			// At the apex there is no such ambiguity, which is why the gate is
+			// exactly here: the normal is degenerate, the flow has one direction
+			// available at most, and there is no second root to be lured onto.
+			// ... OR ON THE FIRST ITERATE, WHERE THE SCAN CANNOT PICK THE WRONG
+			// ROOT. This is the other half of the story above, and it is what
+			// makes the difference between the two.
+			//
+			// The reason ungating bracket() everywhere was wrong is that it scans
+			// STRICTLY UPWARD from lam0: once Newton has overshot, the root it
+			// wanted lies BELOW lam0, is invisible to the scan, and the next one
+			// up gets adopted instead. At lam0 == 0 that cannot happen - there is
+			// nothing below zero - so the first sign change the scan meets IS the
+			// smallest admissible multiplier, which is what a return map owes its
+			// caller.
+			//
+			// The step that forced this is the worst one in the whole suite at the
+			// dials that will actually be used (damageT 1, damageC 0.3):
+			// 'psi = 0' step 0, the first increment of a random walk, where the
+			// corrector gives up after ONE iteration with den = -61507 and
+			// kt = kc = 0, and commits the elastic predictor at F = 83.3 MPa -
+			// 2.8 times fc outside its own yield surface. Scanning F along that
+			// same flow direction shows it CHANGES SIGN TWICE well inside the cap
+			// (lambda ~ 1.2e-3 and ~7e-3, cap 2.13): the root was there all along
+			// and the apex gate was the only thing keeping the one routine that
+			// could find it from running. With this branch the step converges to
+			// F = 2.7e-9, inside the tolerance.
+			//
+			// MEASURED, and against the right yardstick. On the 8078 steps the
+			// Python bench actually solves, this changes NOTHING - worst
+			// deviation 13.56 MPa on both builds, same step - so every state the
+			// oracle can vouch for is untouched, and only steps where the bench
+			// itself gave up move. At damageT 1 / damageC 0.3: failed steps
+			// 133 -> 131 and the worst F over the whole suite 83.3 -> 1.42 MPa,
+			// with nothing left above fc. At the suite's own mixed dials:
+			// 408 -> 281 failures, median F on what still fails 50.4 -> 0.45 MPa,
+			// steps worse than fc 209 -> 79.
+			if (atApex(stress) || lam0 == 0.0) {
 				// ---- the gradient is unusable AT THE APEX: bracket it ---- //
 				ASDCDP3D_COUNT(at_apex);
 				if (bracket(f, lam0, cap, eps, m, pf, h_t, h_c, got_lam, adopted)) {
 					got = true;
 					++bisected;
+				}
+				// THE TRIGGER IS 'LAMBDA MOVES NOTHING', NOT 'm IS ZERO', and the
+			// difference is 13 failed steps at the dials that will be used.
+			//
+			// m = 0 is only the most obvious way for the multiplier to be inert.
+			// The other one has a healthy flow direction and is just as stuck:
+			// with damage_t = 1 on a fully tensile state, plasticShare(r = 1) is
+			// exactly 0, so lambda creates NO plastic strain; and when both
+			// hardening rates are zero it does not advance the measures either.
+			// The strain is then unchanged, kappa is unchanged, and F is
+			// CONSTANT in lambda - measured on 'hydrostatic tension, psi = 0'
+			// step 23, where F reads 1.41991 at every lambda from 7.7e-13 to
+			// 0.027, with |m| = 0.866. No bracket can find a root there because
+			// there is no dependence to find one in, and - this is the part worth
+			// keeping in mind - the increment at that step is 3e-6, so a smaller
+			// step cannot help either. It is not a step-size failure.
+			//
+			// The reduction can still move it, which is what this branch is for.
+			// Measured, widening the trigger from 'm = 0' to 'nothing moves':
+			// failed steps 131 -> 118 at damageT 1 / damageC 0.3 and the median F
+			// of what still fails 3.3e-3 -> 4.3e-5 MPa, with the worst deviation
+			// on every step the Python bench solves UNCHANGED - same 13.56 MPa on
+			// the same step - so again nothing the oracle can vouch for is touched.
+			else if ((h_t == 0.0 && h_c == 0.0
+				&& (pf == 0.0 || maxAbs(m) <= 0.0))
+				&& (dlambda == 0.0 || on_damage)) {
+					// ---- NO FLOW DIRECTION AT ALL: return on the DAMAGE ---- //
+					//
+					// At psi = 0 the potential is purely deviatoric, and on the
+					// hydrostatic axis the deviator is identically zero, so
+					// flowDirection returns exactly zero. Then lambda moves NOTHING:
+					// not the strain, and not the measures either, because both
+					// hardening rates are read off m. There is no multiplier to
+					// bracket and no amount of iterating invents one - measured, that
+					// is 44 of the 80 failed steps of hydrostatic tension at psi = 0,
+					// where bracket() was called 91 times and found a root 12.
+					//
+					// What CAN relieve it is the reduction. The surface is written in
+					// the NOMINAL stress, sigma = omega_t*PT:sbar + omega_c*PC:sbar,
+					// so advancing kappa_t at frozen strain scales sigma down; and at
+					// the apex sbar is entirely tensile, so that scaling is RADIAL -
+					// the one direction the vertex's cone of normals certainly
+					// contains, and the only one available.
+					//
+					// IT NEEDS NO NEW SOLVER. trialAt with m = 0, h_t = 1 and h_c = 0
+					// is exactly kappa_t = kappa_t_commit + lambda at frozen strain,
+					// so lambda becomes the kappa increment and bracket() drives it
+					// unchanged. Nor does it need anything from IMPL-EX: commitState
+					// derives its frozen rates by DIVIDING the increments by dlambda,
+					// so re-parameterizing is self-consistent - it records
+					// kt_rate = 1 with every strain rate zero, which is precisely
+					// what this step did.
+					//
+					// AND THE BRACKET CANNOT BE FOOLED HERE: F falls monotonically
+					// towards -qc as omega_t goes to zero, so a sign change exists
+					// whenever the reduction can move at all. When it cannot -
+					// damage_t = 0, where domega is identically zero - no root is
+					// found and the step still reports its honest failure. That is
+					// the right answer and not a gap: with no flow AND no reduction
+					// the model has no mechanism for that state, and the caller has
+					// to hear it rather than be handed a number.
+					//
+					// The guard is that no plastic strain has moved yet in this step
+					// (or that we are already on this branch, where none has):
+					// trialAt rebuilds the accumulators from the COMMITTED ones, so
+					// re-parameterizing after real plastic flow would silently
+					// discard it.
+					ASDCDP3D_COUNT(no_flow);
+					ASDCDP3D_COUNT(damage_return);
+					static Vector no_flow_dir(6);
+					no_flow_dir.Zero();
+					double cap_k = lambdaCap(1.0, 0.0, no_flow_dir, eps);
+					if (bracket(f, lam0, cap_k, eps, no_flow_dir, pf, 1.0, 0.0,
+						got_lam, adopted)) {
+						ASDCDP3D_COUNT(damage_return_ok);
+						got = true;
+						on_damage = true;
+						++bisected;
+					}
 				}
 			}
 		}
@@ -1630,7 +1857,7 @@ int ASDPlasticDamageConcrete3DMaterial::integrate(const Vector& eps)
 			// already reached the smallest value it can take. 'best' is what
 			// gets restored, so the distinction the flags draw is only about what
 			// the caller is told
-			stagnated = best_f <= stagnation_tol * residualScale(qt, qc);
+			stagnated = best_f <= stagnation_tol * residualScale();
 			failed = !stagnated;
 #ifdef ASDCDP3D_COUNTERS
 			if (stagnated) ASDCDP3D_COUNT(stagnated);

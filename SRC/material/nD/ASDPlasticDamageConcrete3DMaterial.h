@@ -491,7 +491,7 @@ private:
 	// precision, unreachable, and the return mapping stalls at max_iter with a
 	// converged multiplier it is not allowed to accept. Dividing by the
 	// amplification puts the tolerance back in stress units.
-	double residualScale(double qt, double qc) const;
+	double residualScale(void) const;
 
 	// A = -d sigma / d lambda: one plastic term and TWO damage terms. The
 	// damage terms are the ones a classical CDP has no place for; they move the
