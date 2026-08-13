@@ -46,6 +46,14 @@
 //   against the stress the material carries rather than against a fictitious one
 //   that keeps growing while the material softens.
 //
+// HOW THE TWO REDUCTIONS COMBINE IS AN INPUT, and the third line above is only
+// the default. '-damageCombination faria' applies them to the two spectral parts
+// separately, as written; '-damageCombination leeFenves' combines them into the
+// one scalar of the classical CDP, sigma = (1-d)*sbar, where the recovery of
+// stiffness on a reversal stops being automatic and is governed by two weights.
+// The full statement, the two limits that define those weights and the pair at
+// which the two branches meet are on DamageCombination below.
+//
 // WHERE EACH UNLOADING LANDS IS A USER PARAMETER, one per side: a DAMAGE FACTOR
 // df in [0, 1]. 0 = pure plasticity (elastic unloading onto the full inelastic
 // strain), 1 = pure damage (secant unloading onto the origin), and every value
@@ -247,6 +255,64 @@ public:
 	using HardeningLaw = ASDHardeningLaw;
 
 	/**
+	HOW THE TWO REDUCTIONS COMBINE IN THE ELASTIC PREDICTION. Both branches
+	reduce the same effective stress by the same two omegas; what they disagree
+	about is whether the reduction has a DIRECTION.
+
+	FARIA - the default, and the formulation the rest of this file was measured
+	on. The reduction is applied to the spectral parts separately,
+
+	    W     = omega_t*PT + omega_c*PC
+	    sigma = W : sbar
+
+	so a cracked side loses only its positive part and the compressive one is
+	untouched: the recovery of stiffness on crack closure is TOTAL and
+	AUTOMATIC, performed by the split itself, with nothing to calibrate. The
+	nominal stress is NOT coaxial with the effective one, because its two
+	spectral parts are scaled differently.
+
+	LEE_FENVES - the classical CDP combination, Lee and Fenves (1998) and the
+	same expression Abaqus' CDP uses. The two damages are combined into ONE
+	scalar,
+
+	    d_t = 1 - omega_t      d_c = 1 - omega_c
+	    s_t = 1 - w_t*r        s_c = 1 - w_c*(1-r)
+	    1-d = (1 - s_t*d_c)*(1 - s_c*d_t)
+	    W   = (1-d)*I          sigma = (1-d)*sbar
+
+	with r the same tensile weight that already splits the flow, read on the
+	EFFECTIVE stress. The nominal stress is then a positive multiple of the
+	effective one, hence COAXIAL with it, and the recovery of stiffness is no
+	longer automatic: it is governed by the two weights, which is the real
+	physical difference between the branches.
+
+	The two limits are what w_t and w_c mean, and they are asserted as a test
+	rather than described here:
+
+	    r = 1 (pure tension)      1-d = (1 - (1-w_t)*d_c)*(1 - d_t)
+	                              w_t = 1 removes the COMPRESSIVE damage
+	    r = 0 (pure compression)  1-d = (1 - d_c)*(1 - (1-w_c)*d_t)
+	                              w_c = 1 removes the TENSILE damage, i.e. the
+	                              crack closes and the compressive stiffness is
+	                              back
+
+	BOUNDED BY CONSTRUCTION, which is the same guarantee omega() carries: for
+	w in [0,1] both s are in [0,1] and both d in [0,1), so 1-d is in (0,1] and
+	no rounding can put the operator outside the range the rest of the model
+	relies on.
+
+	AND THE TWO BRANCHES MEET AT w_t = w_c = 1, in the pure states only: there
+	s_t = 1-r and s_c = r, so 1-d is omega_t at r = 1 and omega_c at r = 0,
+	which is exactly what the Faria split delivers on the same states. That
+	pair is therefore the one to compare the two branches at when the question
+	is 'directional or scalar' rather than 'how much stiffness comes back'.
+	*/
+	enum DamageCombination {
+		DC_Faria = 0,
+		DC_LeeFenves = 1
+	};
+
+	/**
 	Everything the implicit pass of integrate() can write. Saved and restored
 	around the non-destructive measurement of the IMPL-EX error, so that a step
 	that is measured and then rejected is a step that never happened.
@@ -295,6 +361,9 @@ public:
 		double _Kc,
 		double _damage_t,
 		double _damage_c,
+		DamageCombination _damage_combination,
+		double _stiffness_recovery_t,
+		double _stiffness_recovery_c,
 		bool _implex,
 		bool _implex_control,
 		bool _implex_abort_on_error,
@@ -473,6 +542,50 @@ private:
 		return (1.0 - damage_t) * r + (1.0 - damage_c) * (1.0 - r);
 	}
 
+	// (1-d) of the Lee-Fenves combination, from the two reductions already
+	// evaluated and the tensile weight - see DamageCombination. Takes the
+	// omegas rather than the measures so that no caller evaluates a hardening
+	// curve twice for the same state.
+	double leeFenvesReduction(double wt, double wc, double r) const;
+
+	// The three partial derivatives of (1-d):
+	//
+	//     g_t = d(1-d)/dkt = (1 - s_t*d_c) * s_c * domega_t
+	//     g_c = d(1-d)/dkc = (1 - s_c*d_t) * s_t * domega_c
+	//     g_r = d(1-d)/dr  = w_t*d_c*(1 - s_c*d_t) - w_c*d_t*(1 - s_t*d_c)
+	//
+	// THE THIRD ONE IS NOT OPTIONAL HERE, AND THAT WAS MEASURED RATHER THAN
+	// assumed. Dropping the dr/dlambda term is the obvious economy - the
+	// denominator chooses only the STEP, the equation being solved does not
+	// change - and it is what the Faria branch does with the ROTATION of the
+	// spectral projectors, at a cost of 5.6e-5 median against a central
+	// difference of the frozen update. It does not carry over: in the Faria
+	// split r is not in the operator at all, while here it is, so the term is
+	// first order. Measured over the 55-case suite at damageT 1 / damageC 0.3,
+	// analytic denominator against a central difference of trialAt:
+	//
+	//     faria                 median 5.6e-05
+	//     leeFenves w = 0/1     median 6.5e-02   p90 1.00, sign flips
+	//     leeFenves w = 0/0     median 7.2e-05   <- r drops out of the scalar
+	//
+	// The third row is the experiment that isolates it and it needs no patched
+	// build: at w_t = w_c = 0 both s are identically 1 and (1-d) is omega_t*
+	// omega_c, which does not contain r - and the disagreement vanishes.
+	void leeFenvesDerivatives(double wt, double wc, double r,
+		double dwt, double dwc, double& g_t, double& g_c, double& g_r) const;
+
+	// dr/dlambda of the cutting plane: r is a function of the eigenvalues of
+	// sbar, and along the frozen update sbar moves by -pf*(C:m) per unit
+	// multiplier. Needs the decomposition of the CURRENT effective stress,
+	// which d_split / V_split already hold.
+	double splitWeightRate(const Vector& Cm, double pf, double r) const;
+
+	// W from a FROZEN spectral record and the two measures. Two callers - the
+	// explicit IMPL-EX pass and revertToLastCommit - and they must not be able
+	// to disagree about which branch's operator they rebuild.
+	void rebuildOperator(const Vector& d_rec, const Matrix& V_rec,
+		double kt_, double kc_);
+
 	// The damaged elastic law, and the place the split is built: writes sbar,
 	// the split record, W, sbar_pos, sbar_neg, and returns the NOMINAL stress
 	// in 'out'. ep_pl is the plastic strain; ep_cr, the cracking accumulator,
@@ -492,6 +605,34 @@ private:
 	// converged multiplier it is not allowed to accept. Dividing by the
 	// amplification puts the tolerance back in stress units.
 	double residualScale(void) const;
+
+	// |F| converted to a DISTANCE TO THE SURFACE, in stress units.
+	//
+	// F is a stress distance TIMES the local gradient, and on the tensile
+	// meridian that gradient is 1 + |beta|/(1-alpha) ~ qc/qt. Dividing it out
+	// gives the only number a VERDICT can honestly be made on: how far outside
+	// its own surface the state about to be handed back actually is.
+	//
+	// WHERE THIS IS USED AND WHERE IT IS NOT, because the distinction is the
+	// whole design. It decides the verdict - failed against stagnated - and it
+	// does NOT decide acceptance. The iteration still stops exactly where it
+	// stopped before, so every step that converges converges to the same bits.
+	// Measured on the bench over seven dial pairs and three combinations: the
+	// delivered stress and both hardening variables move by EXACTLY zero, while
+	// the failure counts fall (58 -> 9 at damage 0.3/0, 4 -> 0 at 0.5/0.3,
+	// 1 -> 0 at 1/0.3). Only the flag moves, and the flag is what a host acts
+	// on: a -1 out of setTrialStrain makes the analysis cut its step.
+	//
+	// WHY IT WAS NEEDED, from the trace of the one step at (1, 0.3) that used to
+	// reach max_iter. Purely tensile on the softening tail, qt = 0.0306,
+	// qc = 27.17, so the amplification is 886.9. The iteration neither diverges
+	// nor wanders - by the twentieth pass the frozen rates have settled and F
+	// sits on a fixed value - and the best iterate it saw was F = 0.0201, i.e.
+	// 2.3e-5 MPa from the surface. The acceptance test asks |F| <= 3e-9, which
+	// at that amplification is 3.4e-12 MPa: below what double precision can
+	// express next to a 40 MPa effective stress. The step had a usable answer
+	// and called itself failed.
+	double residualStress(double f, double qt, double qc) const;
 
 	// A = -d sigma / d lambda: one plastic term and TWO damage terms. The
 	// damage terms are the ones a classical CDP has no place for; they move the
@@ -603,6 +744,7 @@ private:
 	const Vector& getDamage() const;
 	const Vector& getOmega() const;
 	const Vector& getStrength() const;
+	const Vector& getSplitWeight() const;
 	const Vector& getPlasticStrainVector() const;
 	const Vector& getCrackingStrainVector() const;
 	const Vector& getEffectiveStress() const;
@@ -640,6 +782,17 @@ private:
 	// the two dials, one per side: 0 = pure plasticity, 1 = pure damage
 	double damage_t = 1.0;
 	double damage_c = 0.0;
+	// how the two reductions combine in the prediction - see DamageCombination
+	DamageCombination damage_combination = DC_Faria;
+	// the two STIFFNESS RECOVERY weights of the Lee-Fenves combination, and
+	// they exist only there: in the Faria split the recovery is total and
+	// automatic, so a weight would have nothing to weigh and the parser refuses
+	// it rather than accepting an input that does nothing. w_t = 0 and w_c = 1
+	// are the defaults of the model this branch implements: the compressive
+	// stiffness comes back when the crack closes, the tensile one does not come
+	// back once the material has been crushed
+	double stiffness_recovery_t = 0.0;
+	double stiffness_recovery_c = 1.0;
 
 	// --- IMPL-EX ---------------------------------------------------------- //
 	// True = use the IMPL-EX algorithm
