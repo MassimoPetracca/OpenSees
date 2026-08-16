@@ -308,8 +308,7 @@ void* OPS_ASDPlasticDamageConcrete3DMaterial(void)
 			"-Te $Te -Ts $Ts -Ce $Ce -Cs $Cs "
 			"<-rho $rho> <-dilatancy $psiDegrees> <-eccentricity $ecc> "
 			"<-fb0fc0 $ratio> <-Kc $Kc> <-damageT $dt> <-damageC $dc> "
-			"<-damageCombination faria|leeFenves> "
-			"<-stiffnessRecoveryT $wt> <-stiffnessRecoveryC $wc> "
+			"<-split Faria|ModLeeFenves> "
 			"<-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> "
 			"<-implexAbort> <-implexAlpha $alpha> "
 			"<-autoRegularization $lch_ref> "
@@ -331,13 +330,11 @@ void* OPS_ASDPlasticDamageConcrete3DMaterial(void)
 	double damage_c = 0.0;
 	ASDPlasticDamageConcrete3DMaterial::DamageCombination damage_combination =
 		ASDPlasticDamageConcrete3DMaterial::DC_Faria;
-	double stiffness_recovery_t = 0.0;
-	double stiffness_recovery_c = 1.0;
-	// WHETHER the two weights were given, not only their value, because a
-	// weight that has nothing to weigh is refused rather than ignored - and the
-	// options may arrive in any order, so the check cannot live in the loop
-	bool recovery_t_given = false;
-	bool recovery_c_given = false;
+	// THE ABAQUS PAIR, AND NOT AN INPUT. The formula is written in terms of the
+	// two recovery weights and the material carries them, but only one point of
+	// that family is exposed - see the end of DamageCombination in the header
+	const double stiffness_recovery_t = 0.0;
+	const double stiffness_recovery_c = 1.0;
 	bool implex = false;
 	bool implex_control = false;
 	bool implex_abort_on_error = false;
@@ -450,36 +447,27 @@ void* OPS_ASDPlasticDamageConcrete3DMaterial(void)
 			if (!lam_optional_double("damageC", damage_c))
 				return nullptr;
 		}
-		else if (strcmp(value, "-damageCombination") == 0) {
+		else if (strcmp(value, "-split") == 0) {
 			if (OPS_GetNumRemainingInputArgs() < 1) {
-				opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: '-damageCombination' given without the next 1 argument (faria|leeFenves).\n";
+				opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: '-split' given without the next 1 argument (Faria|ModLeeFenves).\n";
 				return nullptr;
 			}
 			const char* how = OPS_GetString();
-			if (strcmp(how, "faria") == 0 || strcmp(how, "Faria") == 0)
+			if (strcmp(how, "Faria") == 0 || strcmp(how, "faria") == 0)
 				damage_combination = ASDPlasticDamageConcrete3DMaterial::DC_Faria;
-			else if (strcmp(how, "leeFenves") == 0 || strcmp(how, "LeeFenves") == 0 ||
-				strcmp(how, "leefenves") == 0)
-				damage_combination = ASDPlasticDamageConcrete3DMaterial::DC_LeeFenves;
+			else if (strcmp(how, "ModLeeFenves") == 0 || strcmp(how, "modLeeFenves") == 0 ||
+				strcmp(how, "modleefenves") == 0)
+				damage_combination = ASDPlasticDamageConcrete3DMaterial::DC_ModLeeFenves;
 			else {
-				opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: unknown '-damageCombination' value '" <<
-					how << "'. It is 'faria' - the two reductions applied to the two "
-					"spectral parts separately, where the recovery of stiffness on a "
-					"reversal is total and automatic - or 'leeFenves' - the two "
-					"combined into the single scalar of the classical CDP, where the "
-					"recovery is governed by '-stiffnessRecoveryT'/'-stiffnessRecoveryC'.\n";
+				opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: unknown '-split' value '" <<
+					how << "'. It is 'Faria' - the default, the two reductions applied "
+					"to the two spectral parts separately, where the recovery of "
+					"stiffness on a reversal is total, automatic and directional - or "
+					"'ModLeeFenves' - the two combined into the single scalar of the "
+					"classical CDP, with the split weight saturated so that a nearly "
+					"tensile state counts as tensile.\n";
 				return nullptr;
 			}
-		}
-		else if (strcmp(value, "-stiffnessRecoveryT") == 0) {
-			if (!lam_optional_double("stiffnessRecoveryT", stiffness_recovery_t))
-				return nullptr;
-			recovery_t_given = true;
-		}
-		else if (strcmp(value, "-stiffnessRecoveryC") == 0) {
-			if (!lam_optional_double("stiffnessRecoveryC", stiffness_recovery_c))
-				return nullptr;
-			recovery_c_given = true;
 		}
 		else if (strcmp(value, "-implex") == 0) {
 			implex = true;
@@ -543,6 +531,25 @@ void* OPS_ASDPlasticDamageConcrete3DMaterial(void)
 		else if (strcmp(value, "-Cs") == 0) {
 			if (!lam_optional_list("Cs", Cs))
 				return nullptr;
+		}
+		else if (strcmp(value, "-damageCombination") == 0 ||
+			strcmp(value, "-stiffnessRecoveryT") == 0 ||
+			strcmp(value, "-stiffnessRecoveryC") == 0) {
+			// THE THREE THIS OPTION REPLACED, REFUSED RATHER THAN IGNORED, and
+			// they need their own branch because this loop has no catch-all:
+			// an unrecognised token is skipped in silence, so an input written
+			// against the previous spelling would run with the DEFAULT split
+			// and report nothing. That is the one failure mode worth spending
+			// eight lines on - the same position taken on '-Td' and '-fc'
+			// below, for the same reason
+			opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: '" << value <<
+				"' is no longer an input of this model. The split is chosen with "
+				"'-split Faria' (the default) or '-split ModLeeFenves', and the two "
+				"stiffness-recovery weights are fixed at the Abaqus pair w_t = 0, "
+				"w_c = 1. '-damageCombination leeFenves' with the unsaturated split "
+				"weight is gone: it is the branch whose (1-r) floor leaves a fully "
+				"cracked material carrying (1-r) of the effective stress.\n";
+			return nullptr;
 		}
 		else if (strcmp(value, "-Td") == 0 || strcmp(value, "-Cd") == 0) {
 			// REFUSED, NOT IGNORED, and that is the point. The tensile reduction
@@ -629,36 +636,6 @@ void* OPS_ASDPlasticDamageConcrete3DMaterial(void)
 	}
 	if (!(damage_c >= 0.0 && damage_c <= 1.0)) {
 		opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: 'damageC' must be in [0, 1], got " << damage_c << ".\n";
-		return nullptr;
-	}
-	// THE TWO WEIGHTS ARE REFUSED WHERE THEY WOULD DO NOTHING, not accepted and
-	// dropped, which is the same position this parser takes on '-Td'/'-Cd' and
-	// on '-fc'. In the Faria split the recovery of stiffness is performed by the
-	// spectral split itself and is total: a cracked side loses only its positive
-	// part, so there is no fraction left for a weight to choose. Accepting the
-	// input would tell the user they had calibrated something they had not
-	if ((recovery_t_given || recovery_c_given) &&
-		damage_combination != ASDPlasticDamageConcrete3DMaterial::DC_LeeFenves) {
-		opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: '-stiffnessRecoveryT'"
-			"/'-stiffnessRecoveryC' exist only with '-damageCombination leeFenves'. In"
-			" the Faria split the two reductions are applied to the two spectral parts"
-			" separately, so the stiffness of a side is recovered in full and"
-			" automatically as soon as the stress changes sign, and there is no"
-			" fraction left for a weight to govern.\n";
-		return nullptr;
-	}
-	if (!(stiffness_recovery_t >= 0.0 && stiffness_recovery_t <= 1.0)) {
-		opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: 'stiffnessRecoveryT' must be in [0, 1], got " <<
-			stiffness_recovery_t << ": it is the fraction of the TENSILE stiffness"
-			" recovered from the compressive damage when the state turns tensile, and"
-			" outside [0, 1] the scalar reduction leaves (0, 1].\n";
-		return nullptr;
-	}
-	if (!(stiffness_recovery_c >= 0.0 && stiffness_recovery_c <= 1.0)) {
-		opserr << "nDMaterial ASDPlasticDamageConcrete3D Error: 'stiffnessRecoveryC' must be in [0, 1], got " <<
-			stiffness_recovery_c << ": it is the fraction of the COMPRESSIVE stiffness"
-			" recovered from the tensile damage when the crack closes, and outside"
-			" [0, 1] the scalar reduction leaves (0, 1].\n";
 		return nullptr;
 	}
 	if (!(tol > 0.0)) {
@@ -1243,6 +1220,25 @@ void ASDPlasticDamageConcrete3DMaterial::flowDirection(const Vector& s, Vector& 
 	}
 }
 
+const double ASDPlasticDamageConcrete3DMaterial::SPLIT_SATURATION = 0.5;
+
+double ASDPlasticDamageConcrete3DMaterial::saturate(double r) const
+{
+	if (damage_combination != DC_ModLeeFenves)
+		return r;
+	double x = (r - 0.5) / SPLIT_SATURATION + 0.5;
+	return std::min(1.0, std::max(0.0, x));
+}
+
+double ASDPlasticDamageConcrete3DMaterial::saturationSlope(double r_raw) const
+{
+	if (damage_combination != DC_ModLeeFenves)
+		return 1.0;
+	double half = 0.5 * SPLIT_SATURATION;
+	return (r_raw > 0.5 - half && r_raw < 0.5 + half)
+		? 1.0 / SPLIT_SATURATION : 0.0;
+}
+
 double ASDPlasticDamageConcrete3DMaterial::splitWeight(void) const
 {
 	// ON THE EFFECTIVE STRESS AND NOT ON THE NOMINAL ONE - see the header for
@@ -1252,7 +1248,11 @@ double ASDPlasticDamageConcrete3DMaterial::splitWeight(void) const
 		ASDCDP3D_COUNT(eigen_error);
 		return 0.5;
 	}
-	return positiveFraction(d);
+	// SATURATED, so that the three things this weight decides - the split of
+	// the flow between permanent strain and the reductions, the advance of the
+	// two hardening measures, and (in the modified branch) the combination
+	// itself - cannot disagree about what the weight is
+	return saturate(positiveFraction(d));
 }
 
 void ASDPlasticDamageConcrete3DMaterial::hardeningRates(const Vector& m, double r,
@@ -1385,6 +1385,19 @@ double ASDPlasticDamageConcrete3DMaterial::splitWeightRate(const Vector& Cm,
 	double T = std::abs(d_split(0)) + std::abs(d_split(1)) + std::abs(d_split(2));
 	if (!(T > 1.0e-14))
 		return 0.0;
+	// THE RAW WEIGHT IS REBUILT HERE AND THE ARGUMENT IS NOT USED IN THE
+	// QUOTIENT, which is the trap this branch carries. Every caller reads the
+	// weight through saturate(), so the r that arrives is already at its
+	// endpoint whenever the state is outside the band - and outside the band
+	// it is exactly 0 or 1, so a rate computed against it would be taken about
+	// the wrong reference. The chain factor is the slope of the saturation,
+	// which is also what makes the rate exactly zero out there: the weight has
+	// stopped responding to the state, so it has no rate.
+	(void)r;
+	double r_raw = positiveFraction(d_split);
+	double slope = saturationSlope(r_raw);
+	if (slope == 0.0)
+		return 0.0;
 	double dP = 0.0;
 	double dT = 0.0;
 	for (int j = 0; j < 3; ++j) {
@@ -1400,7 +1413,7 @@ double ASDPlasticDamageConcrete3DMaterial::splitWeightRate(const Vector& Cm,
 			dP += ds;
 		dT += (d_split(j) >= 0.0) ? ds : -ds;
 	}
-	return (dP - r * dT) / T;
+	return slope * (dP - r_raw * dT) / T;
 }
 
 int ASDPlasticDamageConcrete3DMaterial::effective(const Vector& eps,
@@ -1456,7 +1469,7 @@ int ASDPlasticDamageConcrete3DMaterial::effective(const Vector& eps,
 		// products. They are zeroed rather than left alone so that nothing
 		// downstream - the peek record, the serialization - can carry a stale
 		// value that belonged to another state
-		double r = positiveFraction(d_split);
+		double r = saturate(positiveFraction(d_split));
 		double wt = omega(kt_, damage_t, hard_t);
 		double wc = omega(kc_, damage_c, hard_c);
 		double w = leeFenvesReduction(wt, wc, r);
@@ -1501,7 +1514,7 @@ void ASDPlasticDamageConcrete3DMaterial::rebuildOperator(const Vector& d_rec,
 		// It is read here and not taken from r_commit because r_commit is a
 		// diagnostic of the committed STEP - zeroed when the step was elastic -
 		// while this is a property of the committed STATE
-		double r = positiveFraction(d_rec);
+		double r = saturate(positiveFraction(d_rec));
 		double w = leeFenvesReduction(omega(kt_, damage_t, hard_t),
 			omega(kc_, damage_c, hard_c), r);
 		W.Zero();
@@ -2001,7 +2014,7 @@ int ASDPlasticDamageConcrete3DMaterial::integrate(const Vector& eps)
 				// from 4.3e3 to 3.5e4 in F, and a second watchdog ceiling on the
 				// current residual made BOTH branches worse (the default one 92
 				// -> 100/130/165/192 failed steps at G = 10/4/2/1.2).
-				if (damage_combination == DC_LeeFenves) {
+				if (damage_combination == DC_ModLeeFenves) {
 					static Trial at_zero;
 					trialAt(0.0, eps, m, pf, h_t, h_c, at_zero);
 					if (at_zero.ok && at_zero.f > 0.0 &&
@@ -2817,10 +2830,16 @@ void ASDPlasticDamageConcrete3DMaterial::computeTangent(void)
 	//
 	// Under IMPL-EX r is frozen by design, so the term is identically zero, and
 	// that is precisely what makes sigma affine in eps over the step
-	if (damage_combination == DC_LeeFenves && !(implex && extrapolated)) {
+	if (damage_combination == DC_ModLeeFenves && !(implex && extrapolated)) {
 		double T = std::abs(d_split(0)) + std::abs(d_split(1))
 			+ std::abs(d_split(2));
-		if (T > 1.0e-14) {
+		// A SATURATED STATE OUTSIDE ITS BAND HAS NO TERM HERE EITHER, and for
+		// the same reason it has no rate in splitWeightRate(): the weight has
+		// stopped responding to the stress, so w does not depend on eps and
+		// what is left is w*C, which is already in WC. The slope is read on the
+		// RAW weight - see saturationSlope()
+		double slope = saturationSlope(positiveFraction(d_split));
+		if (T > 1.0e-14 && slope != 0.0) {
 			double P = 0.0;
 			for (int j = 0; j < 3; ++j)
 				if (d_split(j) > 0.0) P += d_split(j);
@@ -2832,7 +2851,7 @@ void ASDPlasticDamageConcrete3DMaterial::computeTangent(void)
 				double h = (d_split(j) > 0.0) ? 1.0 : 0.0;
 				double sg = (d_split(j) > 0.0) ? 1.0
 					: ((d_split(j) < 0.0) ? -1.0 : 0.0);
-				double c = (h * T - P * sg) / (T * T);
+				double c = slope * (h * T - P * sg) / (T * T);
 				double v0 = V_split(0, j);
 				double v1 = V_split(1, j);
 				double v2 = V_split(2, j);
@@ -3079,7 +3098,7 @@ const Vector& ASDPlasticDamageConcrete3DMaterial::getSplitWeight() const
 	// Published because it was the one quantity of the formulation that nothing
 	// could see from outside, and it decides three separate things: how the flow
 	// is split between the permanent strain and the reductions, how the two
-	// hardening measures advance, and - under '-damageCombination leeFenves' -
+	// hardening measures advance, and - under '-split ModLeeFenves' -
 	// how the two reductions combine. It is also the quantity the return
 	// mapping's limit cycle swings on, so a trace that cannot read it cannot
 	// diagnose that failure.

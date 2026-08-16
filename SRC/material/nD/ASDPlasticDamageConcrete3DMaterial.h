@@ -47,12 +47,12 @@
 //   that keeps growing while the material softens.
 //
 // HOW THE TWO REDUCTIONS COMBINE IS AN INPUT, and the third line above is only
-// the default. '-damageCombination faria' applies them to the two spectral parts
-// separately, as written; '-damageCombination leeFenves' combines them into the
-// one scalar of the classical CDP, sigma = (1-d)*sbar, where the recovery of
-// stiffness on a reversal stops being automatic and is governed by two weights.
-// The full statement, the two limits that define those weights and the pair at
-// which the two branches meet are on DamageCombination below.
+// the default. '-split Faria' applies them to the two spectral parts separately,
+// as written, so the reduction has a DIRECTION; '-split ModLeeFenves' combines
+// them into the one scalar of the classical CDP, sigma = (1-d)*sbar, with the
+// split weight SATURATED so that a nearly tensile state counts as tensile. The
+// full statement, what the saturation cures and why the recovery weights are
+// fixed rather than exposed are on DamageCombination below.
 //
 // WHERE EACH UNLOADING LANDS IS A USER PARAMETER, one per side: a DAMAGE FACTOR
 // df in [0, 1]. 0 = pure plasticity (elastic unloading onto the full inelastic
@@ -271,9 +271,9 @@ public:
 	nominal stress is NOT coaxial with the effective one, because its two
 	spectral parts are scaled differently.
 
-	LEE_FENVES - the classical CDP combination, Lee and Fenves (1998) and the
-	same expression Abaqus' CDP uses. The two damages are combined into ONE
-	scalar,
+	MOD_LEE_FENVES - the classical CDP combination of Lee and Fenves (1998),
+	the same expression Abaqus' CDP uses, with ONE modification. The two
+	damages are combined into a single scalar,
 
 	    d_t = 1 - omega_t      d_c = 1 - omega_c
 	    s_t = 1 - w_t*r        s_c = 1 - w_c*(1-r)
@@ -284,10 +284,33 @@ public:
 	EFFECTIVE stress. The nominal stress is then a positive multiple of the
 	effective one, hence COAXIAL with it, and the recovery of stiffness is no
 	longer automatic: it is governed by the two weights, which is the real
-	physical difference between the branches.
+	physical difference between the branches. The weights are fixed at the
+	Abaqus pair w_t = 0, w_c = 1 and are not inputs - see the note at the end.
 
-	The two limits are what w_t and w_c mean, and they are asserted as a test
-	rather than described here:
+	THE MODIFICATION IS THE SATURATION OF r, and it is what makes this branch
+	usable where the unmodified one is not:
+
+	    r_sat = clamp((r - 0.5)/k + 0.5, 0, 1)      k = SPLIT_SATURATION = 0.5
+
+	so a state whose r is 0.9996 rather than 1 becomes an exact 1, while a
+	genuinely deviatoric state at r = 0.5 is left alone and the reduction stays
+	continuous there. It is not a new quantity: with sum(lam) = P - N and
+	sum|lam| = P + N one has I1/sum|lam| = 2r - 1, so r IS the normalised
+	hydrostatic invariant and k only sets how sharply it saturates - k = 1 is
+	the untouched Lee-Fenves weight and k -> 0 the sign of I1.
+
+	WHAT THE SATURATION CURES, measured on the prototype. The unmodified branch
+	leaks permanent strain on a tensile leg with damage_t = 1, where the dial
+	promises none: plastic_share = 0.7*(1-r) at a state whose r is 0.9996, the
+	difference being a lateral effective stress of 1.8e-03 MPa - itself a
+	6.0e-07 MPa constraint residual magnified by 1/w. At k = 0.5 that r
+	saturates to exactly 1 and the leak is exactly zero. On the alternating
+	uniaxial program the branch then reproduces Faria's response, including the
+	lateral (dilatancy) branch, at a quarter of the iteration count: eps_p_xx
+	-2.9572e-03 against Faria's -2.9572e-03, worst iterations 9 against 39, and
+	zero failed steps at every refinement where Faria has 2/1/1/0.
+
+	The two limits are what w_t and w_c mean:
 
 	    r = 1 (pure tension)      1-d = (1 - (1-w_t)*d_c)*(1 - d_t)
 	                              w_t = 1 removes the COMPRESSIVE damage
@@ -301,15 +324,16 @@ public:
 	no rounding can put the operator outside the range the rest of the model
 	relies on.
 
-	AND THE TWO BRANCHES MEET AT w_t = w_c = 1, in the pure states only: there
-	s_t = 1-r and s_c = r, so 1-d is omega_t at r = 1 and omega_c at r = 0,
-	which is exactly what the Faria split delivers on the same states. That
-	pair is therefore the one to compare the two branches at when the question
-	is 'directional or scalar' rather than 'how much stiffness comes back'.
+	WHY THE WEIGHTS AND k ARE NOT INPUTS. They exist as members because the
+	formula is written in terms of them and the prototype carries them as
+	parameters, but only one point of that family is exposed: (w_t, w_c) =
+	(0, 1), which is the Abaqus pair, and k = 0.5. The rest was measured and
+	set aside - w = (1,1) is the pair the (1-r) floor of the unmodified branch
+	bites hardest, and k = 1 is that unmodified branch itself.
 	*/
 	enum DamageCombination {
 		DC_Faria = 0,
-		DC_LeeFenves = 1
+		DC_ModLeeFenves = 1
 	};
 
 	/**
@@ -542,10 +566,38 @@ private:
 		return (1.0 - damage_t) * r + (1.0 - damage_c) * (1.0 - r);
 	}
 
-	// (1-d) of the Lee-Fenves combination, from the two reductions already
-	// evaluated and the tensile weight - see DamageCombination. Takes the
-	// omegas rather than the measures so that no caller evaluates a hardening
-	// curve twice for the same state.
+	// The half-width of the band in which the split weight is left alone. Not
+	// an input: see the end of DamageCombination for which single point of the
+	// family is exposed and why.
+	static const double SPLIT_SATURATION;
+
+	// The split weight pushed to its endpoints outside that band,
+	//
+	//     r_sat = clamp((r - 0.5)/k + 0.5, 0, 1)
+	//
+	// and the IDENTITY in the Faria branch, so that every reader of the weight
+	// can go through one function and none of them has to know which branch is
+	// on. EVERY site that builds r must go through it: splitWeight(),
+	// effective() and rebuildOperator() each have their own decomposition to
+	// hand, and one of them left raw would saturate the weight in the operator
+	// but not in the flow split, or the other way round.
+	double saturate(double r) const;
+
+	// dr_sat/dr_raw: 1/k inside the band, 0 outside, and 1 in the Faria branch.
+	//
+	// THE ARGUMENT IS THE RAW WEIGHT, NOT THE SATURATED ONE, and that is not a
+	// convenience: at the endpoints the two are indistinguishable - r_sat = 1
+	// is reached both by a raw 0.75 sitting exactly on the corner and by a raw
+	// 0.9996 deep in the flat part - and only the first has a one-sided
+	// derivative. Taking it as zero at the corner is the choice a clamp always
+	// makes and the one the frozen Jacobian can live with.
+	double saturationSlope(double r_raw) const;
+
+	// (1-d) of the modified Lee-Fenves combination, from the two reductions
+	// already evaluated and the tensile weight - see DamageCombination. Takes
+	// the omegas rather than the measures so that no caller evaluates a
+	// hardening curve twice for the same state. The weight it receives is the
+	// SATURATED one, every caller having read it through saturate().
 	double leeFenvesReduction(double wt, double wc, double r) const;
 
 	// The three partial derivatives of (1-d):
@@ -565,12 +617,15 @@ private:
 	// analytic denominator against a central difference of trialAt:
 	//
 	//     faria                 median 5.6e-05
-	//     leeFenves w = 0/1     median 6.5e-02   p90 1.00, sign flips
-	//     leeFenves w = 0/0     median 7.2e-05   <- r drops out of the scalar
+	//     scalar, w = 0/1       median 6.5e-02   p90 1.00, sign flips
+	//     scalar, w = 0/0       median 7.2e-05   <- r drops out of the scalar
 	//
 	// The third row is the experiment that isolates it and it needs no patched
 	// build: at w_t = w_c = 0 both s are identically 1 and (1-d) is omega_t*
-	// omega_c, which does not contain r - and the disagreement vanishes.
+	// omega_c, which does not contain r - and the disagreement vanishes. Those
+	// three rows were measured on the UNSATURATED weight, w = (0,0) being a
+	// pair the input no longer reaches; the conclusion carries over unchanged,
+	// the saturation only multiplying the term by its own slope.
 	void leeFenvesDerivatives(double wt, double wc, double r,
 		double dwt, double dwc, double& g_t, double& g_c, double& g_r) const;
 
