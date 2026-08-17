@@ -2764,6 +2764,7 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 	static std::vector<std::string> lb_implex_error = { "Error" };
 	static std::vector<std::string> lb_implex_error_u = { "ErrorU" };
 	static std::vector<std::string> lb_implex_stress = { "ImplexStress" };
+	static std::vector<std::string> lb_steel_resp = { "eps11", "sigma11" };
 
 
 
@@ -2772,7 +2773,7 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 		if (strcmp(argv[0], "BI") == 0 || strcmp(argv[0], "BucklingIndicator") == 0) {
 			return make_resp(1001, getBucklingIndicator(), &lb_buckling_ratio);
 		}
-		if (strcmp(argv[0], "D") == 0 || strcmp(argv[0], "Damage") == 0) {
+		if (strcmp(argv[0], "D") == 0 || strcmp(argv[0], "Damage") == 0 || strcmp(argv[0], "damage") == 0) {
 			return make_resp(1002, getDamage(), &lb_damage);
 		}
 		if (strcmp(argv[0], "PLE") == 0 || strcmp(argv[0], "EquivalentPlasticStrain") == 0) {
@@ -2787,14 +2788,17 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 		if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
 			return make_resp(1006, getImplexError(), &lb_implex_error);
 		}
+		if (strcmp(argv[0], "SteelResponse") == 0) {
+			return make_resp(1007, getSteelResponse(), &lb_steel_resp);
+		}
 		if (strcmp(argv[0], "implexErrorU") == 0 || strcmp(argv[0], "ImplexErrorU") == 0) {
 			// the DIAGNOSTIC, published next to the metric and never inside it
-			return make_resp(1007, getImplexErrorU(), &lb_implex_error_u);
+			return make_resp(1008, getImplexErrorU(), &lb_implex_error_u);
 		}
 		if (strcmp(argv[0], "implexStress") == 0 || strcmp(argv[0], "ImplexStress") == 0) {
 			// what the step DELIVERED, next to 'stress' which after the commit is
 			// the implicit answer: the two are what the metric is made of
-			return make_resp(1008, getImplexStress(), &lb_implex_stress);
+			return make_resp(1009, getImplexStress(), &lb_implex_stress);
 		}
 	}
 
@@ -2819,10 +2823,16 @@ int ASDSteel1DMaterial::getResponse(int responseID, Information& matInformation)
 	case 1004:
 		return matInformation.setVector(getSlipResponse());
 		// 1005 - internal time
-	case 1005: return matInformation.setVector(getTimeIncrements());
-	case 1006: return matInformation.setVector(getImplexError());
-	case 1007: return matInformation.setVector(getImplexErrorU());
-	case 1008: return matInformation.setVector(getImplexStress());
+	case 1005:
+		return matInformation.setVector(getTimeIncrements());
+	case 1006:
+		return matInformation.setVector(getImplexError());
+	case 1007:
+		return matInformation.setVector(getSteelResponse());
+	case 1008:
+		return matInformation.setVector(getImplexErrorU());
+	case 1009:
+		return matInformation.setVector(getImplexStress());
 	default:
 		break;
 	}
@@ -2886,6 +2896,21 @@ const Vector& ASDSteel1DMaterial::getSlipResponse() const
 			d(0) = pdata->steel_comp.slip_material->getStrain();
 			d(1) = pdata->steel_comp.slip_material->getStress();
 		}
+	}
+	return d;
+}
+
+const Vector& ASDSteel1DMaterial::getSteelResponse() const
+{
+	static Vector d(2);
+	d.Zero();
+	if (params.buckling) {
+		d(0) = pdata->rve_m.e2.section.series.steel_material.strain;
+		d(1) = pdata->rve_m.e2.section.series.steel_material.stress;
+	}
+	else {
+		d(0) = pdata->steel_comp.steel_material.strain;
+		d(1) = pdata->steel_comp.steel_material.stress;
 	}
 	return d;
 }
