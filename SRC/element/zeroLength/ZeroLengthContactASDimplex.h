@@ -109,13 +109,20 @@
 
 #include <Element.h>
 #include <Matrix.h>
+#include <IMPLEXManager.h>
 #include <array>
 
 class Node;
 class Channel;
 class Response;
+class Parameter;
+class Information;
 
-class ZeroLengthContactASDimplex : public Element {
+// This element runs an IMPL-EX scheme, so it takes part in the IMPL-EX error
+// control: it registers itself, says when it took part in a step, and measures
+// its own extrapolation error when asked. See IMPLEXManager.h - nothing in that
+// interface says 'material', and this is the first element to implement it.
+class ZeroLengthContactASDimplex : public Element, public IMPLEXObject {
 
 public:
     class StateVariables {
@@ -137,12 +144,19 @@ public:
         double PC_commit = 1.0;             // committed normal stress compressive projector
         double dtime_n = 0.0;               // time factor
         double dtime_n_commit = 0.0;        // committed time factor
+        double dtime_0 = 0.0;               // the first time factor, the one a floor is relative to
         bool dtime_is_user_defined = false;
         bool dtime_first_set = false;
         // modulus
         Matrix C = Matrix(3, 3);            // tangent modulus matrix
         Vector sig = Vector(3);
-        Vector sig_implex = Vector(3); // only for output
+        Vector sig_implex = Vector(3); // the traction this step DELIVERED (extrapolated)
+        // the largest traction component this interface has committed so far. It
+        // is what the IMPL-EX error is normalized by, and it has to be measured
+        // because a penalty interface has no strength of its own to divide by -
+        // see implexStressGap()
+        double sig_ref = 0.0;
+        double implex_error = 0.0;          // only for output
         // constructor
         StateVariables() = default;
         StateVariables(const StateVariables&) = default;
@@ -189,7 +203,19 @@ public:
 
     Response* setResponse(const char** argv, int argc, OPS_Stream& output);
     int getResponse(int responseID, Information& eleInformation);
-    int updateParameter(int parameterID, double value);
+    // the user-defined time increment used to be offered as
+    // updateParameter(int, double), which overrides no virtual of the base class
+    // and, with no setParameter to build a Parameter with, could never be
+    // reached: the element had no way of being told the true size of the imposed
+    // increment, which is the one thing its extrapolation needs under a
+    // continuation method. This is the standard surface, the same one the
+    // IMPL-EX materials answer to
+    int setParameter(const char** argv, int argc, Parameter& param);
+    int updateParameter(int parameterID, Information& info);
+
+    // IMPL-EX error control (see IMPLEXManager.h)
+    double computeImplexErrorMetric();
+    double implexTimeRatio() const;
 
 private:
     // element info
@@ -224,6 +250,8 @@ private:
     void computeStrain();
     // compute material response
     void updateInternal(bool do_implex, bool do_tangent);
+    // the IMPL-EX error metric itself: a normalized traction gap
+    double implexStressGap(const Vector& delivered, const Vector& implicit_traction) const;
     // compute siffness
     void formStiffnessMatrix(const Matrix& C, Matrix& K);
     // compute B matrix

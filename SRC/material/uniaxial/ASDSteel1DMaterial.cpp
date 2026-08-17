@@ -281,11 +281,52 @@ namespace {
 	class SteelComponent
 	{
 	public:
+		/**
+		What a throw-away implicit pass writes, and therefore what the IMPL-EX
+		peek has to put back. NOT the same thing as revertToLastCommit(): that
+		one installs the COMMITTED values, while the peek has to restore the
+		state the step DELIVERED - the recorders are about to read it and the
+		step may still be rejected.
+
+		Note sg_commit, which is a committed quantity that the IMPLICIT pass
+		overwrites on purpose (see compute(): the plastic flow direction is
+		frozen there for the next extrapolation). Exactly the kind of variable
+		revertToLastCommit() cannot help with, which is why this struct exists.
+		*/
+		struct TrialState {
+			double alpha1 = 0.0;
+			double alpha2 = 0.0;
+			double epl = 0.0;
+			double lambda = 0.0;
+			double strain = 0.0;
+			double stress = 0.0;
+			double sg_commit = 0.0;
+		};
+
+	public:
 		using param_t = ASDSteel1DMaterial::InputParameters;
 		SteelComponent() = default;
 		int serializationDataSize() const;
 		void serialize(Vector& data, int& pos);
 		void deserialize(Vector& data, int& pos);
+		inline void saveTrialState(TrialState& x) const {
+			x.alpha1 = alpha1;
+			x.alpha2 = alpha2;
+			x.epl = epl;
+			x.lambda = lambda;
+			x.strain = strain;
+			x.stress = stress;
+			x.sg_commit = sg_commit;
+		}
+		inline void restoreTrialState(const TrialState& x) {
+			alpha1 = x.alpha1;
+			alpha2 = x.alpha2;
+			epl = x.epl;
+			lambda = x.lambda;
+			strain = x.strain;
+			stress = x.stress;
+			sg_commit = x.sg_commit;
+		}
 		inline int commitState() {
 			// store the previously committed variables for next move from n to n - 1
 			lambda_commit_old = lambda_commit;
@@ -506,10 +547,35 @@ namespace {
 	class SeriesComponent
 	{
 	public:
+		/**
+		See SteelComponent::TrialState. The slip material is a generic
+		UniaxialMaterial and has no snapshot API, so what is recorded is its
+		trial STRAIN: its trial state is a function of the committed state and
+		of that strain, so re-imposing it rebuilds exactly the state the peek
+		found.
+		*/
+		struct TrialState {
+			SteelComponent::TrialState steel;
+			double slip_strain = 0.0;
+			bool has_slip = false;
+		};
+
+	public:
 		double lch_anchor = 0.0;
 		SteelComponent steel_material;
 		UniaxialMaterial* slip_material = nullptr;
 		int serializationDataSize() const;
+		inline void saveTrialState(TrialState& x) {
+			steel_material.saveTrialState(x.steel);
+			x.has_slip = slip_material != nullptr;
+			if (slip_material)
+				x.slip_strain = slip_material->getStrain();
+		}
+		inline void restoreTrialState(const TrialState& x) {
+			steel_material.restoreTrialState(x.steel);
+			if (slip_material && x.has_slip)
+				slip_material->setTrialStrain(x.slip_strain);
+		}
 		void serialize(Vector& data, int& pos, int commitTag, Channel& theChannel);
 		void deserialize(Vector& data, int& pos, int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker);
 		void serialize_slip(int commitTag, Channel& theChannel);
@@ -808,10 +874,14 @@ namespace {
 	class SectionComponent<1>
 	{
 	public:
+		using TrialState = SeriesComponent::TrialState;
 		SeriesComponent series;
 
 	public:
 		SectionComponent() = default;
+
+		inline void saveTrialState(TrialState& x) { series.saveTrialState(x); }
+		inline void restoreTrialState(const TrialState& x) { series.restoreTrialState(x); }
 
 		inline int commitState() {
 			return series.commitState();
@@ -877,12 +947,21 @@ namespace {
 	class SectionComponent<3>
 	{
 	public:
+		struct TrialState {
+			std::array<SteelComponent::TrialState, 3> fibers;
+		};
 		std::array<SteelComponent, 3> fibers;
 		static constexpr std::array<double, 3> positions = { -1.0 / 2.0, 0.0, 1.0 / 2.0 };
 		static constexpr std::array<double, 3> weights = { 1.0 / 4.0, 1.0 / 2.0, 1.0 / 4.0 };
 
 	public:
 		SectionComponent() = default;
+		inline void saveTrialState(TrialState& x) {
+			for (std::size_t i = 0; i < fibers.size(); ++i) fibers[i].saveTrialState(x.fibers[i]);
+		}
+		inline void restoreTrialState(const TrialState& x) {
+			for (std::size_t i = 0; i < fibers.size(); ++i) fibers[i].restoreTrialState(x.fibers[i]);
+		}
 		inline int commitState() {
 			int retval = 0;
 			for (auto& item : fibers) {
@@ -1186,10 +1265,26 @@ namespace {
 	class RVEStateVariables
 	{
 	public:
+		// the trial part of these: UG_commit/UG_el_commit are not touched by a
+		// solve, so the peek does not need them
+		struct TrialState {
+			Vector UG = Vector(8);
+			Vector UG_el = Vector(11);
+		};
+
 		Vector UG = Vector(8);
 		Vector UG_commit = Vector(8);
 		Vector UG_el = Vector(11);
 		Vector UG_el_commit = Vector(11);
+
+		inline void saveTrialState(TrialState& x) const {
+			x.UG = UG;
+			x.UG_el = UG_el;
+		}
+		inline void restoreTrialState(const TrialState& x) {
+			UG = x.UG;
+			UG_el = x.UG_el;
+		}
 
 		int serializationDataSize() const;
 		void serialize(Vector& data, int& pos);
@@ -1222,6 +1317,22 @@ namespace {
 	class ElementComponent
 	{
 	public:
+		/**
+		See SteelComponent::TrialState. Two things here are not obvious:
+		qn/rn are updated INCREMENTALLY at every iteration of the corotational
+		update, so they carry the iteration history and not just the state; and
+		UL_commit is written by the implicit pass itself (the 'SEMI-COMMIT' in
+		compute()), which is the second committed variable in this material that
+		revertToLastCommit() would not put back.
+		*/
+		struct TrialState {
+			Vector UL_commit = Vector(6);
+			std::array<Q2D, 2> qn = { Q2D::identity(), Q2D::identity() };
+			V2D rn = V2D(0.0, 0.0);
+			typename SectionComponent<NFiber>::TrialState section;
+		};
+
+	public:
 		SectionComponent<NFiber> section;
 		Vector UL_commit = Vector(6);
 		std::array<Q2D, 2> qn = { Q2D::identity(), Q2D::identity()};
@@ -1233,7 +1344,19 @@ namespace {
 		void serialize(Vector& data, int& pos);
 		void deserialize(Vector& data, int& pos);
 
-		
+		inline void saveTrialState(TrialState& x) {
+			x.UL_commit = UL_commit;
+			x.qn = qn;
+			x.rn = rn;
+			section.saveTrialState(x.section);
+		}
+		inline void restoreTrialState(const TrialState& x) {
+			UL_commit = x.UL_commit;
+			qn = x.qn;
+			rn = x.rn;
+			section.restoreTrialState(x.section);
+		}
+
 		ElementComponent() = default;
 		
 		inline int compute(bool elastic_correction, const RVEStateVariables& rve, const ASDSteel1DMaterial::InputParameters& params, bool do_implex, double time_factor ) {
@@ -1469,11 +1592,35 @@ namespace {
 	class RVEModel
 	{
 	public:
+		struct TrialState {
+			RVEStateVariables::TrialState sv;
+			ElementComponent<3, EType_Bot>::TrialState e1;
+			ElementComponent<1, EType_Mid>::TrialState e2;
+			ElementComponent<3, EType_Top>::TrialState e3;
+			ElementComponent<1, EType_El>::TrialState e0;
+		};
+
 		RVEStateVariables sv;
 		ElementComponent<3, EType_Bot> e1;
 		ElementComponent<1, EType_Mid> e2;
 		ElementComponent<3, EType_Top> e3;
 		ElementComponent<1, EType_El> e0; // nonlinear section (1 fiber), but linear kinematics
+
+		inline void saveTrialState(TrialState& x) {
+			sv.saveTrialState(x.sv);
+			e1.saveTrialState(x.e1);
+			e2.saveTrialState(x.e2);
+			e3.saveTrialState(x.e3);
+			e0.saveTrialState(x.e0);
+		}
+		inline void restoreTrialState(const TrialState& x) {
+			sv.restoreTrialState(x.sv);
+			e1.restoreTrialState(x.e1);
+			e2.restoreTrialState(x.e2);
+			e3.restoreTrialState(x.e3);
+			e0.restoreTrialState(x.e0);
+		}
+
 		int serializationDataSize() const;
 		void serialize(Vector& data, int& pos);
 		void deserialize(Vector& data, int& pos);
@@ -1744,42 +1891,13 @@ namespace {
 		e3.deserialize(data, pos);
 		e0.deserialize(data, pos);
 	}
-	class GlobalParameters {
-	private:
-		double max_error = 0.0;
-		double avg_error = 0.0;
-		int avg_counter = 0;
-	private:
-		GlobalParameters() = default;
-		GlobalParameters(const GlobalParameters&) = delete;
-		GlobalParameters& operator = (const GlobalParameters&) = delete;
-	public:
-		static GlobalParameters& instance() {
-			static GlobalParameters _instance;
-			return _instance;
-		}
-		inline double getMaxError() const {
-			return max_error;
-		}
-		inline void setMaxError(double x) {
-			max_error = x;
-		}
-		inline double getAverageError() {
-			if (avg_counter > 0) {
-				avg_error /= static_cast<double>(avg_counter);
-				avg_counter = 0;
-			}
-			return avg_error;
-		}
-		inline void accumulateAverageError(double x) {
-			avg_error += x;
-			++avg_counter;
-		}
-		inline void setAverageError(double x) {
-			avg_error = x;
-			avg_counter = 0;
-		}
-	};
+	// NOTE: a process-wide accumulator of the IMPL-EX error used to live here
+	// (GlobalParameters, max and average). It was written at commit time and
+	// never read by anything, and it was a second registry next to the real one:
+	// IMPLEXManager, which aggregates every IMPL-EX object of the model, knows
+	// which of them took part in the step, and is read by the convergence test
+	// BEFORE the commit - which is the only moment at which a step can still be
+	// rejected. See IMPLEXManager.h.
 
 }
 
@@ -1796,7 +1914,13 @@ public:
 	}
 public:
 	SeriesComponent steel_comp;
-	RVEModel rve_m;	
+	RVEModel rve_m;
+	// scratch for the IMPL-EX peek: the trial state of the components, saved and
+	// put back around the throw-away implicit pass. One buffer per material and
+	// not a local, because it holds Vectors and the peek runs once per step per
+	// material point; the peek is never re-entered, so one is enough
+	SeriesComponent::TrialState steel_comp_peek;
+	RVEModel::TrialState rve_peek;
 };
 
 void* OPS_ASDSteel1DMaterial()
@@ -1807,7 +1931,7 @@ void* OPS_ASDSteel1DMaterial()
 		opserr << "Using ASDSteel1D - Developed by: Alessia Casalucci, Massimo Petracca, Guido Camata, ASDEA Software Technology\n";
 		first_done = true;
 	} 
-	static const char* msg = "uniaxialMaterial ASDSteel1D $tag $E $sy $su $eu  <-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> <-auto_regularization> <-buckling  $lch < $r>> <-fracture  <$r>> <-slip $matTag <$r>> <-K_alpha $K_alpha> <-max_iter $max_iter> <-tolU $tolU> <-tolR $tolR>";
+	static const char* msg = "uniaxialMaterial ASDSteel1D $tag $E $sy $su $eu  <-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> <-implexAbort> <-auto_regularization> <-buckling  $lch < $r>> <-fracture  <$r>> <-slip $matTag <$r>> <-K_alpha $K_alpha> <-max_iter $max_iter> <-tolU $tolU> <-tolR $tolR>";
 
 	// check arguments
 	int numArgs = OPS_GetNumRemainingInputArgs();
@@ -1830,6 +1954,7 @@ void* OPS_ASDSteel1DMaterial()
 	double r = 0.0; // default to 0.0, means not provided
 	bool implex = false;
 	bool implex_control = false;
+	bool implex_abort_on_error = false;
 	double implex_error_tolerance = 0.05;
 	double implex_time_redution_limit = 0.01;
 	bool auto_regularization = false;
@@ -1893,13 +2018,18 @@ void* OPS_ASDSteel1DMaterial()
 		if (strcmp(value, "-implexControl") == 0) {
 			implex_control = true;
 			if (OPS_GetNumRemainingInputArgs() < 2) {
-				opserr << "nDMaterial ASDConcrete1D Error: '-implexControl' given without the next 2 arguments $implexErrorTolerance $implexTimeReductionLimit.\n";
+				opserr << "uniaxialMaterial ASDSteel1D Error: '-implexControl' given without the next 2 arguments $implexErrorTolerance $implexTimeReductionLimit.\n";
 				return nullptr;
 			}
 			if (!lam_optional_double("implexErrorTolerance", implex_error_tolerance))
 				return nullptr;
 			if (!lam_optional_double("implexTimeReductionLimit", implex_time_redution_limit))
 				return nullptr;
+		}
+		if (strcmp(value, "-implexAbort") == 0) {
+			// LEGACY: the material fails the step on its own. Off by default,
+			// same as in every other ASD material that runs IMPL-EX
+			implex_abort_on_error = true;
 		}
 		if (strcmp(value, "-auto_regularization") == 0) {
 			auto_regularization = true;
@@ -2070,6 +2200,7 @@ void* OPS_ASDSteel1DMaterial()
 	params.gamma2 = gamma2;
 	params.implex = implex;
 	params.implex_control = implex_control;
+	params.implex_abort_on_error = implex_abort_on_error;
 	params.implex_error_tolerance = implex_error_tolerance;
 	params.implex_time_redution_limit = implex_time_redution_limit;
 	params.auto_regularization = auto_regularization;
@@ -2123,14 +2254,22 @@ ASDSteel1DMaterial::ASDSteel1DMaterial()
 
 ASDSteel1DMaterial::ASDSteel1DMaterial(const ASDSteel1DMaterial& other)
 	: UniaxialMaterial(other.getTag(), MAT_TAG_ASDSteel1DMaterial)
+	// IMPLEXObject's own copy constructor registers the copy as a NEW object of
+	// the registry: identity is never copied
+	, IMPLEXObject(other)
 	, params(other.params)
 	, dtime_n(other.dtime_n)
 	, dtime_n_commit(other.dtime_n_commit)
+	, dtime_0(other.dtime_0)
+	, dtime_is_user_defined(other.dtime_is_user_defined)
 	, commit_done(other.commit_done)
+	, implex_error(other.implex_error)
+	, implex_error_u(other.implex_error_u)
 	, strain(other.strain)
 	, strain_commit(other.strain_commit)
 	, stress(other.stress)
 	, stress_commit(other.stress_commit)
+	, stress_implex(other.stress_implex)
 	, C(other.C)
 	, stress_rve(other.stress_rve)
 	, stress_rve_commit(other.stress_rve_commit)
@@ -2145,114 +2284,39 @@ ASDSteel1DMaterial::~ASDSteel1DMaterial()
 	if(pdata) delete pdata;
 }
 
-int ASDSteel1DMaterial::setTrialStrain(double v, double r)
+int ASDSteel1DMaterial::computeResponse(bool do_implex)
 {
-	params.lch_element = ops_TheActiveElement ? ops_TheActiveElement->getCharacteristicLength()/2 : params.length;
-	// save dT
-	if (!dtime_is_user_defined) {
-		dtime_n = ops_Dt;
-		if (!commit_done) {
-			dtime_0 = dtime_n;
-			dtime_n_commit = dtime_n;
-		}
-	}
-	// time factor for explicit extrapolation
+	// time factor for explicit extrapolation. Clamped at zero, as everywhere
+	// else: a negative ratio would extrapolate an irreversible process backwards
 	double time_factor = 1.0;
-	if (params.implex && (dtime_n_commit > 0.0))
-		time_factor = dtime_n / dtime_n_commit;
-	
-	// save macro strain
-	strain = v;
-	// homogenize micro response (stress/tangent)
+	if (params.implex && do_implex && (dtime_n_commit > 0.0))
+		time_factor = std::max(0.0, dtime_n / dtime_n_commit);
 
-	asd_print("MAT set trial (" << (int)params.implex << ")");
-	int retval;
-	
+	int retval = 0;
 	double epl = 0.0;
-	if (params.buckling) {  // se buckling farlo con l'energia ottenuta da rve (incremento spostamento * incremento forze (u - u commit)*(residuo-residuo commit) e normalizzarlo con una frazione della lunghezza* sigmay * Area
-		//regularization for element length lower than physical length (weighted average)
-		
-		if (params.implex) {
-			if (params.implex_control) {
-				double area = M_PI * params.radius * params.radius;
-				bool elastic_correction = params.lch_element > params.length;
-				// implicit solution
-				double retval = homogenize(false);             
-				if (retval != 0) return retval;
 
-				Vector U_impl = elastic_correction && params.auto_regularization ? pdata->rve_m.sv.UG_el : pdata->rve_m.sv.UG;
-				double N_impl = N_rve_last;  
-				double sigma_impl = N_impl / stress;
-
-				pdata->rve_m.revertToLastCommit();
-
-				// explicit solution
-				retval = homogenize(true);
-				if (retval != 0) return retval;
-
-				Vector  U_expl = elastic_correction && params.auto_regularization ? pdata->rve_m.sv.UG_el : pdata->rve_m.sv.UG;
-				double N_expl = N_rve_last;
-				double sigma_expl = N_expl / stress;
-				
-				Vector dU_err = U_expl - U_impl;
-
-				// L2 Norm 
-				double norm_dU = dU_err.Norm();
-				double implex_error_u = norm_dU / params.radius;
-				double implex_error_N = (sigma_expl - sigma_impl) / params.sy;
-				implex_error = std::max(implex_error_u, implex_error_N);
-				if (implex_error > params.implex_error_tolerance) {
-					if (dtime_n >= params.implex_time_redution_limit * dtime_0) {
-						retval = EC_IMPLEX_Error_Control;
-					}
-				}				
-			}
-			else {
-				retval = homogenize(true);
-			}
-		}
-		else {
-			retval = homogenize(false);
-		}
+	if (params.buckling) {
+		// homogenize the micro response. RVEModel::compute() applies the same
+		// rule on its own state: restart from the committed one, EXCEPT in the
+		// implex correction pass, where the extrapolated shape is the predictor
+		retval = homogenize(do_implex);
+		if (retval != 0)
+			return retval;
 		C = C_rve;
 		stress = stress_rve;
 		epl = pdata->rve_m.e2.section.series.steel_material.epl;
-
-
 	}
 	else {
-		//computation of sigma and tangent of steel
-		pdata->steel_comp.revertToLastCommit();
-		
-		if (params.implex) {
-			if (params.implex_control) {
-				double sigma_macro = 0.0;
-				double tangent_macro = 0.0;
-				// implicit solution
-				int retval = pdata->steel_comp.compute(params, false, 1.0, strain, sigma_macro, tangent_macro);
-				double sigma_impl = sigma_macro;
-				pdata->steel_comp.revertToLastCommit();
-				// explicit solution
-				retval = pdata->steel_comp.compute(params, true, time_factor, strain, stress, C);
-				double sigma_expl = stress;
-				
-				implex_error = std::abs(sigma_expl - sigma_impl) / params.sy; //semplifica
-				if (implex_error > params.implex_error_tolerance) {
-					if (dtime_n >= params.implex_time_redution_limit * dtime_0) {
-						retval = EC_IMPLEX_Error_Control;
-					}
-				}
-			}
-			else {
-				retval = pdata->steel_comp.compute(params, true, time_factor, strain, stress, C);
-			}
-		}
-
-		else {
-			retval = pdata->steel_comp.compute(params, params.implex, time_factor, strain, stress, C);
-		}
+		// the same rule the RVE applies internally, written out here because the
+		// series component does not: its Newton starts from the CURRENT slip
+		// strain, so the correction pass has to keep the delivered one as its
+		// predictor - and every other pass has to restart from the committed state
+		if (!(params.implex && !do_implex))
+			pdata->steel_comp.revertToLastCommit();
+		retval = pdata->steel_comp.compute(params, do_implex, time_factor, strain, stress, C);
 		epl = pdata->steel_comp.steel_material.epl;
 	}
+
 	if (params.fracture) {
 		double d = 0.0;
 		double eupl = params.eu - params.sy / params.E;
@@ -2272,7 +2336,55 @@ int ASDSteel1DMaterial::setTrialStrain(double v, double r)
 		stress *= (1.0 - d);
 		C *= (1.0 - d);  //tangent for implex, secant for implicit
 	}
-	
+
+	// done
+	return retval;
+}
+
+int ASDSteel1DMaterial::setTrialStrain(double v, double r)
+{
+	// this material point takes part in the current step, so it takes part in
+	// the IMPL-EX error aggregate (see IMPLEXManager.h)
+	implexTouch();
+
+	params.lch_element = ops_TheActiveElement ? ops_TheActiveElement->getCharacteristicLength()/2 : params.length;
+	// save dT
+	if (!dtime_is_user_defined) {
+		dtime_n = ops_Dt;
+		if (!commit_done) {
+			dtime_0 = dtime_n;
+			dtime_n_commit = dtime_n;
+		}
+	}
+
+	// save macro strain
+	strain = v;
+
+	asd_print("MAT set trial (" << (int)params.implex << ")");
+
+	// the answer this step delivers: extrapolated in impl-ex, implicit otherwise
+	int retval = computeResponse(params.implex);
+
+	// RECORD WHAT THIS STEP DELIVERS, in ONE place covering every branch above:
+	// 'stress' is what getStress() is about to hand the element, and the commit
+	// correction is about to overwrite it with the implicit re-solve
+	stress_implex = stress;
+
+	if (params.implex && params.implex_control && retval == 0) {
+		// THE LEGACY in-material measurement, read through the NON-DESTRUCTIVE
+		// peek and not measured inline, so that the two places that want the
+		// error cannot drift. The error control does not need this at all: the
+		// convergence test wrapper measures once per step, through
+		// computeImplexErrorMetric(), instead of once per iteration
+		double err = computeImplexErrorMetric();
+		// and only if the user asked for the old behaviour, fail here
+		if (params.implex_abort_on_error && !(err <= params.implex_error_tolerance)) {
+			if (dtime_n >= params.implex_time_redution_limit * dtime_0) {
+				retval = EC_IMPLEX_Error_Control;
+			}
+		}
+	}
+
 	// done
 	return retval;
 }
@@ -2299,46 +2411,31 @@ double ASDSteel1DMaterial::getStrain(void)
 
 int ASDSteel1DMaterial::commitState(void)
 {
-	// implicit stage
+	// implicit stage. Note that this is not a second answer that gets thrown
+	// away: the implicit one IS what gets committed, so this same call does the
+	// first half of the commit and measures what the step carried
 	if (params.implex) {
+		asd_print("MAT commit (" << (int)false << ")");
+		// the delivered RVE shape, kept for the displacement DIAGNOSTIC only.
+		// The peek buffer is free at commit time and is exactly a UG/UG_el pair,
+		// so this costs no allocation
+		bool elastic_layout = params.buckling && params.auto_regularization &&
+			(params.lch_element > params.length);
+		if (params.buckling)
+			pdata->rve_m.sv.saveTrialState(pdata->rve_peek.sv);
+
+		int retval = computeResponse(false);
+		if (retval < 0)
+			return retval;
+
+		// the metric, from the two stresses - the same expression the peek uses
+		implex_error = implexStressGap(stress_implex, stress);
 		if (params.buckling) {
-			asd_print("MAT commit (" << (int)false << ")");
-			double area = M_PI * params.radius * params.radius;
-			bool elastic_correction = params.lch_element > params.length;
-			Vector  U_expl = elastic_correction && params.auto_regularization ? pdata->rve_m.sv.UG_el : pdata->rve_m.sv.UG;
-			double N_expl = N_rve_last;
-			double sigma_expl = N_expl / stress;
-			
-			// implicit solution
-			double retval = homogenize(false);
-
-			Vector U_impl = elastic_correction && params.auto_regularization ? pdata->rve_m.sv.UG_el : pdata->rve_m.sv.UG;
-			double N_impl = N_rve_last;
-			double sigma_impl = N_impl / stress;
-
-			Vector dU_err = U_expl - U_impl;
-
-			// Norm 
-			double norm_dU = dU_err.Norm();
-			double implex_error_u = norm_dU / params.radius;
-			double implex_error_N = (sigma_expl - sigma_impl) / params.sy;
-			implex_error = std::max(implex_error_u, implex_error_N);
-			GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
-			GlobalParameters::instance().accumulateAverageError(implex_error);
-			if (retval < 0) return retval;
+			implex_error_u = implexDisplacementGap(
+				elastic_layout ? pdata->rve_peek.sv.UG_el : pdata->rve_peek.sv.UG,
+				elastic_layout ? pdata->rve_m.sv.UG_el : pdata->rve_m.sv.UG,
+				elastic_layout);
 		}
-		else {
-			double sigma_expl = stress;
-			double sigma_macro = 0.0;
-			double tangent_macro = 0.0;
-			int retval = pdata->steel_comp.compute(params, false, 1.0, strain, sigma_macro, tangent_macro);
-			double sigma_impl = sigma_macro;
-			implex_error = std::abs(sigma_expl - sigma_impl) / params.sy;
-			GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
-			GlobalParameters::instance().accumulateAverageError(implex_error);
-			if (retval < 0) return retval;
-		}
-
 	}
 
 	// compute energy
@@ -2351,6 +2448,8 @@ int ASDSteel1DMaterial::commitState(void)
 	// state variables
 	strain_commit = strain;
 	stress_commit = stress;
+	// this one was never written, so revertToLastCommit() restored a zero
+	stress_rve_commit = stress_rve;
 
 	// implex
 	dtime_n_commit = dtime_n;
@@ -2389,10 +2488,12 @@ int ASDSteel1DMaterial::revertToStart(void)
 	strain_commit = 0.0;
 	stress = 0.0;
 	stress_commit = 0.0;
+	stress_implex = 0.0;
 	stress_rve = 0.0;
 	stress_rve_commit = 0.0;
 	C = getInitialTangent();
 	C_rve = getInitialTangent();
+	N_rve_last = 0.0;
 
 	// implex
 	dtime_n = 0.0;
@@ -2401,6 +2502,7 @@ int ASDSteel1DMaterial::revertToStart(void)
 	dtime_is_user_defined = false;
 	// IMPL-EX error
 	implex_error = 0.0;
+	implex_error_u = 0.0;
 	// Commit flag
 	commit_done = false;
 
@@ -2431,9 +2533,12 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	//// send DBL data
 	counter = 0;
 
-	// variable DBL data size
-
-	int nv_dbl = 13 + 
+	// variable DBL data size.
+	// THE FIRST TERM IS THE NUMBER OF FIELDS THIS FUNCTION WRITES BEFORE THE
+	// PARAMETERS, and it said 13 while 16 were written - with params.NDATA
+	// undercounting by another 3, the vector was 6 entries short and the tail of
+	// the parameters was written past its end
+	int nv_dbl = 18 +
 		params.NDATA +
 		pdata->rve_m.serializationDataSize() +  
 		pdata->steel_comp.serializationDataSize() +
@@ -2450,11 +2555,13 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	ddata(counter++) = dtime_0;
 	ddata(counter++) = static_cast<int>(dtime_is_user_defined);
 	ddata(counter++) = implex_error;
+	ddata(counter++) = implex_error_u;
 	ddata(counter++) = static_cast<double>(commit_done);
 	ddata(counter++) = strain;
 	ddata(counter++) = strain_commit;
 	ddata(counter++) = stress;
 	ddata(counter++) = stress_commit;
+	ddata(counter++) = stress_implex;
 	ddata(counter++) = C;
 	ddata(counter++) = stress_rve;
 	ddata(counter++) = stress_rve_commit;
@@ -2470,6 +2577,7 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	ddata(counter++) = params.gamma2;
 	ddata(counter++) = static_cast<double>(params.implex);
 	ddata(counter++) = static_cast<int>(params.implex_control);
+	ddata(counter++) = static_cast<double>(params.implex_abort_on_error);
 	ddata(counter++) = params.implex_error_tolerance;
 	ddata(counter++) = params.implex_time_redution_limit;
 	ddata(counter++) = static_cast<double>(params.auto_regularization);
@@ -2510,14 +2618,12 @@ int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	// aux
 	int counter;
 
-	// variable DBL data size
-	int nv_dbl = 13 +
+	// variable DBL data size - MUST match sendSelf(), see the note there
+	int nv_dbl = 18 +
 		params.NDATA +
 		pdata->rve_m.serializationDataSize() +
 		pdata->steel_comp.serializationDataSize() +
 		pdata->rve_m.e2.section.series.serializationDataSize();
-
-	//	pdata->rve_m.e0.section.series.serializationDataSize() + pdata->rve_m.e2.section.series.serializationDataSize() + pdata->steel_comp.serializationDataSize();
 	Vector ddata(nv_dbl);
 
 	// recv DBL data
@@ -2536,14 +2642,18 @@ int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	dtime_0 = ddata(counter++);
 	dtime_is_user_defined = static_cast<bool>(ddata(counter++));
 	implex_error = ddata(counter++);
+	implex_error_u = ddata(counter++);
 	commit_done = static_cast<bool>(ddata(counter++));
 	strain = ddata(counter++);
 	strain_commit = ddata(counter++);
 	stress = ddata(counter++);
 	stress_commit = ddata(counter++);
+	stress_implex = ddata(counter++);
 	C = ddata(counter++);
-	stress_rve_commit = ddata(counter++);
+	// these two were read in the opposite order to the one sendSelf writes them
+	// in, so a round trip swapped them
 	stress_rve = ddata(counter++);
+	stress_rve_commit = ddata(counter++);
 	C_rve = ddata(counter++);
 	energy = ddata(counter++);
 
@@ -2557,6 +2667,7 @@ int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	params.gamma2 = ddata(counter++);
 	params.implex = static_cast<bool>(ddata(counter++));
 	params.implex_control = static_cast<bool>(ddata(counter++));
+	params.implex_abort_on_error = static_cast<bool>(ddata(counter++));
 	params.implex_error_tolerance = ddata(counter++);
 	params.implex_time_redution_limit = ddata(counter++);
 	params.auto_regularization = static_cast<bool>(ddata(counter++));
@@ -2651,6 +2762,8 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 	static std::vector<std::string> lb_slip_resp = { "Slip", "Tau" };
 	static std::vector<std::string> lb_time = { "dTime", "dTimeCommit", "dTimeInitial" };
 	static std::vector<std::string> lb_implex_error = { "Error" };
+	static std::vector<std::string> lb_implex_error_u = { "ErrorU" };
+	static std::vector<std::string> lb_implex_stress = { "ImplexStress" };
 
 
 
@@ -2673,6 +2786,15 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 		}
 		if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
 			return make_resp(1006, getImplexError(), &lb_implex_error);
+		}
+		if (strcmp(argv[0], "implexErrorU") == 0 || strcmp(argv[0], "ImplexErrorU") == 0) {
+			// the DIAGNOSTIC, published next to the metric and never inside it
+			return make_resp(1007, getImplexErrorU(), &lb_implex_error_u);
+		}
+		if (strcmp(argv[0], "implexStress") == 0 || strcmp(argv[0], "ImplexStress") == 0) {
+			// what the step DELIVERED, next to 'stress' which after the commit is
+			// the implicit answer: the two are what the metric is made of
+			return make_resp(1008, getImplexStress(), &lb_implex_stress);
 		}
 	}
 
@@ -2699,6 +2821,8 @@ int ASDSteel1DMaterial::getResponse(int responseID, Information& matInformation)
 		// 1005 - internal time
 	case 1005: return matInformation.setVector(getTimeIncrements());
 	case 1006: return matInformation.setVector(getImplexError());
+	case 1007: return matInformation.setVector(getImplexErrorU());
+	case 1008: return matInformation.setVector(getImplexStress());
 	default:
 		break;
 	}
@@ -2782,6 +2906,151 @@ const Vector& ASDSteel1DMaterial::getImplexError() const
 	return d;
 }
 
+const Vector& ASDSteel1DMaterial::getImplexErrorU() const
+{
+	static Vector d(1);
+	d(0) = implex_error_u;
+	return d;
+}
+
+const Vector& ASDSteel1DMaterial::getImplexStress() const
+{
+	static Vector d(1);
+	d(0) = stress_implex;
+	return d;
+}
+
+// ---------------------------------------------------------------------------
+// IMPL-EX error control
+// ---------------------------------------------------------------------------
+
+double ASDSteel1DMaterial::stressReference(void) const
+{
+	// the largest stress this material can carry. The Chaboche backstresses
+	// saturate at H_i/gamma_i, so the asymptote is sy + H1/gamma1 + H2/gamma2 -
+	// which, with the calibration OPS_ASDSteel1DMaterial() does, is exactly the
+	// 'su' the user typed. Recovering it from the parameters instead of storing
+	// it keeps the serialization alone and stays right if the calibration
+	// changes. With no saturation (gamma = 0) the hardening is unbounded and the
+	// yield stress is the only scale there is
+	double ref = params.sy;
+	if (params.gamma1 > 0.0)
+		ref += params.H1 / params.gamma1;
+	if (params.gamma2 > 0.0)
+		ref += params.H2 / params.gamma2;
+	return ref > 0.0 ? ref : 1.0;
+}
+
+double ASDSteel1DMaterial::implexStressGap(double delivered, double stress_implicit) const
+{
+	// the reference is the largest stress this material can carry. The NORM of
+	// the gap may differ from model to model (an absolute value here, the
+	// largest Voigt component in 3D); the DENOMINATOR must not, or the same
+	// tolerance means different things in 1D and in 3D and a stepper ends up
+	// comparing numbers that are not comparable
+	return std::abs(delivered - stress_implicit) / stressReference();
+}
+
+double ASDSteel1DMaterial::implexDisplacementGap(
+	const Vector& delivered, const Vector& implicit_u, bool elastic_layout) const
+{
+	// A DIAGNOSTIC, NOT THE METRIC, and deliberately kept out of it.
+	//
+	// The quantity the analysis equilibrates on is the delivered STRESS, and
+	// that is what the metric measures. This one watches the blind spot of that
+	// choice: at a limit point the force is flat in the displacement, so the two
+	// passes can leave the RVE in visibly different shapes while agreeing on N.
+	// Worth seeing - the extrapolated shape is the predictor the commit pass
+	// starts its Newton from - but it is not an error in what the step carried,
+	// and a single shared tolerance can only mean one thing at a time.
+	//
+	// It also cannot be measured the way it used to be. UG mixes translations
+	// and rotations (dofs 2 and 5, plus 9 in the elastic-correction layout), so
+	// an L2 norm over the whole vector adds metres to radians, and dividing the
+	// result by the bar radius scales the rotational part by 1/r - which makes
+	// the number depend on the unit system: the same rotation gap reads 0.2 in
+	// metres and 2e-4 in millimetres. Translations are scaled by the radius,
+	// rotations are already dimensionless, and the two are combined with a max
+	double gap_t = 0.0;
+	double gap_r = 0.0;
+	int n = std::min(delivered.Size(), implicit_u.Size());
+	for (int i = 0; i < n; ++i) {
+		bool is_rotation = elastic_layout ? (i == 2 || i == 5 || i == 9) : (i == 2 || i == 5);
+		double d = std::abs(delivered(i) - implicit_u(i));
+		if (is_rotation)
+			gap_r = std::max(gap_r, d);
+		else
+			gap_t = std::max(gap_t, d);
+	}
+	double r = params.radius > 0.0 ? params.radius : 1.0;
+	return std::max(gap_t / r, gap_r);
+}
+
+double ASDSteel1DMaterial::computeImplexErrorMetric(void)
+{
+	// no extrapolation, no error. This is what makes it safe for the aggregation
+	// to call it on everything it has
+	if (!params.implex)
+		return 0.0;
+
+	// the current state holds the EXPLICIT answer: the stress this step
+	// delivered to the element, and the state the recorders must keep seeing.
+	// stress_implex already holds the delivered stress - setTrialStrain records
+	// it - and computeResponse() does not write that member, so it survives the
+	// throw-away solve
+	bool elastic_layout = params.buckling && params.auto_regularization &&
+		(params.lch_element > params.length);
+	if (params.buckling)
+		pdata->rve_m.saveTrialState(pdata->rve_peek);
+	else
+		pdata->steel_comp.saveTrialState(pdata->steel_comp_peek);
+	double stress_bk = stress;
+	double C_bk = C;
+	double stress_rve_bk = stress_rve;
+	double C_rve_bk = C_rve;
+	double N_rve_bk = N_rve_last;
+
+	// the implicit answer, at the same trial strain AND from the same starting
+	// point the commit will use - the metric has to measure the gap against what
+	// is going to be committed, not against a differently-started re-solve
+	int retval = computeResponse(false);
+	double err = std::numeric_limits<double>::quiet_NaN();
+	double err_u = 0.0;
+	if (retval == 0) {
+		err = implexStressGap(stress_implex, stress);
+		if (params.buckling) {
+			err_u = implexDisplacementGap(
+				elastic_layout ? pdata->rve_peek.sv.UG_el : pdata->rve_peek.sv.UG,
+				elastic_layout ? pdata->rve_m.sv.UG_el : pdata->rve_m.sv.UG,
+				elastic_layout);
+		}
+	}
+	// a solve that did not converge cannot say anything about its own error, and
+	// no metric is not a small metric: whoever reads this must not accept the step
+
+	// undo. Measuring is not allowed to move the state: the step may still be
+	// rejected, and revertToLastCommit() would not put back sg_commit or
+	// UL_commit, which the implicit pass writes on purpose
+	if (params.buckling)
+		pdata->rve_m.restoreTrialState(pdata->rve_peek);
+	else
+		pdata->steel_comp.restoreTrialState(pdata->steel_comp_peek);
+	stress = stress_bk;
+	C = C_bk;
+	stress_rve = stress_rve_bk;
+	C_rve = C_rve_bk;
+	N_rve_last = N_rve_bk;
+
+	implex_error = err;
+	implex_error_u = err_u;
+	return err;
+}
+
+double ASDSteel1DMaterial::implexTimeRatio(void) const
+{
+	return dtime_0 > 0.0 ? dtime_n / dtime_0 : 1.0;
+}
+
 int ASDSteel1DMaterial::homogenize(bool do_implex)
 {	
 	// return value
@@ -2798,10 +3067,11 @@ int ASDSteel1DMaterial::homogenize(bool do_implex)
 		globals.setRVENodes(params.length);
 	}	
 
-	// time factor for explicit extrapolation
+	// time factor for explicit extrapolation, clamped at zero as in
+	// computeResponse(): a negative ratio would extrapolate backwards
 	double time_factor = 1.0;
 	if (params.implex && do_implex && (dtime_n_commit > 0.0))
-		time_factor = dtime_n / dtime_n_commit;
+		time_factor = std::max(0.0, dtime_n / dtime_n_commit);
 
 	// from macro strain to micro strain
 	double macro_strain = strain;

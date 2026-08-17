@@ -39,6 +39,7 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <Renderer.h>
+#include <Parameter.h>
 #include <limits>
 #include <algorithm>
 #include <string.h>
@@ -335,6 +336,18 @@ int ZeroLengthContactASDimplex::commitState(void)
         updateInternal(false, false);  // explicit_phase?, do_tangent?
     }
 
+    // the metric, for output, from the two tractions this step produced. Free:
+    // the implicit pass it needs is the correction just above. It is computed
+    // BEFORE the reference is updated below, so that it is the same number the
+    // peek published to the convergence test earlier in this step
+    if (use_implex)
+        sv.implex_error = implexStressGap(sv.sig_implex, sv.sig);
+
+    // the reference the IMPL-EX error is normalized by, tracked on the COMMITTED
+    // answer - which in impl-ex mode is the implicit one, corrected just above
+    for (int i = 0; i < 3; ++i)
+        sv.sig_ref = std::max(sv.sig_ref, std::abs(sv.sig(i)));
+
     // commit internal variables
     sv.eps_commit = sv.eps;
     sv.shear_commit = sv.shear;
@@ -375,10 +388,15 @@ int ZeroLengthContactASDimplex::revertToStart()
 
 int ZeroLengthContactASDimplex::update()
 {
+    // this element takes part in the current step, so it takes part in the
+    // IMPL-EX error aggregate (see IMPLEXManager.h)
+    implexTouch();
+
     if (!sv.dtime_is_user_defined) {
         sv.dtime_n = ops_Dt;
         if (!sv.dtime_first_set) {
             sv.dtime_n_commit = sv.dtime_n;
+            sv.dtime_0 = sv.dtime_n;
             sv.dtime_first_set = true;
         }
     }
@@ -509,7 +527,7 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     }
 
     // double data
-    static Vector ddata(31);
+    static Vector ddata(33);
     ddata(0) = Knormal;
     ddata(1) = Kfriction;
     ddata(2) = mu;
@@ -541,6 +559,8 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     ddata(28) = gap0(0);
     ddata(29) = gap0(1);
     ddata(30) = gap0(2);
+    ddata(31) = sv.dtime_0;
+    ddata(32) = sv.sig_ref;
     res = theChannel.sendVector(dataTag, commitTag, ddata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::sendSelf() - " << this->getTag() << " failed to send Vector\n";
@@ -575,7 +595,7 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     gap0_initialized = idata(9) == 1;
 
     // double data
-    static Vector ddata(31);
+    static Vector ddata(33);
     res = theChannel.recvVector(dataTag, commitTag, ddata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::recvSelf() - failed to receive Vector\n";
@@ -610,8 +630,10 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     sv.dtime_n = ddata(26);
     sv.dtime_n_commit = ddata(27);
     gap0(0) = ddata(28);
-    gap0(1) = ddata(39);
+    gap0(1) = ddata(29);   // was ddata(39): a read past the end of the vector
     gap0(2) = ddata(30);
+    sv.dtime_0 = ddata(31);
+    sv.sig_ref = ddata(32);
 
     return 0;
 }
@@ -777,6 +799,12 @@ Response* ZeroLengthContactASDimplex::setResponse(const char** argv, int argc, O
             lam_close_gauss();
             theResponse = new ElementResponse(this, 8, Vector(3));
         }
+        else if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
+            lam_open_gauss();
+            output.tag("ResponseType", "Error");
+            lam_close_gauss();
+            theResponse = new ElementResponse(this, 9, Vector(1));
+        }
     }
 
     output.endTag(); // ElementOutput
@@ -852,29 +880,133 @@ int ZeroLengthContactASDimplex::getResponse(int responseID, Information& eleInfo
         cres(0) = sv.cres; cres(1) = sv.cres_commit; cres(2) = sv.cres_commit_old;
         return eleInfo.setVector(cres);
     }
+    else if (responseID == 9) {
+        // IMPL-EX error, as measured by the last peek of this step. It is zero
+        // until something measures it: the element does not measure on its own,
+        // because the metric costs an implicit pass and only the convergence
+        // test knows when a measurement is worth taking
+        scalar(0) = sv.implex_error;
+        return eleInfo.setVector(scalar);
+    }
     else {
         return -1;
     }
 }
 
-int ZeroLengthContactASDimplex::updateParameter(int parameterID, double value)
+int ZeroLengthContactASDimplex::setParameter(const char** argv, int argc, Parameter& param)
 {
-    if (parameterID == 1) {
+    if (argc < 1)
+        return -1;
+    // the same three names the IMPL-EX materials answer to, so that whoever
+    // drives an analysis under displacement or arc-length control can feed the
+    // real increment to all of them the same way
+    if (strcmp(argv[0], "dTime") == 0) {
+        param.setValue(sv.dtime_n);
+        return param.addObject(2000, this);
+    }
+    if (strcmp(argv[0], "dTimeCommit") == 0) {
+        param.setValue(sv.dtime_n_commit);
+        return param.addObject(2001, this);
+    }
+    if (strcmp(argv[0], "dTimeInitial") == 0) {
+        param.setValue(sv.dtime_0);
+        return param.addObject(2002, this);
+    }
+    return -1;
+}
+
+int ZeroLengthContactASDimplex::updateParameter(int parameterID, Information& info)
+{
+    switch (parameterID) {
+    case 2000:
         // set user defined current time increment
         // this is useful for rate dependency in implicit mode and for the implex model
         // when using arc length or displacement control methods, where the pseudo time step
         // is actually the load factor.
         // if when this variable is first set or when it is set before the first commit
         // we set the committed variable to the same value
-        sv.dtime_n = value;
+        sv.dtime_n = info.theDouble;
         if (!sv.dtime_first_set) {
             sv.dtime_n_commit = sv.dtime_n;
+            sv.dtime_0 = sv.dtime_n;
             sv.dtime_first_set = true;
         }
         sv.dtime_is_user_defined = true;
+        return 0;
+    case 2001:
+        sv.dtime_n_commit = info.theDouble;
+        sv.dtime_is_user_defined = true;
+        return 0;
+    case 2002:
+        sv.dtime_0 = info.theDouble;
+        sv.dtime_is_user_defined = true;
+        return 0;
+    default:
+        return -1;
     }
-    // done
-    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// IMPL-EX error control
+// ---------------------------------------------------------------------------
+
+double ZeroLengthContactASDimplex::implexStressGap(const Vector& delivered, const Vector& implicit_traction) const
+{
+    // THE NORM is the largest component of the traction gap, as in the 3D
+    // materials. THE DENOMINATOR cannot be what it is there - the largest stress
+    // the object can carry - because a penalty interface has no strength of its
+    // own: what it can carry is whatever the normal traction of the moment
+    // allows, and that is a state, not a parameter. So the reference is
+    // MEASURED: the largest traction component this interface has committed so
+    // far, never smaller than what the two passes are showing right now.
+    //
+    // Taking the running maximum, and not the current traction, is what gives
+    // the tolerance a steady meaning. Normalizing by the traction of the moment
+    // would make the metric explode wherever the interface is nearly released -
+    // a tiny absolute gap over a tiny reference - and send the stepper to refine
+    // exactly where nothing is happening.
+    //
+    // When the interface is carrying nothing in either pass the gap is zero too,
+    // so there is no 0/0 to guard against: no traction, no extrapolation error.
+    double gap = 0.0;
+    double ref = sv.sig_ref;
+    for (int i = 0; i < 3; ++i) {
+        gap = std::max(gap, std::abs(delivered(i) - implicit_traction(i)));
+        ref = std::max(ref, std::max(std::abs(delivered(i)), std::abs(implicit_traction(i))));
+    }
+    return ref > 0.0 ? gap / ref : 0.0;
+}
+
+double ZeroLengthContactASDimplex::computeImplexErrorMetric(void)
+{
+    // no extrapolation, no error. This is what makes it safe for the aggregation
+    // to call it on everything it has
+    if (!use_implex)
+        return 0.0;
+
+    // the current state holds the EXPLICIT answer: the traction this step
+    // delivered to the assembler, and the state the recorders must keep seeing.
+    // The whole state is one copyable aggregate, so the peek is a copy - and it
+    // has to be a peek: this runs between convergence and commit, the step may
+    // still be rejected, and revertToLastCommit() would not put back what the
+    // implicit pass overwrites (it restores the committed values, not the
+    // delivered ones)
+    StateVariables delivered = sv;
+
+    // the implicit answer, at the same trial strain. No iteration here, so
+    // unlike a material this one cannot fail to solve: there is no NaN path
+    updateInternal(false, false);
+    double err = implexStressGap(delivered.sig_implex, sv.sig);
+
+    // undo. Measuring is not allowed to move the state
+    sv = delivered;
+    sv.implex_error = err;
+    return err;
+}
+
+double ZeroLengthContactASDimplex::implexTimeRatio(void) const
+{
+    return sv.dtime_0 > 0.0 ? sv.dtime_n / sv.dtime_0 : 1.0;
 }
 
 const Matrix& ZeroLengthContactASDimplex::getRotationMatrix33()
@@ -985,15 +1117,24 @@ void ZeroLengthContactASDimplex::updateInternal(bool do_implex, bool do_tangent)
     sv.shear = sv.shear_commit;
     sv.cres = sv.cres_commit;
 
-    // time factor for explicit extrapolation
+    // time factor for explicit extrapolation.
+    //
+    // THE RATIO IS THE WHOLE POINT AND IT USED TO BE OVERWRITTEN WITH 1 RIGHT
+    // HERE. The extrapolation rescales the previous step's increment, so the
+    // factor has to follow the ratio of the IMPOSED increments: with it pinned
+    // to one, halving the step still predicts a whole previous increment, the
+    // error does not go down when the step goes down, and an error control on
+    // this element can only grind to its floor. It is also what makes the
+    // element first-order convergent at all.
+    //
+    // The reason it was pinned - the OpenSees pseudo-time is the load
+    // multiplier under continuation methods, so it is not a measure of the
+    // imposed increment there - is real, but the answer is the same one every
+    // IMPL-EX material in this tree uses: the integrator (or the user) feeds
+    // the true increment through the 'dTime' parameter, see setParameter().
     double time_factor = 1.0;
     if (do_implex && use_implex && (sv.dtime_n_commit > 0.0))
-        time_factor = sv.dtime_n / sv.dtime_n_commit;
-    // note: the implex method just wants the ratio of the new to the old time step
-    // not the real time step, so it is just fine to assume it to 1.
-    // otherwise we have to deal with the problem of the opensees pseudo-time step
-    // being the load multiplier in continuation methods...
-    time_factor = 1.0;
+        time_factor = std::max(0.0, sv.dtime_n / sv.dtime_n_commit);
 
     // elastic trial
     double SN = Knormal * sv.eps(0);
