@@ -2847,7 +2847,8 @@ void
 ForceBeamColumn2d::setSectionPointers(int numSec, SectionForceDeformation **secPtrs)
 {
   if (numSec > maxNumSections) {
-    opserr << "Error: ForceBeamColumn2d::setSectionPointers -- max number of sections exceeded";
+    opserr << "Error: ForceBeamColumn2d::setSectionPointers -- max number of sections exceeded" << endln;
+    exit(-1);
   }
   
   numSections = numSec;

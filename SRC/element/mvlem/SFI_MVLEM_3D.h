@@ -57,8 +57,9 @@ public:
 		int mm,									// number of macro-fibers (RC panels)
 		double cc,								// center of rotation					
 		double nn,								// poisson ratio (for out-of-plane behavior)
-		     double tf,								// thickness factor (for out-of-plane behavior)
-		     double Eave = 0.0); // Average modulus (for out-of-plane behavior)
+		double tf,								// thickness factor (for out-of-plane behavior)
+		double Eave = 0.0, // Average modulus (for out-of-plane behavior)
+	        int coupling =0);	   // Coupling option
 
 	SFI_MVLEM_3D();
 
@@ -136,6 +137,10 @@ private:
 	double c;							// center of rotation
 	double NUelastic;					// Poisson ratio
 	double Tfactor;						// Thickness factor
+	const int Coupling;				// Coupling Type between shear strain and axial strains can be 0,1,or 2. by Zakariya Waezi
+    // coupling = 0     :(default) no coupling between stresses and strains, same as the original SFI_MVLEM
+    // coupling = 1     : only coupling between axial stresses sigmax and sigmay in RC panels
+    // coupling = 2     : complete coupling between all stresses, including axial and shear ones
 
 	// Nodal coordinates
 	Vector nd1Crds;
@@ -250,3 +255,4 @@ private:
 };
 #endif
 #pragma once
+
