@@ -46,13 +46,25 @@
 //   against the stress the material carries rather than against a fictitious one
 //   that keeps growing while the material softens.
 //
-// HOW THE TWO REDUCTIONS COMBINE IS AN INPUT, and the third line above is only
-// the default. '-split Faria' applies them to the two spectral parts separately,
-// as written, so the reduction has a DIRECTION; '-split ModLeeFenves' combines
-// them into the one scalar of the classical CDP, sigma = (1-d)*sbar, with the
-// split weight SATURATED so that a nearly tensile state counts as tensile. The
-// full statement, what the saturation cures and why the recovery weights are
-// fixed rather than exposed are on DamageCombination below.
+// THE REDUCTION HAS A DIRECTION, and that is not an option. The third line
+// above applies the two reductions to the two SPECTRAL PARTS separately, after
+// Faria, so a cracked side loses only its positive part and the compressive one
+// is untouched: the recovery of stiffness on crack closure is TOTAL and
+// AUTOMATIC, performed by the split itself, with nothing to calibrate.
+//
+// THE SCALAR ALTERNATIVE WAS BUILT, MEASURED AND REMOVED. It was the classical
+// Lee-Fenves combination, sigma = (1-d)*sbar with (1-d) = (1-s_t*d_c)(1-s_c*d_t)
+// and the split weight saturated so that a nearly tensile state counts as
+// tensile - cheaper per step and, on a monotone path, indistinguishable. What
+// decided against it is not its response but its CONTROLLABILITY: under IMPL-EX
+// it converges at the same first order with 3.3 times the constant and enters
+// the asymptotic regime two levels later, and with the step under error control
+// it is the one branch where tightening the tolerance from 1e-2 to 1e-3 made the
+// trajectory WORSE - 1.372 to 2.470 MPa at the reversals - by leaving onto a
+// more dilated path that the gate cannot see and cannot undo. The measurements
+// are in the OpenSees-Testing note asd-new-mats-implex-control/doc/asd_cdp3d.tex
+// (ex53/ex54 and their controlled versions); the branch itself is in the history
+// of this file.
 //
 // WHERE EACH UNLOADING LANDS IS A USER PARAMETER, one per side: a DAMAGE FACTOR
 // df in [0, 1]. 0 = pure plasticity (elastic unloading onto the full inelastic
@@ -255,88 +267,6 @@ public:
 	using HardeningLaw = ASDHardeningLaw;
 
 	/**
-	HOW THE TWO REDUCTIONS COMBINE IN THE ELASTIC PREDICTION. Both branches
-	reduce the same effective stress by the same two omegas; what they disagree
-	about is whether the reduction has a DIRECTION.
-
-	FARIA - the default, and the formulation the rest of this file was measured
-	on. The reduction is applied to the spectral parts separately,
-
-	    W     = omega_t*PT + omega_c*PC
-	    sigma = W : sbar
-
-	so a cracked side loses only its positive part and the compressive one is
-	untouched: the recovery of stiffness on crack closure is TOTAL and
-	AUTOMATIC, performed by the split itself, with nothing to calibrate. The
-	nominal stress is NOT coaxial with the effective one, because its two
-	spectral parts are scaled differently.
-
-	MOD_LEE_FENVES - the classical CDP combination of Lee and Fenves (1998),
-	the same expression Abaqus' CDP uses, with ONE modification. The two
-	damages are combined into a single scalar,
-
-	    d_t = 1 - omega_t      d_c = 1 - omega_c
-	    s_t = 1 - w_t*r        s_c = 1 - w_c*(1-r)
-	    1-d = (1 - s_t*d_c)*(1 - s_c*d_t)
-	    W   = (1-d)*I          sigma = (1-d)*sbar
-
-	with r the same tensile weight that already splits the flow, read on the
-	EFFECTIVE stress. The nominal stress is then a positive multiple of the
-	effective one, hence COAXIAL with it, and the recovery of stiffness is no
-	longer automatic: it is governed by the two weights, which is the real
-	physical difference between the branches. The weights are fixed at the
-	Abaqus pair w_t = 0, w_c = 1 and are not inputs - see the note at the end.
-
-	THE MODIFICATION IS THE SATURATION OF r, and it is what makes this branch
-	usable where the unmodified one is not:
-
-	    r_sat = clamp((r - 0.5)/k + 0.5, 0, 1)      k = SPLIT_SATURATION = 0.5
-
-	so a state whose r is 0.9996 rather than 1 becomes an exact 1, while a
-	genuinely deviatoric state at r = 0.5 is left alone and the reduction stays
-	continuous there. It is not a new quantity: with sum(lam) = P - N and
-	sum|lam| = P + N one has I1/sum|lam| = 2r - 1, so r IS the normalised
-	hydrostatic invariant and k only sets how sharply it saturates - k = 1 is
-	the untouched Lee-Fenves weight and k -> 0 the sign of I1.
-
-	WHAT THE SATURATION CURES, measured on the prototype. The unmodified branch
-	leaks permanent strain on a tensile leg with damage_t = 1, where the dial
-	promises none: plastic_share = 0.7*(1-r) at a state whose r is 0.9996, the
-	difference being a lateral effective stress of 1.8e-03 MPa - itself a
-	6.0e-07 MPa constraint residual magnified by 1/w. At k = 0.5 that r
-	saturates to exactly 1 and the leak is exactly zero. On the alternating
-	uniaxial program the branch then reproduces Faria's response, including the
-	lateral (dilatancy) branch, at a quarter of the iteration count: eps_p_xx
-	-2.9572e-03 against Faria's -2.9572e-03, worst iterations 9 against 39, and
-	zero failed steps at every refinement where Faria has 2/1/1/0.
-
-	The two limits are what w_t and w_c mean:
-
-	    r = 1 (pure tension)      1-d = (1 - (1-w_t)*d_c)*(1 - d_t)
-	                              w_t = 1 removes the COMPRESSIVE damage
-	    r = 0 (pure compression)  1-d = (1 - d_c)*(1 - (1-w_c)*d_t)
-	                              w_c = 1 removes the TENSILE damage, i.e. the
-	                              crack closes and the compressive stiffness is
-	                              back
-
-	BOUNDED BY CONSTRUCTION, which is the same guarantee omega() carries: for
-	w in [0,1] both s are in [0,1] and both d in [0,1), so 1-d is in (0,1] and
-	no rounding can put the operator outside the range the rest of the model
-	relies on.
-
-	WHY THE WEIGHTS AND k ARE NOT INPUTS. They exist as members because the
-	formula is written in terms of them and the prototype carries them as
-	parameters, but only one point of that family is exposed: (w_t, w_c) =
-	(0, 1), which is the Abaqus pair, and k = 0.5. The rest was measured and
-	set aside - w = (1,1) is the pair the (1-r) floor of the unmodified branch
-	bites hardest, and k = 1 is that unmodified branch itself.
-	*/
-	enum DamageCombination {
-		DC_Faria = 0,
-		DC_ModLeeFenves = 1
-	};
-
-	/**
 	Everything the implicit pass of integrate() can write. Saved and restored
 	around the non-destructive measurement of the IMPL-EX error, so that a step
 	that is measured and then rejected is a step that never happened.
@@ -385,9 +315,6 @@ public:
 		double _Kc,
 		double _damage_t,
 		double _damage_c,
-		DamageCombination _damage_combination,
-		double _stiffness_recovery_t,
-		double _stiffness_recovery_c,
 		bool _implex,
 		bool _implex_control,
 		bool _implex_abort_on_error,
@@ -566,78 +493,9 @@ private:
 		return (1.0 - damage_t) * r + (1.0 - damage_c) * (1.0 - r);
 	}
 
-	// The half-width of the band in which the split weight is left alone. Not
-	// an input: see the end of DamageCombination for which single point of the
-	// family is exposed and why.
-	static const double SPLIT_SATURATION;
-
-	// The split weight pushed to its endpoints outside that band,
-	//
-	//     r_sat = clamp((r - 0.5)/k + 0.5, 0, 1)
-	//
-	// and the IDENTITY in the Faria branch, so that every reader of the weight
-	// can go through one function and none of them has to know which branch is
-	// on. EVERY site that builds r must go through it: splitWeight(),
-	// effective() and rebuildOperator() each have their own decomposition to
-	// hand, and one of them left raw would saturate the weight in the operator
-	// but not in the flow split, or the other way round.
-	double saturate(double r) const;
-
-	// dr_sat/dr_raw: 1/k inside the band, 0 outside, and 1 in the Faria branch.
-	//
-	// THE ARGUMENT IS THE RAW WEIGHT, NOT THE SATURATED ONE, and that is not a
-	// convenience: at the endpoints the two are indistinguishable - r_sat = 1
-	// is reached both by a raw 0.75 sitting exactly on the corner and by a raw
-	// 0.9996 deep in the flat part - and only the first has a one-sided
-	// derivative. Taking it as zero at the corner is the choice a clamp always
-	// makes and the one the frozen Jacobian can live with.
-	double saturationSlope(double r_raw) const;
-
-	// (1-d) of the modified Lee-Fenves combination, from the two reductions
-	// already evaluated and the tensile weight - see DamageCombination. Takes
-	// the omegas rather than the measures so that no caller evaluates a
-	// hardening curve twice for the same state. The weight it receives is the
-	// SATURATED one, every caller having read it through saturate().
-	double leeFenvesReduction(double wt, double wc, double r) const;
-
-	// The three partial derivatives of (1-d):
-	//
-	//     g_t = d(1-d)/dkt = (1 - s_t*d_c) * s_c * domega_t
-	//     g_c = d(1-d)/dkc = (1 - s_c*d_t) * s_t * domega_c
-	//     g_r = d(1-d)/dr  = w_t*d_c*(1 - s_c*d_t) - w_c*d_t*(1 - s_t*d_c)
-	//
-	// THE THIRD ONE IS NOT OPTIONAL HERE, AND THAT WAS MEASURED RATHER THAN
-	// assumed. Dropping the dr/dlambda term is the obvious economy - the
-	// denominator chooses only the STEP, the equation being solved does not
-	// change - and it is what the Faria branch does with the ROTATION of the
-	// spectral projectors, at a cost of 5.6e-5 median against a central
-	// difference of the frozen update. It does not carry over: in the Faria
-	// split r is not in the operator at all, while here it is, so the term is
-	// first order. Measured over the 55-case suite at damageT 1 / damageC 0.3,
-	// analytic denominator against a central difference of trialAt:
-	//
-	//     faria                 median 5.6e-05
-	//     scalar, w = 0/1       median 6.5e-02   p90 1.00, sign flips
-	//     scalar, w = 0/0       median 7.2e-05   <- r drops out of the scalar
-	//
-	// The third row is the experiment that isolates it and it needs no patched
-	// build: at w_t = w_c = 0 both s are identically 1 and (1-d) is omega_t*
-	// omega_c, which does not contain r - and the disagreement vanishes. Those
-	// three rows were measured on the UNSATURATED weight, w = (0,0) being a
-	// pair the input no longer reaches; the conclusion carries over unchanged,
-	// the saturation only multiplying the term by its own slope.
-	void leeFenvesDerivatives(double wt, double wc, double r,
-		double dwt, double dwc, double& g_t, double& g_c, double& g_r) const;
-
-	// dr/dlambda of the cutting plane: r is a function of the eigenvalues of
-	// sbar, and along the frozen update sbar moves by -pf*(C:m) per unit
-	// multiplier. Needs the decomposition of the CURRENT effective stress,
-	// which d_split / V_split already hold.
-	double splitWeightRate(const Vector& Cm, double pf, double r) const;
-
 	// W from a FROZEN spectral record and the two measures. Two callers - the
 	// explicit IMPL-EX pass and revertToLastCommit - and they must not be able
-	// to disagree about which branch's operator they rebuild.
+	// to disagree about the operator they rebuild.
 	void rebuildOperator(const Vector& d_rec, const Matrix& V_rec,
 		double kt_, double kc_);
 
@@ -837,17 +695,6 @@ private:
 	// the two dials, one per side: 0 = pure plasticity, 1 = pure damage
 	double damage_t = 1.0;
 	double damage_c = 0.0;
-	// how the two reductions combine in the prediction - see DamageCombination
-	DamageCombination damage_combination = DC_Faria;
-	// the two STIFFNESS RECOVERY weights of the Lee-Fenves combination, and
-	// they exist only there: in the Faria split the recovery is total and
-	// automatic, so a weight would have nothing to weigh and the parser refuses
-	// it rather than accepting an input that does nothing. w_t = 0 and w_c = 1
-	// are the defaults of the model this branch implements: the compressive
-	// stiffness comes back when the crack closes, the tensile one does not come
-	// back once the material has been crushed
-	double stiffness_recovery_t = 0.0;
-	double stiffness_recovery_c = 1.0;
 
 	// --- IMPL-EX ---------------------------------------------------------- //
 	// True = use the IMPL-EX algorithm
