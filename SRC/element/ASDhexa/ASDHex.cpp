@@ -70,7 +70,7 @@ OPS_ASDSolidHex(void)
     int iData[10];
     int numData = 10;
     if (OPS_GetInt(&numData, iData) != 0) {
-        opserr << "WARNING invalid integer tag: element ASDSolidHex \n";
+        opserr << "WARNING invalid integer tag: element ASDHex \n";
         return 0;
     }
 
@@ -80,7 +80,7 @@ OPS_ASDSolidHex(void)
     // The solid material is treated as an n-dimensional material.
     NDMaterial* mat = OPS_getNDMaterial(matTag);
     if (mat == 0) {
-        opserr << "ERROR: element ASDSolidHex " << iData[0]
+        opserr << "ERROR: element ASDHex " << iData[0]
             << " NDMaterial " << matTag << " not found\n";
         return 0;
     }
@@ -95,18 +95,18 @@ OPS_ASDSolidHex(void)
         }
         else if (strcmp(type, "-damp") == 0) {
             if (OPS_GetNumRemainingInputArgs() < 1) {
-                opserr << "Error: element ASDSolidHex: -damp needs a damping tag\n";
+                opserr << "Error: element ASDHex: -damp needs a damping tag\n";
                 return 0;
             }
             int dampingTag = 0;
             int nd = 1;
             if (OPS_GetIntInput(&nd, &dampingTag) < 0) {
-                opserr << "Error: element ASDSolidHex: invalid damping tag\n";
+                opserr << "Error: element ASDHex: invalid damping tag\n";
                 return 0;
             }
             damping = OPS_getDamping(dampingTag);
             if (damping == nullptr) {
-                opserr << "Error: element ASDSolidHex: damping " << dampingTag << " not found\n";
+                opserr << "Error: element ASDHex: damping " << dampingTag << " not found\n";
                 return 0;
             }
         }
@@ -114,17 +114,17 @@ OPS_ASDSolidHex(void)
             // body force per unit mass (same meaning as Brick's b1 b2 b3), used by
             // eleLoad -type -brickSelfWeight / -selfWeight
             if (OPS_GetNumRemainingInputArgs() < 3) {
-                opserr << "Error: element ASDSolidHex: -b needs 3 components\n";
+                opserr << "Error: element ASDHex: -b needs 3 components\n";
                 return 0;
             }
             int nd = 3;
             if (OPS_GetDoubleInput(&nd, body) < 0) {
-                opserr << "Error: element ASDSolidHex: invalid -b components\n";
+                opserr << "Error: element ASDHex: invalid -b components\n";
                 return 0;
             }
         }
         else {
-            opserr << "Error: element ASDSolidHex: unknown option '" << type << "'\n";
+            opserr << "Error: element ASDHex: unknown option '" << type << "'\n";
             return 0;
         }
     }
@@ -515,7 +515,7 @@ namespace
         }
 
         inline double compute_jdet(const double xi, const double eta, const double zeta) {
-            // dN/dxi per le 8 shape functions isoparametriche
+            // dN/dxi for the 8 isoparametric shape functions
             static const double xi_n[8] = { -1,+1,+1,-1,-1,+1,+1,-1 };
             static const double eta_n[8] = { -1,-1,+1,+1,-1,-1,+1,+1 };
             static const double zet_n[8] = { -1,-1,-1,-1,+1,+1,+1,+1 };
@@ -614,17 +614,17 @@ namespace
                 ev.Zero();
                 const double x = xb.x(), y = xb.y(), z = xb.z();
 
-                // Colonne 0-2: modi normali lineari
+                // Columns 0-2: linear normal modes
                 ev(0, 0) = x;   // eps_xx ~ xi
                 ev(1, 1) = y;   // eps_yy ~ eta
                 ev(2, 2) = z;   // eps_zz ~ zeta
 
-                // Colonne 3-8: modi shear lineari
+                // Columns 3-8: linear shear modes
                 ev(3, 3) = x;   ev(3, 4) = y;   // gamma_xy
                 ev(4, 5) = y;   ev(4, 6) = z;   // gamma_yz
                 ev(5, 7) = x;   ev(5, 8) = z;   // gamma_zx
 
-                // Colonne 9-11: modi volumetrici bilineari
+                // Columns 9-11: bilinear volumetric modes
                 ev(0, 9) = x * y;  ev(1, 9) = x * y;  ev(2, 9) = x * y;
                 ev(0, 10) = y * z;  ev(1, 10) = y * z;  ev(2, 10) = y * z;
                 ev(0, 11) = z * x;  ev(1, 11) = z * x;  ev(2, 11) = z * x;
@@ -666,8 +666,8 @@ namespace
             }
 
             // =========================================================
-            // PASSO 1: Gram-Schmidt sugli stress (eq. 55, primo blocco)
-            // Qui jdet VA sia al numeratore sia al denominatore
+            // STEP 1: Gram-Schmidt on the stresses (eq. 55, first block)
+            // HERE jdet DOES belong in both numerator and denominator
             // =========================================================
             for (int i = 0; i < n_sigma; i++) {
                 // den depends only on k, not on i, and column k of S_ortho is final
@@ -722,13 +722,13 @@ namespace
             //    }
             //}
             // =========================================================
-            // PASSO 2: Ortogonalizza E_ortho rispetto a S_ortho
-            // imponendo direttamente la C3 in skew space:
+            // STEP 2: Orthogonalize E_ortho against S_ortho by
+            // enforcing C3 directly in skew space:
             //
             // ∫_hat E_ortho · S_ortho dΩ = 0
             //
-            // Quindi sia numeratore sia denominatore DEVONO essere
-            // senza jdet.
+            // Hence both numerator and denominator MUST be
+            // formed without jdet.
             // =========================================================
             // S_ortho is final by now, so all 18 denominators are formed once here
             // instead of once per (j,k) pair (216 times).
@@ -783,12 +783,12 @@ namespace
 
 
             // =========================================================
-            // Check diagnostico della C3 in spazio skew:
+            // Diagnostic check of C3 in skew space:
             // ∫_hat E_ortho : S_orig dΩ = 0
-            // QUI non va moltiplicato per jdet
+            // HERE it must NOT be multiplied by jdet
             // =========================================================
             // =========================================================
-            // TRASFORMAZIONE FINALE (eq. 56)
+            // FINAL TRANSFORMATION (eq. 56)
             // G_test = (1/jdet) * T0 * E_ortho
             // =========================================================
             for (int gp = 0; gp < NumGP; gp++) {
@@ -860,16 +860,15 @@ namespace
             }
 
 
-            // compute the the Transformation matrix for stresses
-            // Matrice di trasformazione per deformazioni (strain)
+            // Transformation matrix for strains
             // Formula: epsilon_phys = J0^{-T} * epsilon_skew * J0^{-1}
-            // In Voigt notation con [ε_xx, ε_yy, ε_zz, γ_xy, γ_yz, γ_zx]^T
-            // dove γ = 2ε per le componenti di taglio
+            // In Voigt notation with [ε_xx, ε_yy, ε_zz, γ_xy, γ_yz, γ_zx]^T
+            // where γ = 2ε for the shear components
             auto compute_T_eps = [](const Matrix& J0_inv) -> Matrix {
                 Matrix T_eps(6, 6);
                 T_eps.Zero();
 
-                // Estrai per COLONNE di J0_inv (non righe!)
+                // Extract by COLUMNS of J0_inv (not rows!)
                 // col 0
                 double a = J0_inv(0, 0);
                 double d = J0_inv(1, 0);
@@ -883,7 +882,7 @@ namespace
                 double f = J0_inv(1, 2);
                 double ii = J0_inv(2, 2);
 
-                // Riga 0: ε_xx → usa col0 × col0
+                // Row 0: ε_xx → uses col0 × col0
                 T_eps(0, 0) = a * a;
                 T_eps(0, 1) = d * d;
                 T_eps(0, 2) = g * g;
@@ -891,7 +890,7 @@ namespace
                 T_eps(0, 4) = d * g;
                 T_eps(0, 5) = a * g;
 
-                // Riga 1: ε_yy → usa col1 × col1
+                // Row 1: ε_yy → uses col1 × col1
                 T_eps(1, 0) = b * b;
                 T_eps(1, 1) = e * e;
                 T_eps(1, 2) = h * h;
@@ -899,7 +898,7 @@ namespace
                 T_eps(1, 4) = e * h;
                 T_eps(1, 5) = b * h;
 
-                // Riga 2: ε_zz → usa col2 × col2
+                // Row 2: ε_zz → uses col2 × col2
                 T_eps(2, 0) = c * c;
                 T_eps(2, 1) = f * f;
                 T_eps(2, 2) = ii * ii;
@@ -907,7 +906,7 @@ namespace
                 T_eps(2, 4) = f * ii;
                 T_eps(2, 5) = c * ii;
 
-                // Riga 3: γ_xy = 2ε_xy → usa col0 × col1
+                // Row 3: γ_xy = 2ε_xy → uses col0 × col1
                 T_eps(3, 0) = 2.0 * a * b;
                 T_eps(3, 1) = 2.0 * d * e;
                 T_eps(3, 2) = 2.0 * g * h;
@@ -915,7 +914,7 @@ namespace
                 T_eps(3, 4) = d * h + e * g;
                 T_eps(3, 5) = a * h + b * g;
 
-                // Riga 4: γ_yz = 2ε_yz → usa col1 × col2
+                // Row 4: γ_yz = 2ε_yz → uses col1 × col2
                 T_eps(4, 0) = 2.0 * b * c;
                 T_eps(4, 1) = 2.0 * e * f;
                 T_eps(4, 2) = 2.0 * h * ii;
@@ -923,7 +922,7 @@ namespace
                 T_eps(4, 4) = e * ii + f * h;
                 T_eps(4, 5) = b * ii + c * h;
 
-                // Riga 5: γ_xz = 2ε_xz → usa col0 × col2
+                // Row 5: γ_xz = 2ε_xz → uses col0 × col2
                 T_eps(5, 0) = 2.0 * a * c;
                 T_eps(5, 1) = 2.0 * d * f;
                 T_eps(5, 2) = 2.0 * g * ii;
@@ -964,7 +963,7 @@ namespace
                 c4(1) += X[ii].y() * h4[ii];
                 c4(2) += X[ii].z() * h4[ii];
             }
-            // dopo il loop sui c_A, prima di *= 1/8
+            // after the loop over the c_A, before *= 1/8
             c1 *= (1.0 / 8.0);
             c2 *= (1.0 / 8.0);
             c3 *= (1.0 / 8.0);
@@ -1139,7 +1138,7 @@ namespace
 
             G_trial.Zero();
 
-            // Parte 1: modi Wilson quadratici (colonne 0-8)
+            // Part 1: quadratic Wilson modes (columns 0-8)
             for (int j = 0; j < 3; j++) {
                 double d1 = dMtildedx(0, j);
                 double d2 = dMtildedx(1, j);
@@ -1157,10 +1156,10 @@ namespace
                 G_trial(5, c1) = d3;  G_trial(5, c3) = d1;
             }
 
-            // Parte 2: modi volumetrici (colonne 9-11)
+            // Part 2: volumetric modes (columns 9-11)
             // Eq. (53): J0^{-T} [ p(xi,eta,zeta) * I ] J0^{-1}
-            // In Voigt engineering => usare tutto P = J0^{-T} J0^{-1},
-            // inclusi i termini di taglio 2*P12, 2*P23, 2*P13.
+            // In engineering Voigt notation => use the full P = J0^{-T} J0^{-1},
+            // including the shear terms 2*P12, 2*P23, 2*P13.
             double xi = XGP_skew(0);
             double eta = XGP_skew(1);
             double zeta = XGP_skew(2);
@@ -1198,7 +1197,7 @@ namespace
         for (int a = 0; a < NumGP; a++) {
             const int c0 = 3 * a, c1 = c0 + 1, c2 = c0 + 2;
 
-            // CORRETTO: usa colonne di invJ (= righe di invJ^T)
+            // CORRECT: use the columns of invJ (= rows of invJ^T)
             const double dNa_dx = invJ(0, 0) * dNdh(a, 0) + invJ(1, 0) * dNdh(a, 1) + invJ(2, 0) * dNdh(a, 2);
             const double dNa_dy = invJ(0, 1) * dNdh(a, 0) + invJ(1, 1) * dNdh(a, 1) + invJ(2, 1) * dNdh(a, 2);
             const double dNa_dz = invJ(0, 2) * dNdh(a, 0) + invJ(1, 2) * dNdh(a, 1) + invJ(2, 2) * dNdh(a, 2);
@@ -3093,7 +3092,7 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         if (options & OPT_LHS) {
             LHS.addMatrix(0.0, k_uu, 1.0);
             LHS.addMatrix(1.0, K_uq_K_qq_inv_K_qu, -1.0);
-            // Dopo la condensazione, prima di restituire LHS:
+            // After the condensation, before returning LHS:
 			//opserr << "LHS after static condensation:\n" << LHS;
 
         }

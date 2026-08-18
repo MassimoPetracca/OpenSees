@@ -105,10 +105,10 @@ public:
 		if (matrixPtr != nullptr) {
 #if defined(USE_SIMPLE_RFRAME) && (USE_SIMPLE_RFRAME == 1)
 			// m_R = matrixPtr^T  (assumendo Rtilde_init = I).
-			// matrixPtr e' la rotazione "active" (polar/Kabsch di best-fit) che
-			// porta initial -> current. Il rotatore global->CR-local e' la sua
-			// trasposta. Si IGNORA m_Rtilde nella composizione finale per
-			// evitare il "raddoppio" della rotazione (vedi diagnosi 2026-04-24).
+			// matrixPtr is the "active" (best-fit polar/Kabsch) rotation taking
+			// initial -> current. The global->CR-local rotator is its transpose.
+			// m_Rtilde is DELIBERATELY LEFT OUT of the final composition to avoid
+			// applying the rotation twice (see the 2026-04-24 diagnosis).
 			for (int i = 0; i < 3; i++)
 				for (int j = 0; j < 3; j++)
 					m_R(i, j) = (*matrixPtr)(j, i);

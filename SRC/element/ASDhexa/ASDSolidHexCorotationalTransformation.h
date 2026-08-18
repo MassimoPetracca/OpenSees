@@ -29,20 +29,20 @@
 #define ASDSolidHexCorotationalTransformation_h
 
 
-// === MACRO DEVONO ESSERE DEFINITE PRIMA DI ASDSolidHexLocalCoordinateSystem.h ===
+// === THESE MACROS MUST BE DEFINED BEFORE ASDSolidHexLocalCoordinateSystem.h ===
 #define USE_POLAR_DECOMP_ALIGN
 #define USE_OLD_FELIPPA_FRAME 0
-// CR-frame: 1 = polar decomp di F̄ media volume-pesata sui 2x2x2 GP (best-fit di prim'ordine)
-//           0 = polar decomp di F valutata al solo centro parametric (vecchio)
+// CR-frame: 1 = polar decomp of the volume-weighted average F̄ over the 2x2x2 GPs (first-order best-fit)
+//           0 = polar decomp of F evaluated at the parametric center only (old behavior)
 #define USE_FBAR_GP_AVG 0
-// CR-frame: 1 = best-fit nodale alla Kabsch/Procustes (= Rankin discreto sui nodi):
+// CR-frame: 1 = nodal Kabsch/Procrustes best-fit (= discrete Rankin on the nodes):
 //               R = polar(A), A = Σ_i (current_i - C̄) ⊗ (initial_i - C̄_0)
-//           0 = usa quanto definito da USE_FBAR_GP_AVG (F al centro o F̄ media)
-// Quando 1, prevale su USE_FBAR_GP_AVG.
+//           0 = use what USE_FBAR_GP_AVG selects (F at the center or averaged F̄)
+// When 1, it overrides USE_FBAR_GP_AVG.
 #define USE_KABSCH_RIGID 0
-// LCS frame composition: 1 = m_R = matrixPtr^T direttamente (assume Rtilde_init = I)
-//                        0 = m_R = matrixPtr^T * m_Rtilde_curr (vecchio, raddoppia rotazione)
-// Da usare quando matrixPtr è la rotazione di best-fit "active" (es. polar/Kabsch).
+// LCS frame composition: 1 = m_R = matrixPtr^T directly (assumes Rtilde_init = I)
+//                        0 = m_R = matrixPtr^T * m_Rtilde_curr (old behavior, doubles the rotation)
+// To be used when matrixPtr is the "active" best-fit rotation (e.g. polar/Kabsch).
 #define USE_SIMPLE_RFRAME 1
 
 #include <ASDEICR3.h>
@@ -168,14 +168,14 @@ public:
             m_nodes[i] = domain->getNode(node_ids(i));
             
             if (m_nodes[i] == nullptr) {
-                opserr << "ASDShellQ4Transformation::setDomain - no node " << node_ids(i)
+                opserr << "ASDSolidHexCorotationalTransformation::setDomain - no node " << node_ids(i)
                     << " exists in the model\n";
                 exit(-1);
             }
             if (!initialized) {
                 const Vector& iU = m_nodes[i]->getTrialDisp();
                 if (iU.Size() != 3) {
-                    opserr << "ASDShellQ4Transformation::setDomain - node " << node_ids(i)
+                    opserr << "ASDSolidHexCorotationalTransformation::setDomain - node " << node_ids(i)
                         << " has " << iU.Size() << " DOFs, while 3 are expected\n";
                     exit(-1);
                 }
@@ -293,17 +293,17 @@ public:
 #else // !0
 
         // compute the deformation gradient F -> correlation matrix
-        // Coordinate locali nel sistema di riferimento (configurazione indeformata)
+        // Local coordinates in the reference frame (undeformed configuration)
         const double aX[8] = { a.X1(), a.X2(), a.X3(), a.X4(), a.X5(), a.X6(), a.X7(), a.X8() };
         const double aY[8] = { a.Y1(), a.Y2(), a.Y3(), a.Y4(), a.Y5(), a.Y6(), a.Y7(), a.Y8() };
         const double aZ[8] = { a.Z1(), a.Z2(), a.Z3(), a.Z4(), a.Z5(), a.Z6(), a.Z7(), a.Z8() };
 
-        // Coordinate locali nel sistema corrente (configurazione deformata)
+        // Local coordinates in the current frame (deformed configuration)
         const double bX[8] = { b.X1(), b.X2(), b.X3(), b.X4(), b.X5(), b.X6(), b.X7(), b.X8() };
         const double bY[8] = { b.Y1(), b.Y2(), b.Y3(), b.Y4(), b.Y5(), b.Y6(), b.Y7(), b.Y8() };
         const double bZ[8] = { b.Z1(), b.Z2(), b.Z3(), b.Z4(), b.Z5(), b.Z6(), b.Z7(), b.Z8() };
 
-        // Indici di nodi del cubo unitario in coordinate naturali
+        // Node indices of the unit cube in natural coordinates
         static const int xi_n[8]   = { -1, +1, +1, -1, -1, +1, +1, -1 };
         static const int eta_n[8]  = { -1, -1, +1, +1, -1, -1, +1, +1 };
         static const int zeta_n[8] = { -1, -1, -1, -1, +1, +1, +1, +1 };
@@ -357,17 +357,17 @@ public:
         F.Zero();
 
 #if USE_KABSCH_RIGID
-        // ===== Kabsch / Procustes nodale =====
-        // R che minimizza Σ_i ||R · (initial_i - C_0) - (current_i - C̄)||²
-        // Si costruisce A = Σ_i (current_i - C̄) ⊗ (initial_i - C_0); poi la polar
-        // decomp di A (eseguita dal codice Higham che segue) restituisce
-        // direttamente la rotazione di best-fit. F è qui la covariance A.
-        // Coordinate aX[], aY[], aZ[] / bX[], bY[], bZ[] sopra sono GIÀ centrate
-        // perché ASDSolidHexLocalCoordinateSystem.m_P[i] = m_R * (P_i - origin).
-        // Per LCS reference (a) m_R = I → aX/Y/Z sono in global frame, centrate.
-        // Per LCS attuale  (b) m_R = R_polar^T * Rtilde → bX/Y/Z sono già nel CR.
-        // Per il best-fit nodale di Kabsch ci servono entrambi nello stesso frame
-        // (global). Ricostruiamo current centrato in global qui sotto.
+        // ===== Nodal Kabsch / Procrustes =====
+        // R minimizing Σ_i ||R · (initial_i - C_0) - (current_i - C̄)||²
+        // Build A = Σ_i (current_i - C̄) ⊗ (initial_i - C_0); the polar decomp
+        // of A (performed by the Higham code below) then returns the best-fit
+        // rotation directly. Here F holds the covariance A.
+        // The aX[], aY[], aZ[] / bX[], bY[], bZ[] coordinates above are ALREADY
+        // centered, because ASDSolidHexLocalCoordinateSystem.m_P[i] = m_R * (P_i - origin).
+        // For the reference LCS (a) m_R = I → aX/Y/Z are in the global frame, centered.
+        // For the current LCS   (b) m_R = R_polar^T * Rtilde → bX/Y/Z are already in the CR frame.
+        // The nodal Kabsch best-fit needs both in the same (global) frame, so the
+        // centered current coordinates are rebuilt in global below.
         double Ccurr[3] = { 0.0, 0.0, 0.0 };
         double Cinit[3] = { 0.0, 0.0, 0.0 };
         double Ycurr_g[8][3];
@@ -399,7 +399,7 @@ public:
             F(2, 0) += yz * xx; F(2, 1) += yz * xy; F(2, 2) += yz * xz;
         }
 #elif USE_FBAR_GP_AVG
-        // ===== F̄ media volume-pesata sui 2x2x2 Gauss points =====
+        // ===== Volume-weighted average F̄ over the 2x2x2 Gauss points =====
         // F̄ = (1/V_a) Σ_g w_g · |J_a(xi_g)| · F(xi_g)   (w_g = 1 per 2x2x2 Gauss)
         const double g_loc = 1.0 / 1.7320508075688772;  // 1/sqrt(3)
         const double xi_gp[8]   = { -g_loc, +g_loc, +g_loc, -g_loc, -g_loc, +g_loc, +g_loc, -g_loc };
@@ -420,7 +420,7 @@ public:
             for (int j = 0; j < 3; j++)
                 F(i, j) *= inv_Va;
 #else
-        // ===== F valutata al solo centro parametric (xi=eta=zeta=0) =====
+        // ===== F evaluated at the parametric center only (xi=eta=zeta=0) =====
         double Fc[3][3];
         double detJa_c;
         compute_F_at(0.0, 0.0, 0.0, Fc, detJa_c);
@@ -429,13 +429,13 @@ public:
                 F(i, j) = Fc[i][j];
 #endif
 
-        // Decomposizione polare con metodo di Higham
-        // F = R * U, dove R è la rotazione e U è lo stiramento destro
+        // Polar decomposition by Higham's iteration
+        // F = R * U, where R is the rotation and U the right stretch
         Matrix R(3, 3);
         Matrix R_old(3, 3);
         Matrix R_inv_trans(3, 3);
 
-        // Inizializza R = F
+        // Initialize R = F
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
                 R(i, j) = F(i, j);
@@ -498,8 +498,8 @@ public:
             if (sqrt(norm_diff) < tol) break;
         }
 
-        // Ora R contiene la matrice di rotazione
-        // U può essere calcolata come U = R^T * F
+        // R now holds the rotation matrix
+        // U can be computed as U = R^T * F
         Matrix U(3, 3);
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
