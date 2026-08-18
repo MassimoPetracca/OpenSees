@@ -1772,7 +1772,7 @@ int  ASDSolidHex::revertToStart()
 
     initializePG_EAS();
 
-    // NDMaterial ai punti di integrazione
+    // NDMaterial at the integration points
     for (int gp = 0; gp < NumGP; ++gp) {
         if (m_material[gp])
             success += m_material[gp]->revertToStart();
