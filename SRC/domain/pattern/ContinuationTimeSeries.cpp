@@ -117,12 +117,16 @@ ContinuationTimeSeries::getFactor(double pseudoTime)
 int
 ContinuationTimeSeries::sendSelf(int commitTag, Channel &theChannel)
 {
-  // NOTE: the lambda VALUE is deliberately not sent. It is not domain state:
-  // it belongs to the continuation integrator, which recomputes it on every
-  // process.
-  static Vector data(2);
+  // The lambda value travels with the series so that a database save/restore
+  // round-trips it: after a restore the process-global store is empty, and
+  // this series is the only saved object that knows the channel. On the
+  // parallel send path the value is redundant (the integrator's recvSelf
+  // seeds the channel too) and recvSelf below never overwrites it.
+  static Vector data(4);
   data(0) = (double)channel;
   data(1) = cFactor;
+  data(2) = OPS_ContinuationLambda::isValid(channel) ? 1.0 : 0.0;
+  data(3) = OPS_ContinuationLambda::get(channel); // zero if never written
 
   int dbTag = this->getDbTag();
   if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
@@ -136,7 +140,7 @@ int
 ContinuationTimeSeries::recvSelf(int commitTag, Channel &theChannel,
                                  FEM_ObjectBroker &theBroker)
 {
-  static Vector data(2);
+  static Vector data(4);
   int dbTag = this->getDbTag();
   if (theChannel.recvVector(dbTag, commitTag, data) < 0) {
     opserr << "ContinuationTimeSeries::recvSelf() - channel failed to receive data\n";
@@ -147,6 +151,14 @@ ContinuationTimeSeries::recvSelf(int commitTag, Channel &theChannel,
   channel = (int)data(0);
   cFactor = data(1);
   warned = false;
+
+  // seed the channel from the saved lambda, but never clobber a value a live
+  // integrator has already written in this process (parallel send path).
+  // When the script later re-creates the integrator, setContinuationTime
+  // inherits this value, so a previous stage's load stays applied.
+  if (data(2) == 1.0 && OPS_ContinuationLambda::isValid(channel) == false)
+    OPS_ContinuationLambda::set(channel, data(3));
+
   return 0;
 }
 

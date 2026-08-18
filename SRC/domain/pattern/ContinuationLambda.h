@@ -31,11 +31,13 @@
 //
 // CAVEATS
 // -------
-// This is a per-process global. It is NOT part of the Domain state: it is not
-// carried by sendSelf/recvSelf and does not survive a database restart. Under
-// MPI every rank holds its own copy, so consistency relies on every rank's
-// integrator computing the same lambda (which in turn relies on the
-// distributed SOE returning the same solution vector on every rank).
+// This is a per-process global, NOT part of the Domain state. It survives a
+// database save/restore only because ContinuationTimeSeries carries the value
+// of its channel through sendSelf/recvSelf and re-seeds the store on receive
+// (never-written channels stay never-written). Under MPI every rank holds its
+// own copy, so consistency relies on every rank's integrator computing the
+// same lambda (which in turn relies on the distributed SOE returning the same
+// solution vector on every rank).
 
 #ifndef ContinuationLambda_h
 #define ContinuationLambda_h
