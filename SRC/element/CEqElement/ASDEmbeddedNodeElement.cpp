@@ -36,6 +36,8 @@
 #include <Renderer.h>
 #include <analysis/dof_grp/DOF_Group.h>
 
+#include <ASDMath.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <cmath>
@@ -59,6 +61,62 @@ namespace
         c(0) = a(1) * b(2) - a(2) * b(1);
         c(1) = a(2) * b(0) - a(0) * b(2);
         c(2) = a(0) * b(1) - a(1) * b(0);
+    }
+
+    // 3x3 inverse (no pivoting: callers pass well-conditioned matrices)
+    void inv3(const Matrix& A, Matrix& B) {
+        double d = det3(A);
+        B(0, 0) = (A(1, 1) * A(2, 2) - A(1, 2) * A(2, 1)) / d;
+        B(0, 1) = (A(0, 2) * A(2, 1) - A(0, 1) * A(2, 2)) / d;
+        B(0, 2) = (A(0, 1) * A(1, 2) - A(0, 2) * A(1, 1)) / d;
+        B(1, 0) = (A(1, 2) * A(2, 0) - A(1, 0) * A(2, 2)) / d;
+        B(1, 1) = (A(0, 0) * A(2, 2) - A(0, 2) * A(2, 0)) / d;
+        B(1, 2) = (A(0, 2) * A(1, 0) - A(0, 0) * A(1, 2)) / d;
+        B(2, 0) = (A(1, 0) * A(2, 1) - A(1, 1) * A(2, 0)) / d;
+        B(2, 1) = (A(0, 1) * A(2, 0) - A(0, 0) * A(2, 1)) / d;
+        B(2, 2) = (A(0, 0) * A(1, 1) - A(0, 1) * A(1, 0)) / d;
+    }
+
+    // R = polar(F) by Higham's iteration R <- (R + R^-T)/2 (same rule the
+    // ASDhexa corotational frame uses)
+    void polar3(const Matrix& F, Matrix& R) {
+        static Matrix Ri(3, 3);
+        static Matrix Rn(3, 3);
+        R = F;
+        for (int it = 0; it < 100; ++it) {
+            inv3(R, Ri);
+            double diff = 0.0;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) {
+                    Rn(i, j) = 0.5 * (R(i, j) + Ri(j, i));
+                    double dd = Rn(i, j) - R(i, j);
+                    diff += dd * dd;
+                }
+            R = Rn;
+            if (std::sqrt(diff) < 1.0e-14)
+                break;
+        }
+    }
+
+    // inverse of the left SO(3) tangent map: d(log R) = Tinv * eta for
+    // dR = skew(eta) R
+    void leftJacobianInv(const Vector& v, Matrix& T) {
+        double t = v.Norm();
+        static Matrix K(3, 3);
+        K.Zero();
+        K(0, 1) = -v(2); K(0, 2) = v(1);
+        K(1, 0) = v(2);  K(1, 2) = -v(0);
+        K(2, 0) = -v(1); K(2, 1) = v(0);
+        T.Zero();
+        for (int i = 0; i < 3; ++i) T(i, i) = 1.0;
+        T.addMatrix(1.0, K, -0.5);
+        if (t >= 1.0e-12) {
+            double half = 0.5 * t;
+            double coeff = (1.0 - half / std::tan(half)) / (t * t);
+            static Matrix K2(3, 3);
+            K2.addMatrixProduct(0.0, K, K, 1.0);
+            T.addMatrix(1.0, K2, coeff);
+        }
     }
 
     namespace tri {
@@ -557,6 +615,7 @@ OPS_ASDEmbeddedNodeElement(void)
     // parse optional parameters
     bool rot = false;
     bool shear = false;
+    bool corot = false;
     bool pressure = false;
     bool keywords_started = false;
     double K = 1.0e18;
@@ -571,6 +630,10 @@ OPS_ASDEmbeddedNodeElement(void)
         }
         else if (strcmp(what, "-shearDeformable") == 0) {
             shear = true;
+            keywords_started = true;
+        }
+        else if (strcmp(what, "-corotational") == 0) {
+            corot = true;
             keywords_started = true;
         }
         else if (strcmp(what, "-p") == 0) {
@@ -683,9 +746,26 @@ OPS_ASDEmbeddedNodeElement(void)
             << "constraint, so it requires -rot.\n" << descr;
         return 0;
     }
+    if (corot) {
+        if (!rot || pressure || shear) {
+            opserr << "ASDEmbeddedNodeElement ERROR: -corotational requires -rot and cannot be "
+                << "combined with -p or (for now) -shearDeformable.\n" << descr;
+            return 0;
+        }
+        if (nret != 8 && nret != 4) {
+            opserr << "ASDEmbeddedNodeElement ERROR: -corotational currently supports only the "
+                << "solid hosts (4-node tetrahedron, 8-node hexahedron).\n" << descr;
+            return 0;
+        }
+        if (nret == 4 && (shape == ASDEmbeddedNodeElement::Fam_Quad || shape == ASDEmbeddedNodeElement::Fam_Quad3D)) {
+            opserr << "ASDEmbeddedNodeElement ERROR: -corotational does not support surface "
+                << "hosts yet (-shape quad).\n" << descr;
+            return 0;
+        }
+    }
 
     // done
-    return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear);
+    return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear, corot);
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement() 
@@ -693,12 +773,13 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement()
 {
 }
 
-ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag)
+ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag, bool corot_flag)
     : Element(tag, ELE_TAG_ASDEmbeddedNodeElement)
     , m_shape_request(shape_request)
     , m_rot_c_flag(rot_flag)
     , m_p_flag(p_flag)
     , m_shear_flag(shear_flag)
+    , m_corot_flag(corot_flag)
     , m_K(K)
     , m_KP(KP)
 {
@@ -844,6 +925,21 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                         }
                     }
                     m_shear = true;
+                }
+                // -corotational: hexa host only for now; same silent downgrade
+                // as -rot when the constrained node has no rotational dofs
+                m_corot = false;
+                if (m_corot_flag && m_rot_c) {
+                    int ncr = static_cast<int>(m_nodes.size()) - 1;
+                    bool solid = (ncr == 8) ||
+                        (ncr == 4 && m_shape_request != Fam_Quad && m_shape_request != Fam_Quad3D);
+                    if (!solid) {
+                        opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                            << " - -corotational currently supports only the solid hosts "
+                            << "(4-node tetrahedron, 8-node hexahedron).\n";
+                        exit(-1);
+                    }
+                    m_corot = true;
                 }
                 if (m_p_flag && ndf == 4) {
                     // all others should have same ndf (u-p)
@@ -1011,16 +1107,335 @@ int ASDEmbeddedNodeElement::getNumDOF()
 
 int ASDEmbeddedNodeElement::update()
 {
+    if (m_corot) {
+        // track the slave TOTAL rotation as a quaternion, composed from the
+        // increments of the additive rotation dofs -- the same scheme the ASD
+        // shells use for their nodal quaternions, so that two corotational
+        // elements on the same node agree
+        const Vector& iu = m_nodes[0]->getTrialDisp();
+        double rv[3];
+        for (int i = 0; i < 3; ++i) {
+            rv[i] = iu(3 + i) - (m_U0_computed ? m_U0(3 + i) : 0.0);
+        }
+        ASDQuaternion<double> dq = ASDQuaternion<double>::FromRotationVector(
+            rv[0] - m_rv[0], rv[1] - m_rv[1], rv[2] - m_rv[2]);
+        ASDQuaternion<double> q(m_qs[0], m_qs[1], m_qs[2], m_qs[3]);
+        q = dq * q;
+        q.normalize();
+        m_qs[0] = q.w(); m_qs[1] = q.x(); m_qs[2] = q.y(); m_qs[3] = q.z();
+        for (int i = 0; i < 3; ++i) m_rv[i] = rv[i];
+    }
     return 0;
+}
+
+int ASDEmbeddedNodeElement::commitState()
+{
+    for (int i = 0; i < 4; ++i) m_qs_conv[i] = m_qs[i];
+    for (int i = 0; i < 3; ++i) m_rv_conv[i] = m_rv[i];
+    return Element::commitState();
 }
 
 int ASDEmbeddedNodeElement::revertToLastCommit()
 {
+    for (int i = 0; i < 4; ++i) m_qs[i] = m_qs_conv[i];
+    for (int i = 0; i < 3; ++i) m_rv[i] = m_rv_conv[i];
     return 0;
+}
+
+int ASDEmbeddedNodeElement::revertToStart()
+{
+    m_qs[0] = 1.0; m_qs[1] = m_qs[2] = m_qs[3] = 0.0;
+    m_rv[0] = m_rv[1] = m_rv[2] = 0.0;
+    for (int i = 0; i < 4; ++i) m_qs_conv[i] = m_qs[i];
+    for (int i = 0; i < 3; ++i) m_rv_conv[i] = m_rv[i];
+    return 0;
+}
+
+void ASDEmbeddedNodeElement::corotSetup()
+{
+    if (m_corot_init)
+        return;
+    // reference = configuration at activation (X + U0). The center gradients
+    // are computed ON that configuration, so F(reference) = I and R0 = I.
+    // For the 4-node tet F is constant: point and center gradients coincide,
+    // and the same closed-form G applies with the tet gradients.
+    int nn = static_cast<int>(m_nodes.size()) - 1;
+    static Matrix X;
+    X.resize(3, nn);
+    int pos = m_nodes[0]->getNumberDOF();
+    for (int a = 0; a < nn; ++a) {
+        const Vector& crd = m_nodes[static_cast<std::size_t>(a + 1)]->getCrds();
+        for (int i = 0; i < 3; ++i)
+            X(i, a) = crd(i) + (m_U0_computed ? m_U0(pos + i) : 0.0);
+        pos += m_nodes[static_cast<std::size_t>(a + 1)]->getNumberDOF();
+    }
+    static Vector Xs(3);
+    for (int i = 0; i < 3; ++i)
+        Xs(i) = m_nodes[0]->getCrds()(i) + (m_U0_computed ? m_U0(i) : 0.0);
+
+    m_cN.resize(nn);
+    m_cD.resize(nn, 3);
+    m_cgc.resize(nn, 3);
+    static Matrix J(3, 3);
+    static Matrix invJ(3, 3);
+    double V = 0.0;
+    if (nn == 8) {
+        double lx, ly, lz;
+        if (!hexa::localCoord(X, Xs(0), Xs(1), Xs(2), lx, ly, lz)) {
+            opserr << "ASDEmbeddedNodeElement WARNING: element " << getTag()
+                << " - the inverse isoparametric map did not converge on the HEXA host (corotational setup).\n";
+        }
+        hexa::shapeFun(lx, ly, lz, m_cN);
+        static Matrix dN(8, 3);
+        hexa::shapeFunDer(lx, ly, lz, dN);
+        J.addMatrixProduct(0.0, X, dN, 1.0);
+        inv3(J, invJ);
+        m_cD.addMatrixProduct(0.0, dN, invJ, 1.0);
+        hexa::shapeFunDer(0.0, 0.0, 0.0, dN);
+        J.addMatrixProduct(0.0, X, dN, 1.0);
+        inv3(J, invJ);
+        m_cgc.addMatrixProduct(0.0, dN, invJ, 1.0);
+        V = hexa::volume(X);
+    }
+    else {
+        // tetrahedron: affine map, constant gradients
+        static Matrix dN(4, 3);
+        tet::shapeFunDer(dN);
+        J.addMatrixProduct(0.0, X, dN, 1.0);
+        inv3(J, invJ);
+        m_cgc.addMatrixProduct(0.0, dN, invJ, 1.0);
+        m_cD = m_cgc;
+        double lx, ly, lz;
+        tet::localCoord(X, invJ, Xs(0), Xs(1), Xs(2), lx, ly, lz);
+        for (int a = 0; a < 4; ++a)
+            m_cN(a) = tet::shapeFun(lx, ly, lz, a);
+        V = det3(J) / 6.0;
+    }
+    // centroid and reference local positions
+    m_cc0.resize(3);
+    m_cc0.Zero();
+    for (int a = 0; a < nn; ++a)
+        for (int i = 0; i < 3; ++i)
+            m_cc0(i) += X(i, a) / static_cast<double>(nn);
+    m_cY0.resize(nn, 3);
+    for (int a = 0; a < nn; ++a)
+        for (int i = 0; i < 3; ++i)
+            m_cY0(a, i) = X(i, a) - m_cc0(i);
+    m_cY0s.resize(3);
+    for (int i = 0; i < 3; ++i)
+        m_cY0s(i) = Xs(i) - m_cc0(i);
+    // penalty scaled on the reference size
+    m_ciK = m_K * std::cbrt(V);
+    m_corot_init = true;
+}
+
+void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
+{
+    corotSetup();
+    typedef ASDQuaternion<double> Q4;
+    int nn = static_cast<int>(m_nodes.size()) - 1;
+    int ncols = 6 + 3 * nn;
+
+    // current configuration (getGlobalDisplacements removes U0)
+    const Vector& U = getGlobalDisplacements();
+    static Matrix x;
+    x.resize(3, nn);
+    static Vector xs(3);
+    int pos = m_nodes[0]->getNumberDOF();
+    for (int a = 0; a < nn; ++a) {
+        for (int i = 0; i < 3; ++i)
+            x(i, a) = m_cY0(a, i) + m_cc0(i) + U(pos + i);
+        pos += m_nodes[static_cast<std::size_t>(a + 1)]->getNumberDOF();
+    }
+    for (int i = 0; i < 3; ++i)
+        xs(i) = m_cY0s(i) + m_cc0(i) + U(i);
+
+    // frame: R = polar(F), F = sum_a x_a (x) g_a; centroid
+    static Matrix F(3, 3);
+    static Matrix R(3, 3);
+    F.Zero();
+    for (int a = 0; a < nn; ++a)
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                F(i, j) += x(i, a) * m_cgc(a, j);
+    polar3(F, R);
+    static Vector c(3);
+    c.Zero();
+    for (int a = 0; a < nn; ++a)
+        for (int i = 0; i < 3; ++i)
+            c(i) += x(i, a) / static_cast<double>(nn);
+
+    // local levers and deformational displacements
+    static Matrix y;
+    y.resize(nn, 3);
+    static Vector ys(3);
+    static Matrix v;
+    v.resize(nn, 3);
+    static Vector vs(3);
+    for (int a = 0; a < nn; ++a)
+        for (int i = 0; i < 3; ++i) {
+            double s = 0.0;
+            for (int k = 0; k < 3; ++k)
+                s += R(k, i) * (x(k, a) - c(k));
+            y(a, i) = s;
+            v(a, i) = s - m_cY0(a, i);
+        }
+    for (int i = 0; i < 3; ++i) {
+        double s = 0.0;
+        for (int k = 0; k < 3; ++k)
+            s += R(k, i) * (xs(k) - c(k));
+        ys(i) = s;
+        vs(i) = s - m_cY0s(i);
+    }
+
+    // g_u and omega (1/2 sum D_a x v_a)
+    static Vector gu(3);
+    static Vector om(3);
+    gu.Zero(); om.Zero();
+    for (int a = 0; a < nn; ++a) {
+        for (int i = 0; i < 3; ++i)
+            gu(i) += m_cN(a) * v(a, i);
+        om(0) += 0.5 * (m_cD(a, 1) * v(a, 2) - m_cD(a, 2) * v(a, 1));
+        om(1) += 0.5 * (m_cD(a, 2) * v(a, 0) - m_cD(a, 0) * v(a, 2));
+        om(2) += 0.5 * (m_cD(a, 0) * v(a, 1) - m_cD(a, 1) * v(a, 0));
+    }
+    for (int i = 0; i < 3; ++i)
+        gu(i) -= vs(i);
+
+    // slave deformational rotation: theta = rotvec(R^T Rs), via quaternions
+    // (well conditioned near pi, unlike the trace-based log)
+    Q4 qR = Q4::FromRotationMatrix(R);
+    Q4 qs(m_qs[0], m_qs[1], m_qs[2], m_qs[3]);
+    Q4 qdef = qR.conjugate() * qs;
+    qdef.normalize();
+    static Vector theta(3);
+    qdef.toRotationVector(theta(0), theta(1), theta(2));
+
+    g.resize(6);
+    for (int i = 0; i < 3; ++i) {
+        g(i) = gu(i);
+        g(3 + i) = om(i) - theta(i);
+    }
+
+    // ---- exact first variation (see DESIGN.md; gated by verify_corot_embed.py)
+    // dw = sum_b Gb R^T du_b, Gb = (tr(U)I - U)^-1 skew(g_b)
+    static Matrix RtF(3, 3);
+    RtF.addMatrixTransposeProduct(0.0, R, F, 1.0);
+    static Matrix M(3, 3);
+    static Matrix Minv(3, 3);
+    double trU = RtF(0, 0) + RtF(1, 1) + RtF(2, 2);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            M(i, j) = (i == j ? trU : 0.0) - RtF(i, j);
+    inv3(M, Minv);
+    static Matrix DW;
+    DW.resize(3, ncols);
+    DW.Zero();
+    for (int a = 0; a < nn; ++a) {
+        // Gb = Minv * skew(g_a); the a-th DW block is Gb * R^T
+        static Matrix Sk(3, 3);
+        Sk.Zero();
+        Sk(0, 1) = -m_cgc(a, 2); Sk(0, 2) = m_cgc(a, 1);
+        Sk(1, 0) = m_cgc(a, 2);  Sk(1, 2) = -m_cgc(a, 0);
+        Sk(2, 0) = -m_cgc(a, 1); Sk(2, 1) = m_cgc(a, 0);
+        static Matrix Gb(3, 3);
+        Gb.addMatrixProduct(0.0, Minv, Sk, 1.0);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                double s = 0.0;
+                for (int k = 0; k < 3; ++k)
+                    s += Gb(i, k) * R(j, k);
+                DW(i, 6 + 3 * a + j) = s;
+            }
+    }
+
+    B.resize(6, ncols);
+    B.Zero();
+    // dg_u rows
+    static Vector z(3);
+    z.Zero();
+    for (int a = 0; a < nn; ++a)
+        for (int i = 0; i < 3; ++i)
+            z(i) += m_cN(a) * y(a, i);
+    for (int i = 0; i < 3; ++i)
+        z(i) -= ys(i);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j)
+            B(i, j) = -R(j, i);                       // -R^T on slave u
+        for (int a = 0; a < nn; ++a)
+            for (int j = 0; j < 3; ++j)
+                B(i, 6 + 3 * a + j) = m_cN(a) * R(j, i);
+    }
+    // + skew(z) DW
+    for (int col = 0; col < ncols; ++col) {
+        B(0, col) += -z(2) * DW(1, col) + z(1) * DW(2, col);
+        B(1, col) += z(2) * DW(0, col) - z(0) * DW(2, col);
+        B(2, col) += -z(1) * DW(0, col) + z(0) * DW(1, col);
+    }
+    // d omega rows: 1/2 sum_a skew(D_a) (R^T du_a) + LEV * DW
+    static Matrix LEV(3, 3);
+    LEV.Zero();
+    for (int a = 0; a < nn; ++a) {
+        for (int j = 0; j < 3; ++j) {
+            B(3, 6 + 3 * a + j) += 0.5 * (-m_cD(a, 2) * R(j, 1) + m_cD(a, 1) * R(j, 2));
+            B(4, 6 + 3 * a + j) += 0.5 * (m_cD(a, 2) * R(j, 0) - m_cD(a, 0) * R(j, 2));
+            B(5, 6 + 3 * a + j) += 0.5 * (-m_cD(a, 1) * R(j, 0) + m_cD(a, 0) * R(j, 1));
+        }
+        static Matrix SD(3, 3);
+        static Matrix SY(3, 3);
+        SD.Zero(); SY.Zero();
+        SD(0, 1) = -m_cD(a, 2); SD(0, 2) = m_cD(a, 1);
+        SD(1, 0) = m_cD(a, 2);  SD(1, 2) = -m_cD(a, 0);
+        SD(2, 0) = -m_cD(a, 1); SD(2, 1) = m_cD(a, 0);
+        SY(0, 1) = -y(a, 2); SY(0, 2) = y(a, 1);
+        SY(1, 0) = y(a, 2);  SY(1, 2) = -y(a, 0);
+        SY(2, 0) = -y(a, 1); SY(2, 1) = y(a, 0);
+        LEV.addMatrixProduct(1.0, SD, SY, 0.5);
+    }
+    // frame-variation terms of the rotational rows: +LEV*DW from d(omega),
+    // +Tinv*DW from -d(theta) = -Tinv(R^T dphi_s - dw)
+    static Matrix Tinv(3, 3);
+    leftJacobianInv(theta, Tinv);
+    for (int i = 0; i < 3; ++i)
+        for (int col = 0; col < ncols; ++col) {
+            double s = 0.0;
+            for (int k = 0; k < 3; ++k)
+                s += (LEV(i, k) + Tinv(i, k)) * DW(k, col);
+            B(3 + i, col) += s;
+        }
+    // -Tinv R^T on the slave rotation columns
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            double s = 0.0;
+            for (int k = 0; k < 3; ++k)
+                s += Tinv(i, k) * R(j, k);   // Tinv * R^T
+            B(3 + i, 3 + j) -= s;
+        }
 }
 
 const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
 {
+    // -corotational: K = iK * B^T B on the exact first variation (Gauss-Newton;
+    // the k*g*d2g geometric term vanishes with the constraint violation)
+    if (m_corot) {
+        static Matrix B;
+        static Vector g;
+        corotComputeBg(B, g);
+        int nred = B.noCols();
+        static Matrix KL;
+        KL.resize(nred, nred);
+        KL.addMatrixTransposeProduct(0.0, B, B, m_ciK);
+        static Matrix K;
+        K.resize(m_num_dofs, m_num_dofs);
+        K.Zero();
+        for (int i = 0; i < nred; ++i) {
+            int ig = m_mapping(i);
+            for (int j = 0; j < nred; ++j)
+                K(ig, m_mapping(j)) = KL(i, j);
+        }
+        return K;
+    }
+
     // the constraint mode is shared by every family
     int mode = m_rot_c ? Mode_UR : (m_up ? Mode_UP : Mode_U);
 
@@ -1134,6 +1549,21 @@ const Vector& ASDEmbeddedNodeElement::getResistingForce()
 {
     static Vector F;
     F.resize(m_num_dofs);
+    // -corotational: f = iK * B^T g, exact at any rotation (and exactly
+    // self-equilibrated: the closed-form B annihilates the rigid modes)
+    if (m_corot) {
+        static Matrix B;
+        static Vector g;
+        corotComputeBg(B, g);
+        int nred = B.noCols();
+        static Vector fr;
+        fr.resize(nred);
+        fr.addMatrixTransposeVector(0.0, B, g, m_ciK);
+        F.Zero();
+        for (int i = 0; i < nred; ++i)
+            F(m_mapping(i)) = fr(i);
+        return F;
+    }
     const Matrix& K = getTangentStiff();
     const Vector& U = getGlobalDisplacements();
     F.addMatrixVector(0.0, K, U, 1.0);
@@ -1159,7 +1589,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     int NU0 = m_U0_computed ? m_U0.Size() : 0;
 
     // INT data 1: header with every size needed to read the rest
-    static ID idData1(15);
+    static ID idData1(17);
     idData1(0) = getTag();
     idData1(1) = NN;
     idData1(2) = NMAP;
@@ -1178,6 +1608,8 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     idData1(12) = m_shape_request;
     idData1(13) = m_shear_flag ? 1 : 0;
     idData1(14) = m_shear ? 1 : 0;
+    idData1(15) = m_corot_flag ? 1 : 0;
+    idData1(16) = m_corot ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send ID 1\n";
@@ -1197,11 +1629,16 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
         return res;
     }
 
-    // DOUBLE data: K, KP and the initial displacement vector
-    Vector vectData(2 + NU0);
+    // DOUBLE data: K, KP, the corotational slave-rotation state, and the
+    // initial displacement vector
+    Vector vectData(16 + NU0);
     pos = 0;
     vectData(pos++) = m_K;
     vectData(pos++) = m_KP;
+    for (int i = 0; i < 4; ++i) vectData(pos++) = m_qs[i];
+    for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv[i];
+    for (int i = 0; i < 4; ++i) vectData(pos++) = m_qs_conv[i];
+    for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv_conv[i];
     for (int i = 0; i < NU0; ++i)
         vectData(pos++) = m_U0(i);
     res = theChannel.sendVector(dataTag, commitTag, vectData);
@@ -1220,7 +1657,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int dataTag = this->getDbTag();
 
     // INT data 1: header
-    static ID idData1(15);
+    static ID idData1(17);
     res = theChannel.recvID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive ID 1\n";
@@ -1241,6 +1678,9 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     m_shape_request = idData1(12);
     m_shear_flag = idData1(13) == 1;
     m_shear = idData1(14) == 1;
+    m_corot_flag = idData1(15) == 1;
+    m_corot = idData1(16) == 1;
+    m_corot_init = false; // reference data is recomputed lazily from coords + U0
 
     // INT data 2: node ids and dof mapping
     ID idData2(NN + NMAP);
@@ -1259,7 +1699,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
         m_mapping(i) = idData2(pos++);
 
     // DOUBLE data
-    Vector vectData(2 + NU0);
+    Vector vectData(16 + NU0);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -1268,6 +1708,10 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     pos = 0;
     m_K = vectData(pos++);
     m_KP = vectData(pos++);
+    for (int i = 0; i < 4; ++i) m_qs[i] = vectData(pos++);
+    for (int i = 0; i < 3; ++i) m_rv[i] = vectData(pos++);
+    for (int i = 0; i < 4; ++i) m_qs_conv[i] = vectData(pos++);
+    for (int i = 0; i < 3; ++i) m_rv_conv[i] = vectData(pos++);
     if (NU0 > 0) {
         m_U0.resize(NU0);
         for (int i = 0; i < NU0; ++i)

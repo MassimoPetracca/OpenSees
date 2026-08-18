@@ -65,7 +65,7 @@ public:
 
     // life cycle
     ASDEmbeddedNodeElement();
-    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false);
+    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false, bool corot_flag = false);
     virtual ~ASDEmbeddedNodeElement();
 
     // domain
@@ -83,7 +83,9 @@ public:
 
     // methods dealing with committed state and update
     int update();
+    int commitState();
     int revertToLastCommit();
+    int revertToStart();
 
     // methods to return the current linearized stiffness,
     // damping and mass matrices
@@ -126,6 +128,12 @@ private:
     // resolves m_family from the retained node count, from m_ndm and, when
     // those are not enough, from the user's -shape request
     int resolveFamily() const;
+    // -corotational (hexa host): lazy setup of the reference (activation-time)
+    // quantities, and evaluation of the exact constraint g and its exact first
+    // variation B in the reduced dofset. Gated by the numpy oracle in
+    // OpenSees-Testing/new-asd-elements/ASDEmbeddedNodeElement/corot/.
+    void corotSetup();
+    void corotComputeBg(Matrix& B, Vector& g);
 
 private:
 
@@ -178,6 +186,30 @@ private:
     // initial displacements
     Vector m_U0;
     bool m_U0_computed = false;
+
+    // -corotational: make the UR constraint exact under finite rotations of
+    // the host by writing the linear kernel on deformational quantities in
+    // the frame R = polar(F) of the host patch (the ASDhexa frame rule).
+    // The frame is history-free; the only state is the slave TOTAL rotation,
+    // tracked as a quaternion exactly the way the ASD shells track their
+    // nodal quaternions (additive rotation dofs -> incremental composition).
+    bool m_corot_flag = false;   // user input
+    bool m_corot = false;        // accepted: -rot active, hexa host in 3D
+    bool m_corot_init = false;   // reference data below is filled
+    double m_qs[4] = { 1.0, 0.0, 0.0, 0.0 };      // slave quaternion (w,x,y,z)
+    double m_rv[3] = { 0.0, 0.0, 0.0 };           // last additive rotation vector
+    double m_qs_conv[4] = { 1.0, 0.0, 0.0, 0.0 };
+    double m_rv_conv[3] = { 0.0, 0.0, 0.0 };
+    // reference (activation-time) data: shape functions at the material point,
+    // cartesian gradients there, center gradients (frame rule), centroid,
+    // local positions. Computed on X + U0, where F = I so R0 = I.
+    Vector m_cN;    // 8
+    Matrix m_cD;    // 8x3, dN/dX at xi_s
+    Matrix m_cgc;   // 8x3, center gradients g_a
+    Vector m_cc0;   // 3
+    Matrix m_cY0;   // 8x3, X_a + U0_a - c0
+    Vector m_cY0s;  // 3
+    double m_ciK = 0.0; // penalty, m_K * cbrt(V at activation)
 
 };
 
