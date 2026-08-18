@@ -752,14 +752,9 @@ OPS_ASDEmbeddedNodeElement(void)
                 << "combined with -p or (for now) -shearDeformable.\n" << descr;
             return 0;
         }
-        if (nret != 8 && nret != 4) {
-            opserr << "ASDEmbeddedNodeElement ERROR: -corotational currently supports only the "
-                << "solid hosts (4-node tetrahedron, 8-node hexahedron).\n" << descr;
-            return 0;
-        }
-        if (nret == 4 && (shape == ASDEmbeddedNodeElement::Fam_Quad || shape == ASDEmbeddedNodeElement::Fam_Quad3D)) {
-            opserr << "ASDEmbeddedNodeElement ERROR: -corotational does not support surface "
-                << "hosts yet (-shape quad).\n" << descr;
+        if (nret != 8 && nret != 4 && nret != 3) {
+            opserr << "ASDEmbeddedNodeElement ERROR: -corotational needs a 3D host "
+                << "(3/4/8 retained nodes).\n" << descr;
             return 0;
         }
     }
@@ -928,18 +923,11 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 }
                 // -corotational: hexa host only for now; same silent downgrade
                 // as -rot when the constrained node has no rotational dofs
-                m_corot = false;
-                if (m_corot_flag && m_rot_c) {
-                    int ncr = static_cast<int>(m_nodes.size()) - 1;
-                    bool solid = (ncr == 8) ||
-                        (ncr == 4 && m_shape_request != Fam_Quad && m_shape_request != Fam_Quad3D);
-                    if (!solid) {
-                        opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
-                            << " - -corotational currently supports only the solid hosts "
-                            << "(4-node tetrahedron, 8-node hexahedron).\n";
-                        exit(-1);
-                    }
-                    m_corot = true;
+                m_corot = m_corot_flag && m_rot_c;
+                if (m_corot && m_shear) {
+                    opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                        << " - -corotational with -shearDeformable is not supported yet.\n";
+                    exit(-1);
                 }
                 if (m_p_flag && ndf == 4) {
                     // all others should have same ndf (u-p)
@@ -1197,7 +1185,7 @@ void ASDEmbeddedNodeElement::corotSetup()
         m_cgc.addMatrixProduct(0.0, dN, invJ, 1.0);
         V = hexa::volume(X);
     }
-    else {
+    else if (nn == 4 && m_family == Fam_Tet) {
         // tetrahedron: affine map, constant gradients
         static Matrix dN(4, 3);
         tet::shapeFunDer(dN);
@@ -1210,6 +1198,104 @@ void ASDEmbeddedNodeElement::corotSetup()
         for (int a = 0; a < 4; ++a)
             m_cN(a) = tet::shapeFun(lx, ly, lz, a);
         V = det3(J) / 6.0;
+    }
+    else {
+        // surface host (3-node, or 4-node face): Kabsch frame. m_cgc rows hold
+        // the reference local positions Xh_a, so that F = sum x_a (x) gc_a is
+        // the Kabsch covariance A and the SAME closed-form G applies (M stays
+        // SPD for a flat patch: eigenvalues lam_i + lam_j with lam3 = 0).
+        m_corot_surf = true;
+        // reference face frame E0 (columns e1, e2, e3)
+        m_cE0.resize(3, 3);
+        static Vector e1(3), e2(3), e3(3);
+        if (nn == 3) {
+            for (int i = 0; i < 3; ++i) {
+                e1(i) = X(i, 1) - X(i, 0);
+                e2(i) = X(i, 2) - X(i, 0);
+            }
+        }
+        else {
+            for (int i = 0; i < 3; ++i) {
+                e1(i) = X(i, 1) + X(i, 2) - X(i, 0) - X(i, 3);
+                e2(i) = X(i, 2) + X(i, 3) - X(i, 0) - X(i, 1);
+            }
+        }
+        e1.Normalize();
+        cross(e1, e2, e3);
+        e3.Normalize();
+        cross(e3, e1, e2);
+        for (int i = 0; i < 3; ++i) {
+            m_cE0(i, 0) = e1(i);
+            m_cE0(i, 1) = e2(i);
+            m_cE0(i, 2) = e3(i);
+        }
+        // centroid first (needed for the projected 2D coordinates)
+        static Vector cc(3);
+        cc.Zero();
+        for (int a = 0; a < nn; ++a)
+            for (int i = 0; i < 3; ++i)
+                cc(i) += X(i, a) / static_cast<double>(nn);
+        static Matrix XL;
+        XL.resize(2, nn);
+        for (int a = 0; a < nn; ++a)
+            for (int j = 0; j < 2; ++j) {
+                double s = 0.0;
+                for (int i = 0; i < 3; ++i)
+                    s += m_cE0(i, j) * (X(i, a) - cc(i));
+                XL(j, a) = s;
+            }
+        double sxl = 0.0, syl = 0.0;
+        for (int i = 0; i < 3; ++i) {
+            sxl += m_cE0(i, 0) * (Xs(i) - cc(i));
+            syl += m_cE0(i, 1) * (Xs(i) - cc(i));
+        }
+        // shape functions and 2D cartesian gradients at the material point
+        static Matrix J2(2, 2);
+        if (nn == 3) {
+            static Matrix dN2(3, 2);
+            tri::shapeFunDer(dN2);
+            J2.addMatrixProduct(0.0, XL, dN2, 1.0);
+            static Matrix iJ2(2, 2);
+            J2.Invert(iJ2);
+            static Matrix D2(3, 2);
+            D2.addMatrixProduct(0.0, dN2, iJ2, 1.0);
+            double lx, ly;
+            tri::localCoord(XL, iJ2, sxl, syl, lx, ly);
+            for (int a = 0; a < 3; ++a) {
+                m_cN(a) = tri::shapeFun(lx, ly, a);
+                m_cD(a, 0) = D2(a, 0);
+                m_cD(a, 1) = D2(a, 1);
+                m_cD(a, 2) = 0.0;
+            }
+            V = det2(J2) / 2.0;
+        }
+        else {
+            double lx, ly;
+            if (!quad::localCoord(XL, sxl, syl, lx, ly)) {
+                opserr << "ASDEmbeddedNodeElement WARNING: element " << getTag()
+                    << " - the inverse isoparametric map did not converge on the QUAD face (corotational setup).\n";
+            }
+            static Vector N4(4);
+            quad::shapeFun(lx, ly, N4);
+            static Matrix dN2(4, 2);
+            quad::shapeFunDer(lx, ly, dN2);
+            J2.addMatrixProduct(0.0, XL, dN2, 1.0);
+            static Matrix iJ2(2, 2);
+            J2.Invert(iJ2);
+            static Matrix D2(4, 2);
+            D2.addMatrixProduct(0.0, dN2, iJ2, 1.0);
+            for (int a = 0; a < 4; ++a) {
+                m_cN(a) = N4(a);
+                m_cD(a, 0) = D2(a, 0);
+                m_cD(a, 1) = D2(a, 1);
+                m_cD(a, 2) = 0.0;
+            }
+            V = quad::area(XL);
+        }
+        // Kabsch "gradients": reference local positions
+        for (int a = 0; a < nn; ++a)
+            for (int i = 0; i < 3; ++i)
+                m_cgc(a, i) = X(i, a) - cc(i);
     }
     // centroid and reference local positions
     m_cc0.resize(3);
@@ -1225,7 +1311,7 @@ void ASDEmbeddedNodeElement::corotSetup()
     for (int i = 0; i < 3; ++i)
         m_cY0s(i) = Xs(i) - m_cc0(i);
     // penalty scaled on the reference size
-    m_ciK = m_K * std::cbrt(V);
+    m_ciK = m_corot_surf ? m_K * std::sqrt(V) : m_K * std::cbrt(V);
     m_corot_init = true;
 }
 
@@ -1258,7 +1344,32 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j)
                 F(i, j) += x(i, a) * m_cgc(a, j);
-    polar3(F, R);
+    if (m_corot_surf) {
+        // F is the rank-2 Kabsch covariance of a flat patch: complete the rank
+        // (A += gamma * n_cur (x) n_ref) so Higham's iteration can run; the
+        // completed polar equals the SVD Kabsch rotation.
+        static Vector t1(3), t2(3), nc(3);
+        for (int i = 0; i < 3; ++i) {
+            t1(i) = F(i, 0) * m_cE0(0, 0) + F(i, 1) * m_cE0(1, 0) + F(i, 2) * m_cE0(2, 0);
+            t2(i) = F(i, 0) * m_cE0(0, 1) + F(i, 1) * m_cE0(1, 1) + F(i, 2) * m_cE0(2, 1);
+        }
+        cross(t1, t2, nc);
+        nc.Normalize();
+        double gam = 0.0;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                gam += F(i, j) * F(i, j);
+        gam = std::sqrt(gam / 2.0);
+        static Matrix Faug(3, 3);
+        Faug = F;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                Faug(i, j) += gam * nc(i) * m_cE0(j, 2);
+        polar3(Faug, R);
+    }
+    else {
+        polar3(F, R);
+    }
     static Vector c(3);
     c.Zero();
     for (int a = 0; a < nn; ++a)
@@ -1295,9 +1406,25 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
     for (int a = 0; a < nn; ++a) {
         for (int i = 0; i < 3; ++i)
             gu(i) += m_cN(a) * v(a, i);
-        om(0) += 0.5 * (m_cD(a, 1) * v(a, 2) - m_cD(a, 2) * v(a, 1));
-        om(1) += 0.5 * (m_cD(a, 2) * v(a, 0) - m_cD(a, 0) * v(a, 2));
-        om(2) += 0.5 * (m_cD(a, 0) * v(a, 1) - m_cD(a, 1) * v(a, 0));
+        if (m_corot_surf) {
+            // local components of the deformational displacement: w = E0^T v_a
+            double w0 = 0.0, w1 = 0.0, w2 = 0.0;
+            for (int i = 0; i < 3; ++i) {
+                w0 += m_cE0(i, 0) * v(a, i);
+                w1 += m_cE0(i, 1) * v(a, i);
+                w2 += m_cE0(i, 2) * v(a, i);
+            }
+            // bending from the slope of the transverse deformational field,
+            // drilling from the in-plane skew (the linear kernel, corotated)
+            om(0) += m_cD(a, 1) * w2;
+            om(1) += -m_cD(a, 0) * w2;
+            om(2) += 0.5 * (m_cD(a, 0) * w1 - m_cD(a, 1) * w0);
+        }
+        else {
+            om(0) += 0.5 * (m_cD(a, 1) * v(a, 2) - m_cD(a, 2) * v(a, 1));
+            om(1) += 0.5 * (m_cD(a, 2) * v(a, 0) - m_cD(a, 0) * v(a, 2));
+            om(2) += 0.5 * (m_cD(a, 0) * v(a, 1) - m_cD(a, 1) * v(a, 0));
+        }
     }
     for (int i = 0; i < 3; ++i)
         gu(i) -= vs(i);
@@ -1310,11 +1437,23 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
     qdef.normalize();
     static Vector theta(3);
     qdef.toRotationVector(theta(0), theta(1), theta(2));
+    static Vector thloc(3);
+    if (m_corot_surf) {
+        for (int i = 0; i < 3; ++i) {
+            double s = 0.0;
+            for (int k = 0; k < 3; ++k)
+                s += m_cE0(k, i) * theta(k);
+            thloc(i) = s;
+        }
+    }
+    else {
+        thloc = theta;
+    }
 
     g.resize(6);
     for (int i = 0; i < 3; ++i) {
         g(i) = gu(i);
-        g(3 + i) = om(i) - theta(i);
+        g(3 + i) = om(i) - thloc(i);
     }
 
     // ---- exact first variation (see DESIGN.md; gated by verify_corot_embed.py)
@@ -1372,43 +1511,82 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
         B(1, col) += z(2) * DW(0, col) - z(0) * DW(2, col);
         B(2, col) += -z(1) * DW(0, col) + z(0) * DW(1, col);
     }
-    // d omega rows: 1/2 sum_a skew(D_a) (R^T du_a) + LEV * DW
+    // d omega rows. OP is the row operator on dv_a: volumetric 1/2 skew(D_a),
+    // or the surface slope/drilling operator premultiplied by E0^T components.
     static Matrix LEV(3, 3);
     LEV.Zero();
+    static Matrix OPa(3, 3);
+    static Matrix SY(3, 3);
     for (int a = 0; a < nn; ++a) {
-        for (int j = 0; j < 3; ++j) {
-            B(3, 6 + 3 * a + j) += 0.5 * (-m_cD(a, 2) * R(j, 1) + m_cD(a, 1) * R(j, 2));
-            B(4, 6 + 3 * a + j) += 0.5 * (m_cD(a, 2) * R(j, 0) - m_cD(a, 0) * R(j, 2));
-            B(5, 6 + 3 * a + j) += 0.5 * (-m_cD(a, 1) * R(j, 0) + m_cD(a, 0) * R(j, 1));
+        OPa.Zero();
+        if (m_corot_surf) {
+            // om_local = OPloc * (E0^T dv_a): rows [D_y w2; -D_x w2; skew/2]
+            static Matrix OPloc(3, 3);
+            OPloc.Zero();
+            OPloc(0, 2) = m_cD(a, 1);
+            OPloc(1, 2) = -m_cD(a, 0);
+            OPloc(2, 0) = -0.5 * m_cD(a, 1);
+            OPloc(2, 1) = 0.5 * m_cD(a, 0);
+            // OPa = OPloc * E0^T
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) {
+                    double s = 0.0;
+                    for (int k = 0; k < 3; ++k)
+                        s += OPloc(i, k) * m_cE0(j, k);
+                    OPa(i, j) = s;
+                }
         }
-        static Matrix SD(3, 3);
-        static Matrix SY(3, 3);
-        SD.Zero(); SY.Zero();
-        SD(0, 1) = -m_cD(a, 2); SD(0, 2) = m_cD(a, 1);
-        SD(1, 0) = m_cD(a, 2);  SD(1, 2) = -m_cD(a, 0);
-        SD(2, 0) = -m_cD(a, 1); SD(2, 1) = m_cD(a, 0);
+        else {
+            OPa(0, 1) = -0.5 * m_cD(a, 2); OPa(0, 2) = 0.5 * m_cD(a, 1);
+            OPa(1, 0) = 0.5 * m_cD(a, 2);  OPa(1, 2) = -0.5 * m_cD(a, 0);
+            OPa(2, 0) = -0.5 * m_cD(a, 1); OPa(2, 1) = 0.5 * m_cD(a, 0);
+        }
+        // direct part: OPa * R^T on the a-th u block
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                double s = 0.0;
+                for (int k = 0; k < 3; ++k)
+                    s += OPa(i, k) * R(j, k);
+                B(3 + i, 6 + 3 * a + j) += s;
+            }
+        // lever part: LEV += OPa * skew(y_a)
+        SY.Zero();
         SY(0, 1) = -y(a, 2); SY(0, 2) = y(a, 1);
         SY(1, 0) = y(a, 2);  SY(1, 2) = -y(a, 0);
         SY(2, 0) = -y(a, 1); SY(2, 1) = y(a, 0);
-        LEV.addMatrixProduct(1.0, SD, SY, 0.5);
+        LEV.addMatrixProduct(1.0, OPa, SY, 1.0);
     }
-    // frame-variation terms of the rotational rows: +LEV*DW from d(omega),
-    // +Tinv*DW from -d(theta) = -Tinv(R^T dphi_s - dw)
+    // frame-variation terms: +LEV*DW from d(omega), +E*Tinv*DW from
+    // -d(theta_local) = -E (Tinv (R^T dphi_s - dw)), with E = E0^T on
+    // surfaces and I on solids
     static Matrix Tinv(3, 3);
     leftJacobianInv(theta, Tinv);
+    static Matrix ETi(3, 3);
+    if (m_corot_surf) {
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                double s = 0.0;
+                for (int k = 0; k < 3; ++k)
+                    s += m_cE0(k, i) * Tinv(k, j);
+                ETi(i, j) = s;
+            }
+    }
+    else {
+        ETi = Tinv;
+    }
     for (int i = 0; i < 3; ++i)
         for (int col = 0; col < ncols; ++col) {
             double s = 0.0;
             for (int k = 0; k < 3; ++k)
-                s += (LEV(i, k) + Tinv(i, k)) * DW(k, col);
+                s += (LEV(i, k) + ETi(i, k)) * DW(k, col);
             B(3 + i, col) += s;
         }
-    // -Tinv R^T on the slave rotation columns
+    // -E Tinv R^T on the slave rotation columns
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j) {
             double s = 0.0;
             for (int k = 0; k < 3; ++k)
-                s += Tinv(i, k) * R(j, k);   // Tinv * R^T
+                s += ETi(i, k) * R(j, k);
             B(3 + i, 3 + j) -= s;
         }
 }

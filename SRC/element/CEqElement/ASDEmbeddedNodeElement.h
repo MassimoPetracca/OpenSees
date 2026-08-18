@@ -209,7 +209,12 @@ private:
     Vector m_cc0;   // 3
     Matrix m_cY0;   // 8x3, X_a + U0_a - c0
     Vector m_cY0s;  // 3
-    double m_ciK = 0.0; // penalty, m_K * cbrt(V at activation)
+    double m_ciK = 0.0; // penalty, m_K * cbrt(V) (solids) or m_K * sqrt(A) (surfaces)
+    // surface hosts only: reference face frame (columns e1,e2,e3) and the 2D
+    // cartesian gradients at the material point live in m_cE0 / m_cD(:,0:1);
+    // for the Kabsch frame m_cgc rows hold the reference local positions Xh_a
+    bool m_corot_surf = false;
+    Matrix m_cE0;
 
 };
 
