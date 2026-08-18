@@ -737,6 +737,7 @@
 #include "TrigSeries.h"
 #include "TriangleSeries.h"
 #include "MPAccSeries.h"   //Tang.S
+#include "ContinuationTimeSeries.h"
 
 // time series integrators
 #include "TrapezoidalTimeSeriesIntegrator.h"
@@ -2647,6 +2648,9 @@ FEM_ObjectBrokerAllClasses::getNewTimeSeries(int classTag)
 	  //Tang.S
 		case TSERIES_TAG_MPAccSeries:
 	  return new MPAccSeries;
+
+        case TSERIES_TAG_ContinuationTimeSeries:
+	  return new ContinuationTimeSeries;
 
 	default:
 	     opserr << "FEM_ObjectBrokerAllClasses::getPtrTimeSeries - ";
