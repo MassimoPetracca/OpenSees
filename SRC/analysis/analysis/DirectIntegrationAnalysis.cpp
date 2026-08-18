@@ -147,7 +147,7 @@ DirectIntegrationAnalysis::initialize(void)
 
     // check if domain has undergone change
     int stamp = the_Domain->hasDomainChanged();
-    if (stamp != domainStamp) {
+    if (this->anyDomainChange(stamp != domainStamp)) {
       domainStamp = stamp;	
       if (this->domainChanged() < 0) {
 	opserr << "DirectIntegrationAnalysis::initialize() - domainChanged() failed\n";
@@ -193,39 +193,57 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
   int result = 0;
   Domain *the_Domain = this->getDomainPtr();
 
-  if (theAnalysisModel->analysisStep(dT) < 0) {
-    opserr << "DirectIntegrationAnalysis::analyze() - the AnalysisModel failed";
-    opserr << " at time " << the_Domain->getCurrentTime() << endln;
+  // Each phase agrees on its outcome across the processes before anyone acts on
+  // it - see Analysis::worstStepResult(). The agreement matters twice over here:
+  // besides the collectives of the next step, analyze() and analyzeSubLevel()
+  // decide from THIS return value whether to sub-step, and that decision recurses.
+  // A local verdict would have one process sub-stepping (more collectives) while
+  // another moved on to the next step. The agreement is unconditional.
+  // The failure messages below are reported once, by one process, and name the
+  // process that failed - see Analysis::reportHere(). Sub-stepping makes a failure
+  // here an ordinary event, so N copies of it per rejected step is real noise.
+  if (this->worstStepResult(theAnalysisModel->analysisStep(dT), "analysisStep()") < 0) {
+    if (this->reportHere()) {
+      opserr << "DirectIntegrationAnalysis::analyze() - the AnalysisModel failed";
+      opserr << " at time " << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+    }
     the_Domain->revertToLastCommit();
     return -2;
   }
-  
+
   // check if domain has undergone change
   int stamp = the_Domain->hasDomainChanged();
-  if (stamp != domainStamp) {
-    domainStamp = stamp;	
-    if (this->domainChanged() < 0) {
-      opserr << "DirectIntegrationAnalysis::analyze() - domainChanged() failed\n";
+  if (this->anyDomainChange(stamp != domainStamp)) {
+    domainStamp = stamp;
+    if (this->worstStepResult(this->domainChanged(), "domainChanged()") < 0) {
+      if (this->reportHere())
+	opserr << "DirectIntegrationAnalysis::analyze() - domainChanged() failed"
+	       << this->whoFailed() << endln;
       return -1;
-    }	
+    }
   }
-  
-  if (theIntegrator->newStep(dT) < 0) {
-    opserr << "DirectIntegrationAnalysis::analyze() - the Integrator failed";
-    opserr << " at time " << the_Domain->getCurrentTime() << endln;
+
+  if (this->worstStepResult(theIntegrator->newStep(dT), "newStep()") < 0) {
+    if (this->reportHere()) {
+      opserr << "DirectIntegrationAnalysis::analyze() - the Integrator failed";
+      opserr << " at time " << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+    }
     the_Domain->revertToLastCommit();
     theIntegrator->revertToLastStep();
     return -2;
   }
-  
+
   result = theAlgorithm->solveCurrentStep();
+  result = this->worstStepResult(result, "solveCurrentStep()");
   if (result < 0) {
-    opserr << "DirectIntegrationAnalysis::analyze() - the Algorithm failed";
-    opserr << " at time " << the_Domain->getCurrentTime() << endln;
-    the_Domain->revertToLastCommit();	    
+    if (this->reportHere()) {
+      opserr << "DirectIntegrationAnalysis::analyze() - the Algorithm failed";
+      opserr << " at time " << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+    }
+    the_Domain->revertToLastCommit();
     theIntegrator->revertToLastStep();
     return -3;
-  }    
+  }
   
   // AddingSensitivity:BEGIN ////////////////////////////////////
 #ifdef _RELIABILITY
@@ -246,11 +264,14 @@ DirectIntegrationAnalysis::analyzeStep(double dT)
   // AddingSensitivity:END //////////////////////////////////////
   
   result = theIntegrator->commit();
+  result = this->worstStepResult(result, "commit()");
   if (result < 0) {
-    opserr << "DirectIntegrationAnalysis::analyze() - ";
-    opserr << "the Integrator failed to commit";
-    opserr << " at time " << the_Domain->getCurrentTime() << endln;
-    the_Domain->revertToLastCommit();	    
+    if (this->reportHere()) {
+      opserr << "DirectIntegrationAnalysis::analyze() - ";
+      opserr << "the Integrator failed to commit";
+      opserr << " at time " << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+    }
+    the_Domain->revertToLastCommit();
     theIntegrator->revertToLastStep();
     return -4;
   } 
@@ -292,19 +313,34 @@ DirectIntegrationAnalysis::eigen(int numMode, bool generalized, bool findSmalles
     int result = 0;
     Domain *the_Domain = this->getDomainPtr();
 
-    result = theAnalysisModel->eigenAnalysis(numMode, generalized, findSmallest);
+    // Every phase below agrees on its outcome across the processes before anyone acts on
+    // it - see Analysis::worstStepResult(). theEigenSOE->solve() is a collective in the
+    // multi-rank eigen, so a process returning early from an assembly failure leaves
+    // the others waiting inside ARPACK with no participant.
+    result = this->worstStepResult(theAnalysisModel->eigenAnalysis(numMode, generalized,
+								  findSmallest),
+				   "eigenAnalysis()");
+    if (result < 0) {
+      // this return value was assigned and never tested
+      if (this->reportHere())
+	opserr << "DirectIntegrationAnalysis::eigen() - the AnalysisModel failed"
+	       << this->whoFailed() << endln;
+      return -1;
+    }
 
     int stamp = the_Domain->hasDomainChanged();
 
-    if (stamp != domainStamp) {
+    if (this->anyDomainChange(stamp != domainStamp)) {
       domainStamp = stamp;
-  
-      result = this->domainChanged();
-      
+
+      result = this->worstStepResult(this->domainChanged(), "domainChanged()");
+
       if (result < 0) {
-	     opserr << "DirectIntegrationAnalysis::eigen() - domainChanged failed";
+	if (this->reportHere())
+	  opserr << "DirectIntegrationAnalysis::eigen() - domainChanged failed"
+		 << this->whoFailed() << endln;
 	return -1;
-      }	
+      }
     }
 
 
@@ -322,14 +358,32 @@ DirectIntegrationAnalysis::eigen(int numMode, bool generalized, bool findSmalles
     FE_EleIter &theEles = theAnalysisModel->getFEs();    
     FE_Element *elePtr;
 
+    int numFailedK = 0;
     while((elePtr = theEles()) != 0) {
       elePtr->zeroTangent();
       elePtr->addKtToTang(1.0);
       if (theEigenSOE->addA(elePtr->getTangent(0), elePtr->getID()) < 0) {
-	opserr << "WARNING DirectIntegrationAnalysis::eigen() -";
-	opserr << " failed in addA for ID " << elePtr->getID();	    
+	numFailedK++;
+	// local detail, so NOT gated: each process names the equations it could not
+	// assemble. First in full then a count, as in Domain::update.
+	if (numFailedK == 1) {
+	  opserr << "WARNING DirectIntegrationAnalysis::eigen() -";
+	  opserr << " failed in addA for ID " << elePtr->getID();
+	}
 	result = -2;
       }
+    }
+    if (numFailedK > 1)
+      opserr << "WARNING DirectIntegrationAnalysis::eigen() - addA failed for "
+	     << numFailedK << " elements on this process\n";
+
+    // used to be set and never read before the final `return 0`
+    result = this->worstStepResult(result, "eigen formK");
+    if (result < 0) {
+      if (this->reportHere())
+	opserr << "DirectIntegrationAnalysis::eigen() - the stiffness assembly failed"
+	       << this->whoFailed() << endln;
+      return -2;
     }
 
     //
@@ -337,37 +391,62 @@ DirectIntegrationAnalysis::eigen(int numMode, bool generalized, bool findSmalles
     //
 
     if (generalized == true) {
-      //      int result = 0;
-      FE_EleIter &theEles2 = theAnalysisModel->getFEs();    
-      while((elePtr = theEles2()) != 0) {     
+      // the `int result = 0;` that used to shadow the function's result here was
+      // already commented out in this copy; StaticAnalysis::eigen() still had it live
+      int numFailedM = 0;
+      FE_EleIter &theEles2 = theAnalysisModel->getFEs();
+      while((elePtr = theEles2()) != 0) {
 	elePtr->zeroTangent();
 	elePtr->addMtoTang(1.0);
 	if (theEigenSOE->addM(elePtr->getTangent(0), elePtr->getID()) < 0) {
-	  opserr << "WARNING DirectIntegrationAnalysis::eigen() -";
-	  opserr << " failed in addA for ID " << elePtr->getID();	    
+	  numFailedM++;
+	  if (numFailedM == 1) {
+	    opserr << "WARNING DirectIntegrationAnalysis::eigen() -";
+	    // said "addA" here, in the addM loop
+	    opserr << " failed in addM for element ID " << elePtr->getID();
+	  }
 	  result = -2;
 	}
       }
-      
+
       DOF_Group *dofPtr;
-      DOF_GrpIter &theDofs = theAnalysisModel->getDOFs();    
+      DOF_GrpIter &theDofs = theAnalysisModel->getDOFs();
       while((dofPtr = theDofs()) != 0) {
 	dofPtr->zeroTangent();
 	dofPtr->addMtoTang(1.0);
 	if (theEigenSOE->addM(dofPtr->getTangent(0),dofPtr->getID()) < 0) {
-	  opserr << "WARNING DirectIntegrationAnalysis::eigen() -";
-	  opserr << " failed in addM for ID " << dofPtr->getID();	    
+	  numFailedM++;
+	  if (numFailedM == 1) {
+	    opserr << "WARNING DirectIntegrationAnalysis::eigen() -";
+	    opserr << " failed in addM for DOF group ID " << dofPtr->getID();
+	  }
 	  result = -3;
 	}
       }
+
+      if (numFailedM > 1)
+	opserr << "WARNING DirectIntegrationAnalysis::eigen() - addM failed "
+	       << numFailedM << " times on this process\n";
     }
-    
-    // 
+
+    result = this->worstStepResult(result, "eigen formM");
+    if (result < 0) {
+      if (this->reportHere())
+	opserr << "DirectIntegrationAnalysis::eigen() - the mass assembly failed"
+	       << this->whoFailed() << endln;
+      return result;
+    }
+
+    //
     // solve for the eigen values & vectors
     //
 
-    if (theEigenSOE->solve(numMode, generalized, findSmallest) < 0) {
-	opserr << "WARNING DirectIntegrationAnalysis::eigen() - EigenSOE failed in solve()\n";
+    result = this->worstStepResult(theEigenSOE->solve(numMode, generalized, findSmallest),
+				   "eigenSolve()");
+    if (result < 0) {
+	if (this->reportHere())
+	  opserr << "WARNING DirectIntegrationAnalysis::eigen() - EigenSOE failed in solve()"
+		 << this->whoFailed() << endln;
 	return -4;
     }
 	
@@ -576,12 +655,12 @@ DirectIntegrationAnalysis::checkDomainChange(void)
 
   // check if domain has undergone change
   int stamp = the_Domain->hasDomainChanged();
-  if (stamp != domainStamp) {
-    domainStamp = stamp;	
+  if (this->anyDomainChange(stamp != domainStamp)) {
+    domainStamp = stamp;
     if (this->domainChanged() < 0) {
       opserr << "DirectIntegrationAnalysis::initialize() - domainChanged() failed\n";
       return -1;
-    }	
+    }
   }
 
   return 0;

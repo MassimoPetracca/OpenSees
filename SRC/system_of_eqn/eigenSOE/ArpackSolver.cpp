@@ -46,6 +46,7 @@
 #include <LinearSOE.h>
 
 #include <math.h>
+#include <stdlib.h>  // (f2c.h defines min/max/abs macros that break STL headers)
 #include <f2c.h>
 
 #include <stdio.h>
@@ -57,6 +58,10 @@
 #include <Integrator.h>
 #include <string.h>
 #include <Channel.h>
+
+#ifdef _PARALLEL_INTERPRETERS
+#include <mpi.h>
+#endif
 
 #include <fstream>
 #include <iostream>
@@ -73,7 +78,6 @@ ArpackSolver::ArpackSolver()
 {
   // do nothing here.    
 }
-
 
 ArpackSolver::~ArpackSolver()
 {
@@ -128,9 +132,6 @@ extern "C" int dseupd_(bool *rvec, char *howmny, logical *select, double *d, dou
 		       int *ldv, int *iparam, int *ipntr, double *workd, 
 		       double *workl, int *lworkl, int *info);
 #endif
-
-
-
 
 int
 ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
@@ -196,7 +197,6 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
     strcpy(which, "SM");
   }
 
-
   char bmat = 'G';
   char howmy = 'A';
   
@@ -215,11 +215,10 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
   
   int ido = 0;
   int ierr = 0;
-  
+
   int counter = 0;
 
-  while (1) { 
-      
+  while (1) {
 
 #ifdef _WIN32
     unsigned int sizeWhich =2;
@@ -236,20 +235,21 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
     dsaupd_(&ido, &bmat, &n, which, &nev, &tol, resid, &ncv, v, &ldv,
 	    iparam, ipntr, workd, workl, &lworkl, &info);
 #endif
-	
 
-	if (theArpackSOE->checkSameInt(ido) != 1) {
+    int idoSame = theArpackSOE->checkSameInt(ido);
+
+	if (idoSame != 1) {
 		opserr << "ArpackSolver::solve - ido values not the same .. ido, processID: "
 			<< ido << " " << processID << endln;
 		return -1;
 	}
 
     if (ido == -1) {
-    
-      myMv(n, &workd[ipntr[0]-1], &workd[ipntr[1]-1]); 
-    
+
+      myMv(n, &workd[ipntr[0]-1], &workd[ipntr[1]-1]);
+
       theVector.setData(&workd[ipntr[1] - 1], size);
-     
+
       if (processID > 0)
 	theSOE->zeroB();
       else
@@ -258,7 +258,7 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
       ierr = theSOE->solve();
       const Vector &X = theSOE->getX();
       theVector = X;
-      
+
       continue;
       
     } else if (ido == 1) {
@@ -274,14 +274,14 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
 	      theSOE->setB(theVector);
 
       theSOE->solve();
-   
+
       const Vector &X = theSOE->getX();
       theVector = X;
       //      theVector.setData(&workd[ipntr[1] - 1], size);
 
       continue;
       
-    } else if (ido == 2) {     
+    } else if (ido == 2) {
 
       myMv(n, &workd[ipntr[0]-1], &workd[ipntr[1]-1]);
 
@@ -289,7 +289,7 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
     }
     break;
   }
-  
+
   if (info < 0) {
     opserr << "ArpackSolver::Error with _saupd info = " << info << endln;
     switch(info) {
@@ -468,7 +468,6 @@ ArpackSolver::solve(int numModes, bool generalized, bool findSmallest)
   return 0;
 }
 
-
 int 
 ArpackSolver::getNCV(int n, int nev)
 {
@@ -485,7 +484,6 @@ ArpackSolver::getNCV(int n, int nev)
   
   return result;
 }
-
 
 void
 ArpackSolver::myMv(int n, double *v, double *result)
@@ -516,15 +514,38 @@ ArpackSolver::myMv(int n, double *v, double *result)
       return;
     }
 
+  } else if (theArpackSOE->Msparse) {
+
+    // C3: the same product, from the mass matrix assembled once in addM instead of
+    // by redoing the element loop. Equivalent by construction: EigenIntegrator::
+    // formM feeds addM from BOTH the FE_Elements and the DOF_Groups, i.e. exactly
+    // the two loops below.
+    //
+    // Compressed column, so a column of an equation this rank does not own is empty
+    // and contributes nothing - the result is the rank-local PARTIAL product, which
+    // is what the unconditional reduction further down expects. Do not "fix" that.
+    const int    *colstart = theArpackSOE->Mcolstart;
+    const int    *row      = theArpackSOE->Mrow;
+    const double *val      = theArpackSOE->Mval;
+
+    y.Zero();
+    for (int j = 0; j < n; j++) {
+      double xj = v[j];
+      if (xj == 0.0)
+	continue;
+      for (int k = colstart[j]; k < colstart[j+1]; k++)
+	result[row[k]] += val[k] * xj;
+    }
+
   } else {
 
     y.Zero();
 
     AnalysisModel *theAnalysisModel = theArpackSOE->theModel;
-    
+
     // loop over the FE_Elements
     FE_Element *elePtr;
-    FE_EleIter &theEles = theAnalysisModel->getFEs();    
+    FE_EleIter &theEles = theAnalysisModel->getFEs();
     while((elePtr = theEles()) != 0) {
       const Vector &b = elePtr->getM_Force(x, 1.0);
       y.Assemble(b, elePtr->getID(), 1.0);
@@ -534,14 +555,31 @@ ArpackSolver::myMv(int n, double *v, double *result)
     DOF_Group *dofPtr;
     DOF_GrpIter &theDofs = theAnalysisModel->getDOFs();
     while ((dofPtr = theDofs()) != 0) {
-      const Vector &a = dofPtr->getM_Force(x,1.0);      
+      const Vector &a = dofPtr->getM_Force(x,1.0);
       y.Assemble(a, dofPtr->getID(), 1.0);
     }
   }
 
-  // if paallel we have to merge the results
+  // Merge the processes' contributions. Note the scope: this is OUTSIDE the branch above,
+  // so it runs for BOTH the diagonal and the matrix-free path. That is what makes the
+  // per-process M of the diagonal branch correct - it is a partition (measured: 8 and 9
+  // nonzeros of 16 at np=2, the shared equation holding half on each side) and this
+  // reduction is what sums it. Anything that makes M global before this point counts the
+  // mass np times; the eigenvalues then come out at exactly lambda/np.
   int processID = theArpackSOE->processID;
   if (processID != -1) {
+#ifdef _PARALLEL_INTERPRETERS
+    // Same substitution as MumpsParallelSOE::getB (item #6): the rank-0 star moves
+    // O(P*n) and serialises on one process, the collective moves O(n log P) and every
+    // process ends with the same vector by construction. y aliases `result`, so the
+    // reduction is in place and needs no work area. Unconditional, exactly like the star
+    // it replaces: mDiagonal is decided per process, so a conditional reduction here
+    // would let the processes disagree about whether to communicate.
+    if (MPI_Allreduce(MPI_IN_PLACE, result, n, MPI_DOUBLE, MPI_SUM,
+		      MPI_COMM_WORLD) != MPI_SUCCESS)
+      opserr << "ArpackSolver::myMv() - MPI_Allreduce failed merging the mass product\n";
+#else
+    // Channel path, kept for the OpenSeesSP builds that have no MPI_COMM_WORLD here.
     Channel **theChannels = theArpackSOE->theChannels;
     int numChannels = theArpackSOE->numChannels;
     if (processID != 0) {
@@ -559,6 +597,7 @@ ArpackSolver::myMv(int n, double *v, double *result)
 	theChannels[i]->sendVector(0,0,y);
       }
     }
+#endif
   }
 }
     
@@ -570,7 +609,6 @@ ArpackSolver::myCopy(int n, double *v, double *result)
   }
 }
 
-
 int
 ArpackSolver::setEigenSOE(ArpackSOE &theArpSOE)
 {
@@ -578,7 +616,6 @@ ArpackSolver::setEigenSOE(ArpackSOE &theArpSOE)
   shift = theArpackSOE->getShift();
   return 0;
 }
-
 
 const Vector &
 ArpackSolver::getEigenvector(int mode)
@@ -591,12 +628,10 @@ ArpackSolver::getEigenvector(int mode)
   
   theVector.setData(&eigenvectors[index], size);
 
-
   
 
   return theVector;;  
 }
-
 
 double
 ArpackSolver::getEigenvalue(int mode)
@@ -614,7 +649,6 @@ ArpackSolver::getEigenvalue(int mode)
   }      
 }
 
-
 int
 ArpackSolver::setSize()
 {
@@ -628,7 +662,6 @@ ArpackSolver::setSize()
   
   return 0;
 }
-
 
 int    
 ArpackSolver::sendSelf(int commitTag, Channel &theChannel)

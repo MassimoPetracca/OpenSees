@@ -27,6 +27,11 @@
 //
 // Description: This file contains the implementation for MumpsParallelSOE
 
+#include <stdlib.h>
+#ifdef _PARALLEL_INTERPRETERS
+#include <mpi.h>
+#endif
+
 #include <MumpsParallelSOE.h>
 #include <MumpsParallelSolver.h>
 #include <Matrix.h>
@@ -38,19 +43,24 @@
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 
+
+// reported once per process: a system with no unknowns is a legitimate state,
+// not an error, but it should be visible in the log
+static bool opsMumpsZeroEqnNoted = false;
+
 MumpsParallelSOE::MumpsParallelSOE(MumpsParallelSolver &theSolvr, int matType)
-  :MumpsSOE(theSolvr, LinSOE_TAGS_MumpsParallelSOE, matType), 
-   processID(0), numChannels(0), theChannels(0), localCol(0), workArea(0), 
-   sizeWork(0), myB(0), myVectB(0)
+  :MumpsSOE(theSolvr, LinSOE_TAGS_MumpsParallelSOE, matType),
+   processID(0), numChannels(0), theChannels(0), localCol(0), workArea(0),
+   myB(0), myVectB(0), zeroEqnSystem(false), myBdirty(true), Bglobal(false)
 {
     theSolvr.setLinearSOE(*this);
 }
 
 
 MumpsParallelSOE::MumpsParallelSOE()
-  :MumpsSOE(LinSOE_TAGS_MumpsParallelSOE), 
-   processID(0), numChannels(0), theChannels(0), localCol(0), workArea(0), 
-   sizeWork(0), myB(0), myVectB(0)
+  :MumpsSOE(LinSOE_TAGS_MumpsParallelSOE),
+   processID(0), numChannels(0), theChannels(0), localCol(0), workArea(0),
+   myB(0), myVectB(0), zeroEqnSystem(false), myBdirty(true), Bglobal(false)
 {
 
 }
@@ -58,6 +68,7 @@ MumpsParallelSOE::MumpsParallelSOE()
 
 MumpsParallelSOE::~MumpsParallelSOE()
 {
+
   if (theChannels != 0)
     delete [] theChannels;
 
@@ -178,7 +189,7 @@ MumpsParallelSOE::setSize(Graph &theGraph)
   if (size > Bsize) { // we have to get space for the vectors
 
     if (B != 0) delete [] B;
-    if (X != 0) delete [] X;    
+    if (X != 0) delete [] X;
     if (myB != 0) delete [] myB;
     if (workArea != 0) delete [] workArea;
     if (colStartA != 0)  delete [] colStartA;
@@ -187,10 +198,25 @@ MumpsParallelSOE::setSize(Graph &theGraph)
     B = new double[size];
     X = new double[size];
     myB = new double[size];
+    colStartA = new int[size+1];
+
+    // workArea is the receive buffer of the rank-0 star in getB(), and that star
+    // now exists only under _PARALLEL_PROCESSING: in an OpenSeesMP build getB()
+    // reduces with MPI_Allreduce and nothing ever reads workArea. Allocating it
+    // there costs size doubles per rank - the same as B, X and myB, so a quarter
+    // of this SOE's vector memory - for nothing. At N=64 that is 6.5 MB a rank,
+    // and it is per rank, not per job.
+#ifndef _PARALLEL_INTERPRETERS
     workArea = new double[size];
-    colStartA = new int[size+1]; 
-    
-    if (B == 0 || X == 0 || colStartA == 0 || workArea == 0 || myB == 0) {
+    if (workArea == 0) {
+      opserr << "WARNING MumpsParallelSOE::setSize - ran out of memory for the"
+	     << " work area (size " << size << ")\n";
+      size = 0; Bsize = 0;
+      return -1;
+    }
+#endif
+
+    if (B == 0 || X == 0 || colStartA == 0 || myB == 0) {
       opserr << "WARNING MumpsSOE::MumpsSOE :";
       opserr << " ran out of memory for vectors (size) (";
       opserr << size << ") \n";
@@ -209,15 +235,52 @@ MumpsParallelSOE::setSize(Graph &theGraph)
     myB[j] = 0;
   }
 
-  // create new Vectors objects
-  if (size != oldSize) {
+  // B and myB are both zero here, so B does hold their sum - but the arrays may
+  // also have just been reallocated, so claim nothing and let the next consumer
+  // merge once
+  myBdirty = true;
+  Bglobal = false;
+
+  // create new Vectors objects. The (vectX == 0) terms matter when size is 0:
+  // size == oldSize == 0 would otherwise leave them unallocated, and
+  // getX()/getB() are FATAL on a null pointer.
+  if (size != oldSize || vectX == 0 || vectB == 0 || myVectB == 0) {
     if (vectX != 0) delete vectX;
     if (vectB != 0) delete vectB;
     if (myVectB != 0) delete myVectB;
-    
+
     vectX = new Vector(X,size);
-    vectB = new Vector(B,size);	
+    vectB = new Vector(B,size);
     myVectB = new Vector(myB, size);
+  }
+
+  //
+  // a system with no unknowns
+  //
+  // Every DOF of the model is prescribed, so the constraint handler has
+  // eliminated all of them: a staged analysis step in which nothing is active,
+  // or a displacement-controlled single-element test. The system A x = b has no
+  // unknowns and its unique solution is the empty vector - there is nothing to
+  // factor and nothing to solve. The prescribed values themselves are enforced
+  // by the constraint handler (applyLoad -> enforceSPs), not by this solve, so
+  // the step still produces the correct displacements, element states and
+  // reactions.
+  //
+  // MUMPS must not be entered at all here: id.n = 0 returns INFO(1) = -16
+  // ("N out of range"). size is the reduced global equation count and is
+  // therefore identical on every rank, so this branch is taken collectively and
+  // the ranks stay in step.
+  //
+  zeroEqnSystem = (size == 0);
+  if (zeroEqnSystem) {
+    factored = false;
+    if (opsMumpsZeroEqnNoted == false) {
+      opsMumpsZeroEqnNoted = true;
+      opserr << "MumpsParallelSOE::setSize - the model has no free equations: "
+	     << "all DOFs are prescribed by the constraint handler. The linear "
+	     << "solve is skipped; prescribed values are still enforced.\n";
+    }
+    return result;
   }
 
   // fill in colStartA and rowA
@@ -298,6 +361,12 @@ MumpsParallelSOE::setSize(Graph &theGraph)
       colA[count++] = i;
   }
 
+  // this rank builds its own rowA above, so it owes addA() the same ascending
+  // invariant the base class checks - the columns of the dofs this rank does not
+  // own stay empty, which the merge in addA() handles as an immediate miss
+  if (this->verifyRowAOrder() < 0)
+    return -1;
+
   LinearSOESolver *theSolvr = this->getSolver();
 
   int solverOK = theSolvr->setSize();
@@ -316,46 +385,102 @@ MumpsParallelSOE::solve(void)
 {
   int resSolver = 0;
 
+  // no unknowns: the empty vector is the solution, see setSize(). Keyed on
+  // zeroEqnSystem, not on size: this rank must have been through setSize(), so
+  // that every rank agrees and none is left waiting in a collective.
+  if (zeroEqnSystem)
+    return 0;
+
   //
   // if subprocess send B, solve and recv back X and B
   //
 
+
+#ifdef _PARALLEL_INTERPRETERS
+
+  // OpenSeesMP: solve() is entered by every rank in lockstep and the MUMPS
+  // job=3 below is collective on MPI_COMM_WORLD, so the star exchange over
+  // Channels can be replaced by two tree collectives with the same final
+  // state on every rank: B = sum of the locally assembled myB (the sum is
+  // exactly what the old rank-0 gather computed and shipped back), X = the
+  // solution broadcast from the host.
+
+  // ... and only when myB has moved since the last merge. In a Newton iteration
+  // the convergence test has usually just merged this same myB through getB(),
+  // and re-summing it would be a second full exchange of identical data.
+  //
+  // And only as far as the host. MumpsParallelSolver reads B on rank 0 alone -
+  // "if (rank == 0) { X[i] = B[i]; id.rhs = X; }" - so what solve() owes is the sum
+  // ON RANK 0, not on every rank. MPI_Reduce instead of MPI_Allreduce: half the
+  // volume and no return leg. Bglobal records that the other ranks were left
+  // behind, so a getB() that follows still gets a correct vector (one Bcast, which
+  // is the leg the Allreduce was paying for anyway).
+  //
+  // Better still when one rank holds the whole RHS and it is the host: then there is
+  // nothing to communicate at all. That is not a special case, it is the modal
+  // analysis - ArpackSolver installs the global vector with setB() on rank 0 and
+  // calls zeroB() on the others, once per backsolve.
+  int plan = this->planMergeOfB(false);
+
+  if (plan == MERGE_LOCAL) {
+    if (processID == 0)
+      for (int i = 0; i < size; i++)
+	B[i] = myB[i];
+    myBdirty = false;
+    Bglobal = false;
+  } else if (plan == MERGE_REDUCE) {
+    MPI_Reduce(myB, B, size, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    myBdirty = false;
+    Bglobal = false;
+  }
+
+
+  resSolver = this->LinearSOE::solve();
+
+  if (resSolver == 0) {
+    MPI_Bcast(X, size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (processID != 0)
+      factored = true;
+  }
+
+#else
+
   if (processID != 0) {
 
     // send B
-    Channel *theChannel = theChannels[0];
+      Channel *theChannel = theChannels[0];
     theChannel->sendVector(0, 0, *myVectB);
-
+  
     resSolver =  this->LinearSOE::solve();
-
+  
     if (resSolver == 0) {
       // receive X,B and result
       theChannel->recvVector(0, 0, *vectX);
       theChannel->recvVector(0, 0, *vectB);
       factored = true;
     }
-  } 
+    }
 
   //
   // if main process, recv B & A from all, solve and send back X, B & result
   //
-  
+
   else {
-    
+
     // add P0 contribution to B
-    *vectB = *myVectB;
-    
-    // receive B 
+      *vectB = *myVectB;
+
+    // receive B
     for (int j=0; j<numChannels; j++) {
       // get X & add
       Channel *theChannel = theChannels[j];
       theChannel->recvVector(0, 0, *vectX);
       *vectB += *vectX;
     }
-
+  
     // solve
     resSolver = this->LinearSOE::solve();
-
+  
     // send results back
     if (resSolver == 0) {
       for (int j=0; j<numChannels; j++) {
@@ -364,10 +489,12 @@ MumpsParallelSOE::solve(void)
 	theChannel->sendVector(0, 0, *vectB);
       }
     }
-  } 
-  
+    }
+
+#endif
+
   return resSolver;
-}	
+}
 
 
 
@@ -404,7 +531,10 @@ MumpsParallelSOE::addB(const Vector &v, const ID &id, double fact)
 	myB[pos] += v(i) * fact;
     }
   }
-   
+
+  myBdirty = true;
+  Bglobal = false;
+
   return 0;
 }
 
@@ -439,21 +569,133 @@ MumpsParallelSOE::setB(const Vector &v, double fact)
   }
 
    //opserr << "MumpsParallelSOE::setB() - end()\n";
+  myBdirty = true;
+  Bglobal = false;
   return 0;
 }
 
-void 
+void
 MumpsParallelSOE::zeroB(void)
 {
   double *Bptr = myB;
   for (int i=0; i<size; i++)
     *Bptr++ = 0;
+
+  myBdirty = true;
+  Bglobal = false;
 }
+
+
+int
+MumpsParallelSOE::planMergeOfB(bool needGlobal)
+{
+#ifdef _PARALLEL_INTERPRETERS
+
+  // Four integers, one MPI_SUM, decided collectively - the same reason
+  // the #0/#0b lesson: the merge is a collective and a
+  // rank that took a different branch would leave the others waiting.
+  //
+  //   d[0]  has this rank written myB since the last merge?
+  //   d[1]  is this rank's myB anything other than identically zero?
+  //   d[2]  rank+1 if so, 0 otherwise
+  //   d[3]  does this rank believe B is NOT the global sum yet?
+  //
+  // After the sum: d[1] counts the ranks that actually carry a contribution, and
+  // when that count is 1 the value d[2]-1 names the one rank that does. The test is
+  // exact - it reads the data, it does not guess - and the scan that feeds it stops
+  // at the first nonzero, so it costs O(1) whenever there IS a contribution and
+  // O(size) compares only on the all-zero ranks, against the size*8 bytes of
+  // network it removes. d[3] is in the same reduction so that Bglobal is agreed
+  // rather than assumed: the flag is cleared by addB/setB/zeroB, and nothing
+  // guarantees every rank calls one of them in a given iteration.
+  int localNonzero = 0;
+  if (needGlobal == false) {
+    for (int i = 0; i < size; i++)
+      if (myB[i] != 0.0) { localNonzero = 1; break; }
+  }
+
+  int d[4];
+  d[0] = myBdirty ? 1 : 0;
+  d[1] = localNonzero;
+  d[2] = localNonzero ? (processID + 1) : 0;
+  d[3] = Bglobal ? 0 : 1;
+
+  if (MPI_Allreduce(MPI_IN_PLACE, d, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD)
+      != MPI_SUCCESS) {
+    opserr << "MumpsParallelSOE::planMergeOfB - MPI_Allreduce failed; falling back "
+	   << "to the full merge\n";
+    return MERGE_ALL;
+  }
+
+  const bool anyDirty = (d[0] != 0);
+  const bool anyStale = (d[3] != 0);
+
+  if (needGlobal) {
+    if (anyDirty)  return MERGE_ALL;
+    if (anyStale)  return MERGE_BCAST;   // rank 0 has the sum, the others do not
+    return MERGE_NONE;
+  }
+
+  if (!anyDirty)
+    return MERGE_NONE;                   // B on the host is as merged as it was
+
+  // Only rank 0's copy has to be right, so the cheap case is "rank 0 already holds
+  // the whole sum". Two ways that happens: nobody contributes anything (d[1] == 0,
+  // the sum is zero and rank 0's zero myB is exactly it) or exactly one rank
+  // contributes and it is rank 0 - which is what ArpackSolver does on every
+  // backsolve, setB() on the host and zeroB() everywhere else.
+  if (d[1] == 0 || (d[1] == 1 && d[2] == 1))
+    return MERGE_LOCAL;
+
+  return MERGE_REDUCE;
+
+#else
+
+  return needGlobal ? MERGE_ALL : MERGE_REDUCE;
+
+#endif
+}
+
 
 
 const Vector &
 MumpsParallelSOE::getB(void)
 {
+  // no unknowns: nothing to merge across the ranks, see setSize()
+  if (zeroEqnSystem)
+    return *vectB;
+
+#ifdef _PARALLEL_INTERPRETERS
+
+  // Same reasoning as solve(): getB() is entered by every rank in lockstep - it
+  // is called by the convergence tests that measure the unbalance, by the
+  // accelerators and by the line searches, all driven by the same algorithm on
+  // every rank - so the star exchange over the Channels can be replaced by the
+  // tree collective that computes the same sum. This is the form
+  // ClusterPardisoSOE::getB() already uses.
+  //
+  // Skipped when nothing has written myB since the last merge: B is then still
+  // the sum every rank agreed on. solve() carries the same guard, so between the
+  // two of them the RHS crosses the network once per iteration instead of twice.
+  //
+  // Third case since solve() stopped merging beyond the host: myB is clean but B
+  // is the sum on rank 0 only. The callers of getB() are on every rank, so the sum
+  // has to travel the last leg - and a Bcast is exactly that leg, half the volume
+  // of the Allreduce, because rank 0 already holds the total.
+  {
+    int plan = this->planMergeOfB(true);
+
+    if (plan == MERGE_ALL) {
+      MPI_Allreduce(myB, B, size, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+      myBdirty = false;
+      Bglobal = true;
+    } else if (plan == MERGE_BCAST) {
+      MPI_Bcast(B, size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+      Bglobal = true;
+    }
+  }
+
+#else
 
   if (processID != 0) {
     Channel *theChannel = theChannels[0];
@@ -461,7 +703,7 @@ MumpsParallelSOE::getB(void)
     // send B & recv merged B
     theChannel->sendVector(0, 0, *myVectB);
     theChannel->recvVector(0, 0, *vectB);
-  } 
+  }
 
   //
   // if main process, recv B & A from all, solve and send back X, B & result
@@ -486,13 +728,15 @@ MumpsParallelSOE::getB(void)
       Channel *theChannel = theChannels[j];
       theChannel->sendVector(0, 0, *vectB);
     }
-  } 
+  }
+
+#endif
 
   return *vectB;
-}	
+}
 
-  
-int 
+
+int
 MumpsParallelSOE::sendSelf(int commitTag, Channel &theChannel)
 {
   int sendID =0;

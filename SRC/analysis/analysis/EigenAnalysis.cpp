@@ -106,7 +106,7 @@ EigenAnalysis::analyze(int numModes)
     // occur in a commit() in a domaindecomp with load balancing
     // this must now be inside the loop
     int stamp = the_Domain->hasDomainChanged();
-    if (stamp != domainStamp) {
+    if (this->anyDomainChange(stamp != domainStamp)) {
 	domainStamp = stamp;
 	result = this->domainChanged();
 	if (result < 0) {

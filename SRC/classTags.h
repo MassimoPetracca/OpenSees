@@ -1142,6 +1142,7 @@
 #define LinSOE_TAGS_PFEMCompressibleLinSOE 28
 #define LinSOE_TAGS_PFEMQuasiLinSOE 29
 #define LinSOE_TAGS_PFEMDiaLinSOE 30
+#define LinSOE_TAGS_ClusterPardisoSOE 31
 #define LinSOE_TAGS_SparsePythonCompressedLinSOE 100101
 #define LinSOE_TAGS_SparsePythonCOOLinSOE        100102
 #define LinSOE_TAGS_PARDISOGenLinSOE 99990
@@ -1180,6 +1181,7 @@
 #define SOLVER_TAGS_CuSP                                31
 #define SOLVER_TAGS_PFEMQuasiSolver                     32
 #define SOLVER_TAGS_PFEMDiaSolver                       33
+#define SOLVER_TAGS_ClusterPardisoSolver                34
 #define SOLVER_TAGS_SparsePythonCompressedLinSolver     100201
 #define SOLVER_TAGS_SparsePythonCOOLinSolver            100202
 

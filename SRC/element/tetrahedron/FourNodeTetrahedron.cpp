@@ -997,7 +997,8 @@ FourNodeTetrahedron::update(void)
 
   int i, j, k, p, q ;
   int success ;
-  
+  int worst = 0 ;   // worst material code over the Gauss points, see the end
+
   static double volume ;
 
   static double xsj ;  // determinant jacaobian matrix 
@@ -1139,14 +1140,20 @@ FourNodeTetrahedron::update(void)
 
     } // end for j
     
-    //send the strain to the material 
+    //send the strain to the material
     success = materialPointers[i]->setTrialStrain( strain ) ;
 
-    // opserr << "8NB> strain = " << strain << endln;
+    // The code was assigned here and never read, so a material that refused the
+    // strain - a return mapping that did not converge, an integration-error
+    // control that rejects the step - was invisible to the analysis. Worst-wins
+    // over the Gauss points, not a sum: a sum lets a positive cancel a negative
+    // and turns two codes into a third that no material ever returned.
+    if ( success != 0 && ( worst == 0 || success < worst ) )
+      worst = success ;
 
-  } //end for i gauss loop 
+  } //end for i gauss loop
 
-  return 0;
+  return worst;
 }
 
 

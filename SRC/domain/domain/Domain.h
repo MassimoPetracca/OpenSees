@@ -38,6 +38,7 @@
 
 #include <OPS_Stream.h>
 #include <Vector.h>
+#include <unordered_map>
 
 class Element;
 class Node;
@@ -281,6 +282,18 @@ class Domain
     TaggedObjectStorage  *theElements;
     TaggedObjectStorage  *theNodes;
     TaggedObjectStorage  *theSPs;    
+    // (nodeTag, dof) -> the SP_Constraint that already constrains it, so
+    // addSP_Constraint() can reject a duplicate without walking theSPs. Kept in
+    // step with theSPs by the only three methods that mutate it:
+    // addSP_Constraint(SP_Constraint *), removeSP_Constraint(int) and
+    // clearAll(). The duplicate check keeps (nodeTag, dof) unique, so the value
+    // identifies the constraint uniquely.
+    // removeSP_Constraint(node, dof, patternTag) needs no separate handling: it
+    // looks the tag up and delegates to removeSP_Constraint(int). The
+    // constructors that take an external TaggedObjectStorage would start with an
+    // empty index over a populated container, but they already require the
+    // storage to be empty and have no caller in this tree.
+    std::unordered_map<long long, SP_Constraint *> theSPsIndex;
     TaggedObjectStorage  *thePCs;    
     TaggedObjectStorage  *theMPs;    
     TaggedObjectStorage  *theEQs;    

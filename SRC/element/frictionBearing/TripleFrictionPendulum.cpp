@@ -434,8 +434,27 @@ int TripleFrictionPendulum::revertToStart()
 }
 
 
+// Worst-wins accumulator for the codes this element is given: the first nonzero
+// code, then whichever is most negative. NOT a sum - a sum lets a positive code
+// cancel a negative one and turns two codes into a third that nobody returned.
+// Same convention as Domain::update and the solid elements.
+static inline void
+TFP_worst(int &worst, int code)
+{
+  if (code != 0 && (worst == 0 || code < worst))
+    worst = code;
+}
+
 int TripleFrictionPendulum::update()
 {
+    // Everything this update can be told about a failure ends up here and is
+    // RETURNED: the four uniaxial materials, the three friction models, and the
+    // sliding solve below. Until now the function returned a literal 0, so a
+    // bearing that could not solve its own kinematics was invisible to the
+    // analysis - and in a parallel run there was nothing for the processes to
+    // agree on (see Analysis::worstStepResult).
+    int worst = 0;
+
     // get current time
     Domain *theDomain = this->getDomain();
     double time = theDomain->getCurrentTime();
@@ -477,7 +496,7 @@ int TripleFrictionPendulum::update()
     // 1) get axial force and stiffness in vertical direction
     double DzOld = theMaterials[0]->getStrain();
     double Vz = vtrialNd2(2) - vtrialNd1(2);
-    theMaterials[0]->setTrialStrain(Dz, Vz);
+    TFP_worst(worst, theMaterials[0]->setTrialStrain(Dz, Vz));
     Fvert = theMaterials[0]->getStress();
     Kvert = theMaterials[0]->getTangent();
     
@@ -485,7 +504,7 @@ int TripleFrictionPendulum::update()
     if (Fvert >= 0.0) {
         Kvert = theMaterials[0]->getInitialTangent();
         if (Fvert > Kvert*DBL_EPSILON) {
-            theMaterials[0]->setTrialStrain(DzOld, 0.0);
+            TFP_worst(worst, theMaterials[0]->setTrialStrain(DzOld, 0.0));
             Kvert = Kvt;
         }
         Fvert = -MinFv;
@@ -509,9 +528,9 @@ int TripleFrictionPendulum::update()
     
     // get coefficients of friction
     double Fy1cr, Fy3cr, Fy5cr, dFy1, dFy3, dFy5;
-    theFrnMdls[0]->setTrial(Wavg, v1Fact*Vel1Avg);
-    theFrnMdls[1]->setTrial(Wavg, v3Fact*Vel3Avg);
-    theFrnMdls[2]->setTrial(Wavg, v5Fact*Vel5Avg);
+    TFP_worst(worst, theFrnMdls[0]->setTrial(Wavg, v1Fact*Vel1Avg));
+    TFP_worst(worst, theFrnMdls[1]->setTrial(Wavg, v3Fact*Vel3Avg));
+    TFP_worst(worst, theFrnMdls[2]->setTrial(Wavg, v5Fact*Vel5Avg));
     Fy1cr = theFrnMdls[0]->getFrictionCoeff();
     Fy3cr = theFrnMdls[1]->getFrictionCoeff();
     Fy5cr = theFrnMdls[2]->getFrictionCoeff();
@@ -519,6 +538,10 @@ int TripleFrictionPendulum::update()
     dFy1 = Fy1cr - Fy1pr; dFy3 = Fy3cr - Fy3pr; dFy5 = Fy5cr - Fy5pr;
     Fy1 = Fy1pr; Fy3 = Fy3pr; Fy5 = Fy5pr;
     
+    // Conv is a MEMBER, written by TFPElement. On a step whose incremental
+    // displacement is zero the loop below never runs, and the check after it
+    // would then read the verdict of the PREVIOUS step. Start from converged.
+    Conv = true;
     int nDiv = 0; int nWhileIter = 0;
     double TolOriginal = Tol;
     while ((nDiv < 10) && (ErrDisp.Norm() > TolOriginal)) {
@@ -556,28 +579,38 @@ int TripleFrictionPendulum::update()
         Vel3Avg = v3.Norm();
         Vel5Avg = v5.Norm();
     }
-    if (nDiv == 10) {
-        if ((!Conv) || (Tol < ErrDisp.Norm())) {
-            opserr << "Warning: isolator " << this->getTag() << " has not converged, ErrDisp = "<< ErrDisp << endln;
-        }
+    // The sliding solve is over: either u reached utrial within TolOriginal, or
+    // the sub-stepping ran out. Reporting the second case is the only reason this
+    // element takes a tolerance at all.
+    //
+    // What stood here tested `nDiv == 10`, but nDiv is incremented ONLY inside
+    // `(!Conv) && (nDiv < 7)`, so it never gets past 7: the warning was
+    // unreachable and no run has ever printed it. The live test is the loop's own
+    // criterion - the last TFPElement call did not converge, or u never got to
+    // utrial - and the outcome is now returned, not only printed.
+    if ((!Conv) || (ErrDisp.Norm() > TolOriginal)) {
+        opserr << "WARNING TripleFrictionPendulum::update() - isolator "
+               << this->getTag() << " has not converged, ErrDisp = "
+               << ErrDisp << endln;
+        TFP_worst(worst, -1);
     }
     
     // 3) get moment and stiffness about vertical direction
-    theMaterials[1]->setTrialStrain(r(2), rdot(2));
+    TFP_worst(worst, theMaterials[1]->setTrialStrain(r(2), rdot(2)));
     TorqZ = theMaterials[1]->getStress();
     KrotZ = theMaterials[1]->getTangent();
     
     // 4) get moment and stiffness about horizontal 1 direction
-    theMaterials[2]->setTrialStrain(r(0), rdot(0));
+    TFP_worst(worst, theMaterials[2]->setTrialStrain(r(0), rdot(0)));
     TorqX = theMaterials[2]->getStress();
     KrotX = theMaterials[2]->getTangent();
     
     // 5) get moment and stiffness about horizontal 2 direction
-    theMaterials[3]->setTrialStrain(r(1), rdot(1));
+    TFP_worst(worst, theMaterials[3]->setTrialStrain(r(1), rdot(1)));
     TorqY = theMaterials[3]->getStress();
     KrotY = theMaterials[3]->getTangent();
     
-    return 0;
+    return worst;
 }
 
 

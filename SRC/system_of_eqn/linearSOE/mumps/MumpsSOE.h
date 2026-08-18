@@ -80,6 +80,11 @@ class MumpsSOE : public LinearSOE
     friend class MumpsParallelSolver;    
 
   protected:
+    // addA() locates its entries by merging into the rows of a column, which
+    // requires those rows to be ascending. Every setSize() of this family must
+    // call this before returning, subclasses included.
+    int verifyRowAOrder(void);
+
     int size;            // order of A
     int nnz;             // number of non-zeros in A
     double *A, *B, *X;   // 1d arrays containing coefficients of A, B and X

@@ -10,10 +10,12 @@ target_sources(OPS_Analysis
       DOF_Numberer.cpp
       PlainNumberer.cpp
       ParallelNumberer.cpp
+      EquationPartition.cpp
     PUBLIC
       DOF_Numberer.h
       PlainNumberer.h
       ParallelNumberer.h
+      EquationPartition.h
 )
 
 #target_include_directories(OPS_Analysis PUBLIC ${CMAKE_CURRENT_LIST_DIR})

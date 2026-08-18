@@ -27,6 +27,11 @@
 //
 // Description: This file contains the class definition for ArpackSOE
 
+#ifdef _PARALLEL_INTERPRETERS
+#include <mpi.h>
+#endif
+
+#include <stdlib.h>
 #include <ArpackSOE.h>
 #include <ArpackSolver.h>
 #include <Matrix.h>
@@ -44,7 +49,9 @@
 
 ArpackSOE::ArpackSOE(double s)
 :EigenSOE(EigenSOE_TAGS_ArpackSOE),
- M(0), Msize(0), mDiagonal(false), shift(s), theModel(0), theSOE(0),
+ M(0), Msize(0), mDiagonal(false),
+ Mcolstart(0), Mrow(0), Mval(0), Mnnz(0), Msparse(false),
+ shift(s), theModel(0), theSOE(0),
  processID(-1), numChannels(0), theChannels(0), localCol(0), sizeLocal(0)
 {
   ArpackSolver *theSolvr = new ArpackSolver();
@@ -65,6 +72,132 @@ ArpackSOE::getNumEqn(void) const
 ArpackSOE::~ArpackSOE()
 {
   if (M != 0) delete [] M;
+  this->freeSparseM();
+  if (theChannels != 0) delete [] theChannels;
+}
+
+// Assemble M once instead of redoing the element loop per Lanczos step. This is a
+// FEATURE switch, not a diagnostic: it buys latency and pays memory, so which way it
+// should default is a modelling decision. Measured on the N=24 cube (45000 DOF, 20
+// modes): the mass product goes 10x faster and the whole modal analysis 1.3-2.3x,
+// against Mnnz*(8+4) + (Msize+1)*4 extra bytes a rank - about +50% on this SOE's
+// matrix memory, ~20 MB at 45000 DOF but ~3 GB at n=1e7.
+static bool opsEigenMsparseOn(void) {
+  static const bool on = (getenv("OPS_EIGEN_MSPARSE") != 0);
+  return on;
+}
+
+void
+ArpackSOE::freeSparseM(void)
+{
+  if (Mcolstart != 0) { delete [] Mcolstart; Mcolstart = 0; }
+  if (Mrow != 0)      { delete [] Mrow;      Mrow = 0; }
+  if (Mval != 0)      { delete [] Mval;      Mval = 0; }
+  Mnnz = 0;
+  Msparse = false;
+}
+
+int
+ArpackSOE::sparseMposition(int row, int col) const
+{
+  // rows are stored ascending within a column, so the scan can stop early - the
+  // same shape as MumpsSOE::addA, whose cost this mirrors
+  for (int k = Mcolstart[col]; k < Mcolstart[col+1]; k++) {
+    if (Mrow[k] == row)
+      return k;
+    if (Mrow[k] > row)
+      return -1;
+  }
+  return -1;
+}
+
+int
+ArpackSOE::buildSparseM(Graph &theGraph, int size)
+{
+  this->freeSparseM();
+
+  if (size <= 0)
+    return 0;
+
+  // Pass 1: one slot for the diagonal plus one per adjacency entry. Columns of
+  // equations this rank does not own have no vertex in the local graph and stay
+  // empty - which is what keeps M a per-rank PARTIAL.
+  Mcolstart = new int[size+1];
+  if (Mcolstart == 0) {
+    opserr << "ArpackSOE::buildSparseM - out of memory for the column pointers\n";
+    return -1;
+  }
+
+  Mcolstart[0] = 0;
+  for (int a = 0; a < size; a++) {
+    int len = 0;
+    Vertex *theVertex = theGraph.getVertexPtr(a);
+    if (theVertex != 0)
+      len = 1 + theVertex->getAdjacency().Size();
+    Mcolstart[a+1] = Mcolstart[a] + len;
+  }
+  Mnnz = Mcolstart[size];
+
+  Mrow = new int[(Mnnz > 0) ? Mnnz : 1];
+  Mval = new double[(Mnnz > 0) ? Mnnz : 1];
+  if (Mrow == 0 || Mval == 0) {
+    opserr << "ArpackSOE::buildSparseM - out of memory for " << Mnnz
+	   << " nonzeros\n";
+    this->freeSparseM();
+    return -1;
+  }
+
+  // Pass 2: fill the rows, kept ascending by insertion so sparseMposition() can
+  // stop early. Columns are short (mean 36 on the N=24 cube), so insertion is the
+  // right sort here.
+  for (int a = 0; a < size; a++) {
+    Vertex *theVertex = theGraph.getVertexPtr(a);
+    if (theVertex == 0)
+      continue;
+    int lo = Mcolstart[a];
+    int at = lo;
+    Mrow[at++] = theVertex->getTag();       // diagonal first, then insert the rest
+    const ID &adj = theVertex->getAdjacency();
+    int adjSize = adj.Size();
+    for (int i = 0; i < adjSize; i++) {
+      int row = adj(i);
+      int j = at - 1;
+      while (j >= lo && Mrow[j] > row) {
+	Mrow[j+1] = Mrow[j];
+	j--;
+      }
+      Mrow[j+1] = row;
+      at++;
+    }
+  }
+
+  for (int k = 0; k < Mnnz; k++)
+    Mval[k] = 0.0;
+
+  Msparse = true;
+  return 0;
+}
+
+int
+ArpackSOE::setProcessID(int processTag)
+{
+  processID = processTag;
+  return 0;
+}
+
+int
+ArpackSOE::setChannels(int nChannels, Channel **theC)
+{
+  numChannels = nChannels;
+
+  if (theChannels != 0)
+    delete [] theChannels;
+
+  theChannels = new Channel *[numChannels];
+  for (int i=0; i<numChannels; i++)
+    theChannels[i] = theC[i];
+
+  return 0;
 }
 
 int 
@@ -159,6 +292,18 @@ ArpackSOE::setSize(Graph &theGraph)
       Msize = size;
   }
 
+  // C3: the sparse pattern has to be rebuilt whenever the graph changes, not only
+  // when the size changes - a domain change can keep the equation count and move
+  // the connectivity. Cheap relative to what it saves, and it is per setSize, not
+  // per solve. Failure is not fatal: Msparse stays false and myMv keeps the element
+  // loop.
+  if (opsEigenMsparseOn()) {
+    if (this->buildSparseM(theGraph, size) < 0)
+      opserr << "WARNING ArpackSOE::setSize - sparse M unavailable, the mass "
+	     << "product falls back to the element loop\n";
+  } else
+    this->freeSparseM();
+
   //
   // invoke setSize() on the Solver
   //
@@ -217,10 +362,45 @@ ArpackSOE::addM(const Matrix &m, const ID &id, double fact)
   if (res < 0)
     return res;
 
+  int idSize = id.Size();
+
+  // C3: scatter into the assembled sparse M. Unconditional - it must run for every
+  // contribution, including those after mDiagonal has been cleared, which is where
+  // the diagonal bookkeeping below stops. Only the entries whose BOTH indices are
+  // in range are taken, exactly like the diagonal path: a negative equation number
+  // is a constrained dof and carries no mass term.
+  if (Msparse) {
+    for (int i=0; i<idSize; i++) {
+      int locI = id(i);
+      if (locI < 0 || locI >= Msize)
+	continue;
+      for (int j=0; j<idSize; j++) {
+	int locJ = id(j);
+	if (locJ < 0 || locJ >= Msize)
+	  continue;
+	if (m(i,j) == 0.0)
+	  continue;
+	int k = this->sparseMposition(locI, locJ);
+	if (k >= 0)
+	  Mval[k] += m(i,j);
+	else {
+	  // The graph that built this pattern is the same one addA works from, so
+	  // a miss means the two have gone out of step. Report it - silently
+	  // dropping a mass term would move the eigenvalues and look plausible.
+	  opserr << "ArpackSOE::addM - no slot for (" << locI << "," << locJ
+		 << ") in the sparse mass pattern; disabling it and falling back "
+		 << "to the element loop\n";
+	  this->freeSparseM();
+	  break;
+	}
+      }
+      if (Msparse == false)
+	break;
+    }
+  }
+
   if (mDiagonal == false)
     return  res;
-
-  int idSize = id.Size();
   for (int i=0; i<idSize; i++) {
     int locI = id(i);
     if (locI >= 0 && locI < Msize) {
@@ -256,6 +436,10 @@ ArpackSOE::zeroM(void)
 
   for (int i=0; i<Msize; i++)
     M[i] = 0;
+
+  if (Msparse)
+    for (int k=0; k<Mnnz; k++)
+      Mval[k] = 0.0;
 }
 
 
@@ -392,9 +576,33 @@ ArpackSOE::checkSameInt(int value)
 	if (processID == -1)
 		return 1;
 
+#ifdef _PARALLEL_INTERPRETERS
+
+	// The last rank-0 star on the eigen path, and the one that runs most often:
+	// ArpackSolver calls this once per Lanczos iteration to check that every rank
+	// got the same `ido` out of its own dsaupd (368 times on the N=24 cube, against
+	// 279 mass products and 88 backsolves). Two ints and one collective replace
+	// O(P) messages through a serial owner, and every rank ends with the same
+	// verdict by construction rather than because rank 0 posted it back.
+	//
+	// max and min in one reduction: d[0] carries the value, d[1] its negation, so
+	// MPI_MAX gives max in d[0] and -min in d[1]. They agree iff every rank passed
+	// the same value.
+	int d[2];
+	d[0] = value;
+	d[1] = -value;
+	if (MPI_Allreduce(MPI_IN_PLACE, d, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD)
+	    != MPI_SUCCESS) {
+		opserr << "ArpackSOE::checkSameInt() - MPI_Allreduce failed\n";
+		return 0;
+	}
+	return (d[0] == -d[1]) ? 1 : 0;
+
+#else
+
 	static ID idData(1);
     if (processID != 0) {
-    
+
 		Channel *theChannel = theChannels[0];
 	    idData(0) = value;
 		theChannel->sendID(0, 0, idData);
@@ -403,7 +611,7 @@ ArpackSOE::checkSameInt(int value)
 			return 1;
 		else
 			return 0;
-	} 
+	}
 
 	else {
         int ok = 1;
@@ -424,4 +632,6 @@ ArpackSOE::checkSameInt(int value)
 		}
 		return ok;
     }
+
+#endif
 }

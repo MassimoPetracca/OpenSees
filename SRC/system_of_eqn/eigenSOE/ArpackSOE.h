@@ -37,6 +37,7 @@
 class AnalysisModel;
 class ArpackSolver;
 class LinearSOE;
+class Channel;
 
 class ArpackSOE : public EigenSOE
 {
@@ -62,6 +63,13 @@ class ArpackSOE : public EigenSOE
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
 
+    // wiring for the multi-interpreter (OpenSeesMP) world: set the rank and
+    // the channels so that setSize/myMv/checkSameInt take their parallel
+    // branches. Mirrors ParallelNumberer/MumpsParallelSOE::setProcessID/
+    // setChannels. Without these, processID stays -1 (serial behavior).
+    int setProcessID(int processTag);
+    int setChannels(int numChannels, Channel **theChannels);
+
     friend class ArpackSolver;
 
 	int checkSameInt(int);
@@ -72,6 +80,39 @@ class ArpackSOE : public EigenSOE
     double *M;
     int Msize;
     bool mDiagonal;
+
+    // C3: the assembled sparse mass matrix.
+    //
+    // When M is not diagonal, ArpackSolver::myMv used to recompute the whole
+    // element loop - elePtr->getM_Force(x) for every FE_Element - once per Lanczos
+    // step. Measured on the N=24 cube (45000 DOF, 20 modes, np=2) that is 4.39 s of
+    // a 10.6 s eigen loop, 41%: more than the backsolves (3.09 s) and more than the
+    // factorisation (2.72 s). It is the same product every time, only the vector
+    // changes, so assembling M once turns 279 element loops into 279 sparse
+    // matvecs.
+    //
+    // Compressed column, built from the same Graph that sizes the SOE, so the
+    // pattern is guaranteed to hold every (i,j) addM writes - addM already calls
+    // addA with the same ID and that succeeds. FULL pattern, both triangles: the
+    // mass matrix is symmetric and half of it would do, but a plain matvec has no
+    // scatter-writes and this is the first version. Columns of equations this rank
+    // does not own stay empty, which keeps M the rank-local PARTIAL that the
+    // unconditional reduction in myMv sums - the contract is preserved by
+    // construction, see the comment there.
+    //
+    // Costs Mnnz*(8+4) + (Msize+1)*4 bytes a rank, about +50% on this SOE's matrix
+    // memory. Gated on OPS_EIGEN_MSPARSE while the trade is being measured.
+    int    *Mcolstart;
+    int    *Mrow;
+    double *Mval;
+    int     Mnnz;
+    bool    Msparse;
+
+    int  buildSparseM(Graph &theGraph, int size);
+    void freeSparseM(void);
+    // slot of (row, col) in the compressed pattern, -1 if the pattern has no such
+    // entry (which addM reports rather than silently dropping the term)
+    int  sparseMposition(int row, int col) const;
     double shift;
     AnalysisModel *theModel;
     LinearSOE *theSOE;

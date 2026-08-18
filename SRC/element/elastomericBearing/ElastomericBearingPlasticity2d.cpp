@@ -420,8 +420,27 @@ int ElastomericBearingPlasticity2d::revertToStart()
 }
 
 
+// Worst-wins accumulator: the first nonzero code, then whichever is most
+// negative. NOT a sum - a sum lets a positive code cancel a negative one and
+// turns two codes into a third that nobody returned. Same convention as
+// Domain::update and the solid elements.
+static inline void
+EBP_worst(int &worst, int code)
+{
+  if (code != 0 && (worst == 0 || code < worst))
+    worst = code;
+}
+
 int ElastomericBearingPlasticity2d::update()
 {
+    // The shear behaviour below needs no code of its own: its return mapping is
+    // CLOSED FORM (dGamma = Y/k0), so unlike the BoucWen sibling there is no
+    // internal iteration that can fail. What this function did drop is the code
+    // of the uniaxial materials of the other directions - put a material with an
+    // error control of its own in the axial or a rotational spring and its
+    // refusal went nowhere. Worst-wins over them, and returned.
+    int worst = 0;
+
     // get global trial displacements and velocities
     const Vector &dsp1 = theNodes[0]->getTrialDisp();
     const Vector &dsp2 = theNodes[1]->getTrialDisp();
@@ -443,7 +462,7 @@ int ElastomericBearingPlasticity2d::update()
     ubdot.addMatrixVector(0.0, Tlb, uldot, 1.0);
     
     // 1) get axial force and stiffness in basic x-direction
-    theMaterials[0]->setTrialStrain(ub(0), ubdot(0));
+    EBP_worst(worst, theMaterials[0]->setTrialStrain(ub(0), ubdot(0)));
     qb(0) = theMaterials[0]->getStress();
     kb(0,0) = theMaterials[0]->getTangent();
     
@@ -476,11 +495,11 @@ int ElastomericBearingPlasticity2d::update()
     }
     
     // 3) get moment and stiffness about basic z-direction
-    theMaterials[1]->setTrialStrain(ub(2), ubdot(2));
+    EBP_worst(worst, theMaterials[1]->setTrialStrain(ub(2), ubdot(2)));
     qb(2) = theMaterials[1]->getStress();
     kb(2,2) = theMaterials[1]->getTangent();
     
-    return 0;
+    return worst;
 }
 
 

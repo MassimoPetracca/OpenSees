@@ -49,10 +49,10 @@
 //#include <Timer.h>
 #include <Integrator.h>//Abbas
 
+#include <stdlib.h>
+
 // Constructor
 //    sets theModel and theSysOFEqn to 0 and the Algorithm to the one supplied
-
-
 
 StaticAnalysis::StaticAnalysis(Domain &the_Domain,
 			       ConstraintHandler &theHandler,
@@ -82,7 +82,6 @@ StaticAnalysis::StaticAnalysis(Domain &the_Domain,
       theAlgorithm->setConvergenceTest(theTest);
 
 }    
-
 
 StaticAnalysis::~StaticAnalysis()
 {
@@ -122,7 +121,6 @@ StaticAnalysis::clearAll(void)
   theTest = 0;
 }    
 
-
 int 
 StaticAnalysis::analyze(int numSteps, bool flush)
 {
@@ -133,10 +131,20 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 
 	result = theAnalysisModel->analysisStep();
 
+	// Every phase below agrees on its outcome across the processes before acting
+	// on it. The agreement is UNCONDITIONAL - see Analysis::worstStepResult() for
+	// why it cannot be done only on failure - and it costs one int Allreduce per
+	// phase against a step of hundreds of milliseconds.
+	result = this->worstStepResult(result, "analysisStep()");
+
 	if (result < 0) {
-	    opserr << "StaticAnalysis::analyze() - the AnalysisModel failed";
-	    opserr << " at step: " << i << " with domain at load factor ";
-	    opserr << the_Domain->getCurrentTime() << endln;
+	    // one line, from one process, naming the process that failed - see
+	    // Analysis::reportHere(). The recovery below stays on every process.
+	    if (this->reportHere()) {
+	      opserr << "StaticAnalysis::analyze() - the AnalysisModel failed";
+	      opserr << " at step: " << i << " with domain at load factor ";
+	      opserr << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+	    }
 	    the_Domain->revertToLastCommit();
 	    return -2;
 	}
@@ -147,37 +155,48 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 
 	int stamp = the_Domain->hasDomainChanged();
 
-	
-	if (stamp != domainStamp) {
+	if (this->anyDomainChange(stamp != domainStamp)) {
 	    domainStamp = stamp;
 
 	    result = this->domainChanged();
+	    result = this->worstStepResult(result, "domainChanged()");
 
 	    if (result < 0) {
-		opserr << "StaticAnalysis::analyze() - domainChanged failed";
-		opserr << " at step " << i << " of " << numSteps << endln;
+		if (this->reportHere()) {
+		  opserr << "StaticAnalysis::analyze() - domainChanged failed";
+		  opserr << " at step " << i << " of " << numSteps
+			 << this->whoFailed() << endln;
+		}
 		return -1;
-	    }	
+	    }
 	}
 
 	result = theIntegrator->newStep();
+	result = this->worstStepResult(result, "newStep()");
 	if (result < 0) {
-	    opserr << "StaticAnalysis::analyze() - the Integrator failed";
-	    opserr << " at step: " << i << " with domain at load factor ";
-	    opserr << the_Domain->getCurrentTime() << endln;
+	    if (this->reportHere()) {
+	      opserr << "StaticAnalysis::analyze() - the Integrator failed";
+	      opserr << " at step: " << i << " with domain at load factor ";
+	      opserr << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+	    }
 	    the_Domain->revertToLastCommit();
 	    theIntegrator->revertToLastStep();
 
-	 
 	    return -2;
 	}
 
            result = theAlgorithm->solveCurrentStep();
+
+	// the phase that fails on one subdomain most often: non-convergence there is
+	// a local verdict, and without this the other processes never learn of it
+	result = this->worstStepResult(result, "solveCurrentStep()");
 	if (result < 0) {
-	    opserr << "StaticAnalysis::analyze() - the Algorithm failed";
-	    opserr << " at step: " << i << " with domain at load factor ";
-	    opserr << the_Domain->getCurrentTime() << endln;
-	    the_Domain->revertToLastCommit();	    
+	    if (this->reportHere()) {
+	      opserr << "StaticAnalysis::analyze() - the Algorithm failed";
+	      opserr << " at step: " << i << " with domain at load factor ";
+	      opserr << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+	    }
+	    the_Domain->revertToLastCommit();
 	    theIntegrator->revertToLastStep();
 
 	    return -3;
@@ -201,16 +220,20 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 	}
 #endif
 
-
 // AddingSensitivity:END //////////////////////////////////////
 
 	result = theIntegrator->commit();
+	// commit() is where an integration-error control rejects a step, and it
+	// rejects it on the process whose material saw the error
+	result = this->worstStepResult(result, "commit()");
 	if (result < 0) {
-	    opserr << "StaticAnalysis::analyze() - ";
-	    opserr << "the Integrator failed to commit";
-	    opserr << " at step: " << i << " with domain at load factor ";
-	    opserr << the_Domain->getCurrentTime() << endln;
-	    the_Domain->revertToLastCommit();	    
+	    if (this->reportHere()) {
+	      opserr << "StaticAnalysis::analyze() - ";
+	      opserr << "the Integrator failed to commit";
+	      opserr << " at step: " << i << " with domain at load factor ";
+	      opserr << the_Domain->getCurrentTime() << this->whoFailed() << endln;
+	    }
+	    the_Domain->revertToLastCommit();
 	    theIntegrator->revertToLastStep();
 
 	    return -4;
@@ -223,7 +246,6 @@ StaticAnalysis::analyze(int numSteps, bool flush)
     
     return 0;
 }
-
 
 int 
 StaticAnalysis::eigen(int numMode, bool generalized, bool findSmallest)
@@ -238,19 +260,36 @@ StaticAnalysis::eigen(int numMode, bool generalized, bool findSmallest)
     Domain *the_Domain = this->getDomainPtr();
 
     // for parallel processing, want all analysis doing an eigenvalue analysis
-    result = theAnalysisModel->eigenAnalysis(numMode, generalized, findSmallest);
+    //
+    // Every phase below agrees on its outcome across the processes before anyone acts
+    // on it, exactly as in analyze() - see Analysis::worstStepResult(). It matters MORE
+    // here than there: since e3539e477 made the eigen analysis multi-rank,
+    // theEigenSOE->solve() is a collective, so a process that returned early from an
+    // assembly failure leaves the others waiting inside ARPACK with no participant.
+    result = this->worstStepResult(theAnalysisModel->eigenAnalysis(numMode, generalized,
+								  findSmallest),
+				   "eigenAnalysis()");
+    if (result < 0) {
+      // this return value was assigned and never tested
+      if (this->reportHere())
+	opserr << "StaticAnalysis::eigen() - the AnalysisModel failed"
+	       << this->whoFailed() << endln;
+      return -1;
+    }
 
     int stamp = the_Domain->hasDomainChanged();
 
-    if (stamp != domainStamp) {
+    if (this->anyDomainChange(stamp != domainStamp)) {
       domainStamp = stamp;
-      
-      result = this->domainChanged();
-      
+
+      result = this->worstStepResult(this->domainChanged(), "domainChanged()");
+
       if (result < 0) {
-	opserr << "StaticAnalysis::eigen() - domainChanged failed";
+	if (this->reportHere())
+	  opserr << "StaticAnalysis::eigen() - domainChanged failed"
+		 << this->whoFailed() << endln;
 	return -1;
-      }	
+      }
     }
 
     //
@@ -264,56 +303,108 @@ StaticAnalysis::eigen(int numMode, bool generalized, bool findSmallest)
     // form K
     //
 
-    FE_EleIter &theEles = theAnalysisModel->getFEs();    
+    FE_EleIter &theEles = theAnalysisModel->getFEs();
     FE_Element *elePtr;
 
+    int numFailedK = 0;
     while((elePtr = theEles()) != 0) {
       elePtr->zeroTangent();
       elePtr->addKtToTang(1.0);
       if (theEigenSOE->addA(elePtr->getTangent(0), elePtr->getID()) < 0) {
-	opserr << "WARNING StaticAnalysis::eigen() -";
-	opserr << " failed in addA for ID " << elePtr->getID();	    
+	numFailedK++;
+	// local detail, so NOT gated by reportHere(): each process names the equations
+	// it could not assemble. First one in full, then a count, as in Domain::update -
+	// one line per failing element is unreadable at any useful model size.
+	if (numFailedK == 1) {
+	  opserr << "WARNING StaticAnalysis::eigen() -";
+	  opserr << " failed in addA for ID " << elePtr->getID();
+	}
 	result = -2;
       }
     }
-   
+    if (numFailedK > 1)
+      opserr << "WARNING StaticAnalysis::eigen() - addA failed for " << numFailedK
+	     << " elements on this process\n";
 
+    // This is the phase whose result used to be thrown away: `result = -2` was set
+    // above and NOTHING ever read it before the final `return 0`, so eigen() reported
+    // success with a stiffness matrix it had failed to assemble.
+    result = this->worstStepResult(result, "eigen formK");
+    if (result < 0) {
+      if (this->reportHere())
+	opserr << "StaticAnalysis::eigen() - the stiffness assembly failed"
+	       << this->whoFailed() << endln;
+      return -2;
+    }
 
     // if generalized is true, form M
     //
 
     if (generalized == true) {
-      int result = 0;
-      FE_EleIter &theEles2 = theAnalysisModel->getFEs();    
-      while((elePtr = theEles2()) != 0) {     
+
+      // `int result = 0;` was declared HERE, shadowing the function's result, so every
+      // addM failure below was written to a variable that died at the closing brace.
+      // The very same line sits commented out in DirectIntegrationAnalysis::eigen(),
+      // which is how one can tell this was a known defect fixed in one copy only.
+      // generalized == true is the normal case for a modal analysis (K and M), so this
+      // is the mass assembly of every eigen run.
+      int numFailedM = 0;
+
+      FE_EleIter &theEles2 = theAnalysisModel->getFEs();
+      while((elePtr = theEles2()) != 0) {
 	elePtr->zeroTangent();
 	elePtr->addMtoTang(1.0);
 	if (theEigenSOE->addM(elePtr->getTangent(0), elePtr->getID()) < 0) {
-	  opserr << "WARNING StaticAnalysis::eigen() -";
-	  opserr << " failed in addA for ID " << elePtr->getID();	    
+	  numFailedM++;
+	  if (numFailedM == 1) {
+	    opserr << "WARNING StaticAnalysis::eigen() -";
+	    // said "addA" here, in the addM loop
+	    opserr << " failed in addM for element ID " << elePtr->getID();
+	  }
 	  result = -2;
 	}
       }
-      
+
       DOF_Group *dofPtr;
-      DOF_GrpIter &theDofs = theAnalysisModel->getDOFs();    
+      DOF_GrpIter &theDofs = theAnalysisModel->getDOFs();
       while((dofPtr = theDofs()) != 0) {
 	dofPtr->zeroTangent();
 	dofPtr->addMtoTang(1.0);
 	if (theEigenSOE->addM(dofPtr->getTangent(0),dofPtr->getID()) < 0) {
-	  opserr << "WARNING StaticAnalysis::eigen() -";
-	  opserr << " failed in addM for ID " << dofPtr->getID();	    
+	  numFailedM++;
+	  if (numFailedM == 1) {
+	    opserr << "WARNING StaticAnalysis::eigen() -";
+	    opserr << " failed in addM for DOF group ID " << dofPtr->getID();
+	  }
 	  result = -3;
 	}
       }
+
+      if (numFailedM > 1)
+	opserr << "WARNING StaticAnalysis::eigen() - addM failed " << numFailedM
+	       << " times on this process\n";
     }
-    
-    // 
+
+    result = this->worstStepResult(result, "eigen formM");
+    if (result < 0) {
+      if (this->reportHere())
+	opserr << "StaticAnalysis::eigen() - the mass assembly failed"
+	       << this->whoFailed() << endln;
+      return result;
+    }
+
+    //
     // solve for the eigen values & vectors
     //
 
-    if (theEigenSOE->solve(numMode, generalized, findSmallest) < 0) {
-	opserr << "WARNING StaticAnalysis::eigen() - EigenSOE failed in solve()\n";
+    // the collective: in the multi-rank eigen every process must reach it, which is
+    // what the agreement on the phases above guarantees
+    result = this->worstStepResult(theEigenSOE->solve(numMode, generalized, findSmallest),
+				   "eigenSolve()");
+    if (result < 0) {
+	if (this->reportHere())
+	  opserr << "WARNING StaticAnalysis::eigen() - EigenSOE failed in solve()"
+		 << this->whoFailed() << endln;
 	return -4;
     }
 
@@ -326,12 +417,11 @@ StaticAnalysis::eigen(int numMode, bool generalized, bool findSmallest)
     for (int i = 1; i <= numMode; i++) {
       theEigenvalues[i-1] = theEigenSOE->getEigenvalue(i);
       theAnalysisModel->setEigenvector(i, theEigenSOE->getEigenvector(i));
-    }    
+    }
     theAnalysisModel->setEigenvalues(theEigenvalues);
-    
+
     return 0;
 }
-
 
 int 
 StaticAnalysis::initialize(void)
@@ -340,7 +430,7 @@ StaticAnalysis::initialize(void)
 
     // check if domain has undergone change
     int stamp = the_Domain->hasDomainChanged();
-    if (stamp != domainStamp) {
+    if (this->anyDomainChange(stamp != domainStamp)) {
       domainStamp = stamp;	
       if (this->domainChanged() < 0) {
 	opserr << "DirectIntegrationAnalysis::initialize() - domainChanged() failed\n";
@@ -466,7 +556,6 @@ StaticAnalysis::setNumberer(DOF_Numberer &theNewNumberer)
     return 0;
 }
 
-
 int 
 StaticAnalysis::setAlgorithm(EquiSolnAlgo &theNewAlgorithm) 
 {
@@ -544,7 +633,6 @@ StaticAnalysis::setLinearSOE(LinearSOE &theNewSOE)
     return 0;
 }
 
-
 int 
 StaticAnalysis::setEigenSOE(EigenSOE &theNewSOE)
 {
@@ -572,7 +660,6 @@ StaticAnalysis::setEigenSOE(EigenSOE &theNewSOE)
   return 0;
 }
 
-
 int 
 StaticAnalysis::setConvergenceTest(ConvergenceTest &theNewTest)
 {
@@ -599,19 +686,9 @@ StaticAnalysis::getIntegrator(void)
   return theIntegrator;
 }
 
-
 ConvergenceTest *
 StaticAnalysis::getConvergenceTest(void)
 {
   return theTest;
 }
-
-
-
-
-
-
-
-
-
 

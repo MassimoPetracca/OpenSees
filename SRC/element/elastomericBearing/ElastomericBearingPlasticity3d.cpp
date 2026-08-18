@@ -447,8 +447,27 @@ int ElastomericBearingPlasticity3d::revertToStart()
 }
 
 
+// Worst-wins accumulator: the first nonzero code, then whichever is most
+// negative. NOT a sum - a sum lets a positive code cancel a negative one and
+// turns two codes into a third that nobody returned. Same convention as
+// Domain::update and the solid elements.
+static inline void
+EBP_worst(int &worst, int code)
+{
+  if (code != 0 && (worst == 0 || code < worst))
+    worst = code;
+}
+
 int ElastomericBearingPlasticity3d::update()
 {
+    // The shear behaviour below needs no code of its own: its return mapping is
+    // CLOSED FORM (dGamma = Y/k0), so unlike the BoucWen sibling there is no
+    // internal iteration that can fail. What this function did drop is the code
+    // of the uniaxial materials of the other directions - put a material with an
+    // error control of its own in the axial or a rotational spring and its
+    // refusal went nowhere. Worst-wins over them, and returned.
+    int worst = 0;
+
     // get global trial displacements and velocities
     const Vector &dsp1 = theNodes[0]->getTrialDisp();
     const Vector &dsp2 = theNodes[1]->getTrialDisp();
@@ -470,7 +489,7 @@ int ElastomericBearingPlasticity3d::update()
     ubdot.addMatrixVector(0.0, Tlb, uldot, 1.0);
     
     // 1) get axial force and stiffness in basic x-direction
-    theMaterials[0]->setTrialStrain(ub(0), ubdot(0));
+    EBP_worst(worst, theMaterials[0]->setTrialStrain(ub(0), ubdot(0)));
     qb(0) = theMaterials[0]->getStress();
     kb(0,0) = theMaterials[0]->getTangent();
     
@@ -517,21 +536,21 @@ int ElastomericBearingPlasticity3d::update()
     }
     
     // 3) get moment and stiffness about basic x-direction
-    theMaterials[1]->setTrialStrain(ub(3), ubdot(3));
+    EBP_worst(worst, theMaterials[1]->setTrialStrain(ub(3), ubdot(3)));
     qb(3) = theMaterials[1]->getStress();
     kb(3,3) = theMaterials[1]->getTangent();
     
     // 4) get moment and stiffness about basic y-direction
-    theMaterials[2]->setTrialStrain(ub(4), ubdot(4));
+    EBP_worst(worst, theMaterials[2]->setTrialStrain(ub(4), ubdot(4)));
     qb(4) = theMaterials[2]->getStress();
     kb(4,4) = theMaterials[2]->getTangent();
     
     // 5) get moment and stiffness about basic z-direction
-    theMaterials[3]->setTrialStrain(ub(5), ubdot(5));
+    EBP_worst(worst, theMaterials[3]->setTrialStrain(ub(5), ubdot(5)));
     qb(5) = theMaterials[3]->getStress();
     kb(5,5) = theMaterials[3]->getTangent();
     
-    return 0;
+    return worst;
 }
 
 

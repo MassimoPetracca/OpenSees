@@ -31,6 +31,9 @@
 
 #include <TransformationConstraintHandler.h>
 #include <stdlib.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include <AnalysisModel.h>
 #include <Domain.h>
@@ -101,12 +104,34 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	numSPConstraints++;
     
     numDOF = 0;
-    ID transformedNode(0, 64);
+
+    // Lookups replacing the three linear searches this method used to do over
+    // the constrained-node IDs. They are built once, in the SAME iteration order
+    // as before, and every loop below keeps its order: only the SEARCHES change,
+    // so the DOF_Groups and FE_Elements are still created in the same sequence
+    // and the equation numbering - hence the arithmetic - is untouched.
+    //   constrainedNodes    : the unique constrained nodes, whose count sizes
+    //                         theDOFs; it replaces the transformedNode ID, which
+    //                         was searched linearly for every constraint.
+    //   mpIndexOfNode       : nodeTag -> index of the FIRST MP constraining it,
+    //                         which is the only one the old getLocation() could
+    //                         return and the only one used below.
+    //   spIndicesOfNode     : nodeTag -> every SP index on that node, in
+    //                         iteration order. This also removes the forward
+    //                         scan "check for more SP_constraints acting on
+    //                         node", which was O(numSPConstraints) per node on
+    //                         its own and would have survived a plain lookup.
+    //   transformedEleTags  : the elements that need a TransformationFE. The
+    //                         second element loop searched the ID of those tags
+    //                         linearly for EVERY element, i.e. O(numEle*numFE).
+    std::unordered_set<int> constrainedNodes;
+    std::unordered_map<int, int> mpIndexOfNode;
+    std::unordered_map<int, std::vector<int> > spIndicesOfNode;
+    std::unordered_set<int> transformedEleTags;
 
     int i;
-    
-    // create an ID of constrained node tags in MP_Constraints
-    ID constrainedNodesMP(0, numMPConstraints);
+
+    // index the constrained node tags in MP_Constraints
     MP_Constraint **mps =0;
     if (numMPConstraints != 0) {
 	mps = new MP_Constraint *[numMPConstraints];
@@ -121,16 +146,16 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	int index = 0;
 	while ((theMP = theMPs()) != 0) {
 	  int nodeConstrained = theMP->getNodeConstrained();
-	  if (transformedNode.getLocation(nodeConstrained) < 0)
-	    transformedNode[numDOF++] = nodeConstrained;
-	  constrainedNodesMP[index] = nodeConstrained;
+	  if (constrainedNodes.insert(nodeConstrained).second)
+	    numDOF++;
+	  if (mpIndexOfNode.find(nodeConstrained) == mpIndexOfNode.end())
+	    mpIndexOfNode[nodeConstrained] = index;
 	  mps[index] = theMP;
 	  index++;
-	}	
+	}
     }
 
-    // create an ID of constrained node tags in SP_Constraints
-    ID constrainedNodesSP(0, numSPConstraints);;
+    // index the constrained node tags in SP_Constraints
     SP_Constraint **sps =0;
     if (numSPConstraints != 0) {
 	sps = new SP_Constraint *[numSPConstraints];
@@ -147,12 +172,12 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	int index = 0;
 	while ((theSP = theSPs()) != 0) {
 	  int constrainedNode = theSP->getNodeTag();
-	  if (transformedNode.getLocation(constrainedNode) < 0)
-	    transformedNode[numDOF++] = constrainedNode;	    
-	  constrainedNodesSP[index] = constrainedNode;
+	  if (constrainedNodes.insert(constrainedNode).second)
+	    numDOF++;
+	  spIndicesOfNode[constrainedNode].push_back(index);
 	  sps[index] = theSP;
 	  index++;
-	}	
+	}
     }
 
     // create an array for the DOF_Groups and zero it
@@ -184,53 +209,52 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	int loc = -1;
 	int createdDOF = 0;
 
-	loc = constrainedNodesMP.getLocation(nodeTag);
-	if (loc >= 0) {
+	std::unordered_map<int, int>::iterator theMPEntry
+	  = mpIndexOfNode.find(nodeTag);
+	std::unordered_map<int, std::vector<int> >::iterator theSPEntry
+	  = spIndicesOfNode.find(nodeTag);
 
-	  TransformationDOF_Group *tDofPtr = 
-	    new TransformationDOF_Group(numDofGrp++, nodPtr, mps[loc], this); 
+	if (theMPEntry != mpIndexOfNode.end()) {
+	  loc = theMPEntry->second;
+
+	  TransformationDOF_Group *tDofPtr =
+	    new TransformationDOF_Group(numDofGrp++, nodPtr, mps[loc], this);
 
 	  createdDOF = 1;
 	  dofPtr = tDofPtr;
-	  
+
 	  // add any SPs
 	  if (numSPConstraints != 0) {
-	    loc = constrainedNodesSP.getLocation(nodeTag);
-	    if (loc >= 0) {
-	      tDofPtr->addSP_Constraint(*(sps[loc]));
-	      for (int i = loc+1; i<numSPConstraints; i++) {
-		if (constrainedNodesSP(i) == nodeTag)
-		  tDofPtr->addSP_Constraint(*(sps[i]));
-	      }
+	    if (theSPEntry != spIndicesOfNode.end()) {
+	      const std::vector<int> &theSPLocs = theSPEntry->second;
+	      for (int j = 0; j < (int)theSPLocs.size(); j++)
+		tDofPtr->addSP_Constraint(*(sps[theSPLocs[j]]));
 	    }
-	    // add the DOF to the array	    
-	    theDOFs[numDOF++] = dofPtr;	    	    
+	    // add the DOF to the array
+	    theDOFs[numDOF++] = dofPtr;
 	    numConstrainedNodes++;
 	  }
 	}
-	
+
 	if (createdDOF == 0) {
-	  loc = constrainedNodesSP.getLocation(nodeTag);
-	  if (loc >= 0) {
-	    TransformationDOF_Group *tDofPtr = 
+	  if (theSPEntry != spIndicesOfNode.end()) {
+	    const std::vector<int> &theSPLocs = theSPEntry->second;
+	    TransformationDOF_Group *tDofPtr =
 	      new TransformationDOF_Group(numDofGrp++, nodPtr, this);
 
-	    int numSPs = 1;
+	    int numSPs = (int)theSPLocs.size();
 	    createdDOF = 1;
 	    dofPtr = tDofPtr;
-	    tDofPtr->addSP_Constraint(*(sps[loc]));
-	
-	    // check for more SP_constraints acting on node and add them
-	    for (int i = loc+1; i<numSPConstraints; i++) {
-	      if (constrainedNodesSP(i) == nodeTag) {
-		tDofPtr->addSP_Constraint(*(sps[i]));
-		numSPs++;
-	      }
-	    }
+
+	    // the indices come in the order the SP_ConstraintIter returned them,
+	    // which is the order the old first-match-then-scan-forward found them
+	    for (int j = 0; j < numSPs; j++)
+	      tDofPtr->addSP_Constraint(*(sps[theSPLocs[j]]));
+
 	    // add the DOF to the array
-	    theDOFs[numDOF++] = dofPtr;	    	    
-	    numConstrainedNodes++;	    
-	    countDOF+= numNodalDOF - numSPs;		
+	    theDOFs[numDOF++] = dofPtr;
+	    numConstrainedNodes++;
+	    countDOF+= numNodalDOF - numSPs;
 	  }
 	}
 
@@ -261,7 +285,6 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
     FE_Element *fePtr;
 
     numFE = 0;
-    ID transformedEle(0, 64);
 
     while ((elePtr = theEle()) != 0) {
       int flag = 0;
@@ -279,23 +302,22 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	for (int i=0; i<nodesSize; i++) {
 	  int nodeTag = nodes(i);
 	  if (numMPConstraints != 0) {
-	    int loc = constrainedNodesMP.getLocation(nodeTag);
-	    if (loc >= 0) {
+	    if (mpIndexOfNode.find(nodeTag) != mpIndexOfNode.end()) {
 	      isConstrainedNode = 1;
 	      i = nodesSize;
 	    }
-	  } 
+	  }
 	  if (numSPConstraints != 0 && isConstrainedNode == 0) {
-	    int loc = constrainedNodesSP.getLocation(nodeTag);
-	    if (loc >= 0) {
-	      isConstrainedNode = 1;		    
+	    if (spIndicesOfNode.find(nodeTag) != spIndicesOfNode.end()) {
+	      isConstrainedNode = 1;
 	      i = nodesSize;
 	    }
 	  }
 	}
 	
 	if (isConstrainedNode == 1) {
-	  transformedEle[numFE++] = elePtr->getTag();
+	  transformedEleTags.insert(elePtr->getTag());
+	  numFE++;
 	}
       }
     }
@@ -322,7 +344,7 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	Subdomain *theSub = (Subdomain *)elePtr;
 	if (theSub->doesIndependentAnalysis() == false) {
 	  
-	  if (transformedEle.getLocation(tag) < 0) {
+	  if (transformedEleTags.find(tag) == transformedEleTags.end()) {
 	    if ((fePtr = new FE_Element(numFeEle, elePtr)) == 0) {
 	      opserr << "WARNING TransformationConstraintHandler::handle()";
 	      opserr << " - ran out of memory";
@@ -348,7 +370,7 @@ TransformationConstraintHandler::handle(const ID *nodesLast)
 	  theSub->setFE_ElementPtr(fePtr);
 	}
       } else {
-	if (transformedEle.getLocation(tag) < 0) {
+	if (transformedEleTags.find(tag) == transformedEleTags.end()) {
 	  if ((fePtr = new FE_Element(numFeEle, elePtr)) == 0) {
 	    opserr << "WARNING TransformationConstraintHandler::handle()";
 	    opserr << " - ran out of memory";
