@@ -56,13 +56,16 @@ public:
     // which dofs of the constrained node the element ties to the host field
     enum ConstraintMode {
         Mode_U = 0,   // translations only
-        Mode_UR = 1,  // translations + rotations (skew part of the gradient)
+        Mode_UR = 1,  // translations + rotations (skew part of the gradient; on a
+                      // surface host the two bending rotations come from the slope
+                      // of the transverse displacement, or, with -shearDeformable,
+                      // from the interpolated nodal rotations of the host)
         Mode_UP = 2   // translations + pressure (u-p nodes)
     };
 
     // life cycle
     ASDEmbeddedNodeElement();
-    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown);
+    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false);
     virtual ~ASDEmbeddedNodeElement();
 
     // domain
@@ -151,6 +154,19 @@ private:
     bool m_p_flag = false;
     // true if the constrained node has rotational DOFs and the user flag is true
     bool m_rot_c = false;
+    // user input (-shearDeformable): on a surface host in 3D, tie the two
+    // bending rotations of the constrained node to the interpolated nodal
+    // rotations of the host instead of the slope of the transverse
+    // displacement. The slope equals the rotation only for thin (Kirchhoff)
+    // plates; a shear-deformable (Mindlin) shell carries theta = slope + gamma,
+    // and its nodal rotations are the physical rotation of the fiber.
+    // The drilling rotation keeps the in-plane skew gradient in either case:
+    // it is not a director rotation, and hosts with a penalty drilling dof
+    // would otherwise leak a weakly-constrained dof into the constraint.
+    bool m_shear_flag = false;
+    // true when m_shear_flag is accepted: -rot active, 3D surface host
+    // (triangle, or quadrilateral face), every retained node with 6 dofs
+    bool m_shear = false;
     // true if both constrained and retained nodes are U-P nodes
     bool m_up = false;
     // a vector containing the local id mapping for assembling

@@ -518,13 +518,19 @@ OPS_ASDEmbeddedNodeElement(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-p> <-K $K> <-KP $KP> <-shape $shape>\n"
+    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-p> <-K $K> <-KP $KP> <-shape $shape>\n"
         "   3 retained nodes = triangle (2D or 3D)\n"
         "   4 retained nodes = quadrilateral in 2D; in 3D a tetrahedron, or a\n"
         "                      quadrilateral face with -shape quad\n"
         "   8 retained nodes = hexahedron in 3D\n"
         "   -shape tri|quad|tet|hexa: only needed to tell a quadrilateral face\n"
-        "                      from a tetrahedron, the one ambiguous case.\n";
+        "                      from a tetrahedron, the one ambiguous case.\n"
+        "   -shearDeformable: with -rot on a 3D surface host whose nodes carry\n"
+        "                      rotations (a shell), tie the bending rotations of\n"
+        "                      the constrained node to the interpolated nodal\n"
+        "                      rotations of the host instead of the slope of the\n"
+        "                      transverse displacement (correct for thick shells,\n"
+        "                      where rotation = slope + shear deformation).\n";
 
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs < 5) {
@@ -550,6 +556,7 @@ OPS_ASDEmbeddedNodeElement(void)
 
     // parse optional parameters
     bool rot = false;
+    bool shear = false;
     bool pressure = false;
     bool keywords_started = false;
     double K = 1.0e18;
@@ -560,6 +567,10 @@ OPS_ASDEmbeddedNodeElement(void)
         const char* what = OPS_GetString();
         if (strcmp(what, "-rot") == 0) {
             rot = true;
+            keywords_started = true;
+        }
+        else if (strcmp(what, "-shearDeformable") == 0) {
+            shear = true;
             keywords_started = true;
         }
         else if (strcmp(what, "-p") == 0) {
@@ -667,9 +678,14 @@ OPS_ASDEmbeddedNodeElement(void)
         opserr << "ASDEmbeddedNodeElement ERROR: Cannot use both -rot and -p flags.\n" << descr;
         return 0;
     }
+    if (shear && !rot) {
+        opserr << "ASDEmbeddedNodeElement ERROR: -shearDeformable only modifies the rotational "
+            << "constraint, so it requires -rot.\n" << descr;
+        return 0;
+    }
 
     // done
-    return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape);
+    return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear);
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement() 
@@ -677,11 +693,12 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement()
 {
 }
 
-ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request)
+ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag)
     : Element(tag, ELE_TAG_ASDEmbeddedNodeElement)
     , m_shape_request(shape_request)
     , m_rot_c_flag(rot_flag)
     , m_p_flag(p_flag)
+    , m_shear_flag(shear_flag)
     , m_K(K)
     , m_KP(KP)
 {
@@ -770,6 +787,13 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
             }
             if (i == 0) {
                 m_rot_c = (m_rot_c_flag && ndf == 3);
+                m_shear = false;
+                if (m_shear_flag) {
+                    opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                        << " - -shearDeformable requires a surface host in 3D: a triangle, or a "
+                        << "quadrilateral face with -shape quad.\n";
+                    exit(-1);
+                }
                 if (m_p_flag && ndf == 3) {
                     // all others should have same ndf (u-p)
                     m_up = true;
@@ -791,6 +815,36 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
             }
             if (i == 0) {
                 m_rot_c = (m_rot_c_flag && ndf == 6);
+                // -shearDeformable: decide it here, before the dof mapping of the
+                // retained nodes is built, because accepting it makes them expose
+                // their rotations to the constraint. Misuse is a modelling mistake
+                // and stops the analysis; the one silent downgrade is the same one
+                // -rot has: a constrained node without rotational dofs turns the
+                // whole rotational constraint off, and this refinement with it.
+                m_shear = false;
+                if (m_shear_flag && m_rot_c) {
+                    int nret = static_cast<int>(m_nodes.size()) - 1;
+                    bool surface = (nret == 3) ||
+                        (nret == 4 && (m_shape_request == Fam_Quad || m_shape_request == Fam_Quad3D));
+                    if (!surface) {
+                        opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                            << " - -shearDeformable requires a surface host in 3D: a triangle, or a "
+                            << "quadrilateral face with -shape quad.\n";
+                        exit(-1);
+                    }
+                    for (std::size_t other_i = 1; other_i < m_nodes.size(); ++other_i) {
+                        Node* other_node = theDomain->getNode(m_node_ids(static_cast<int>(other_i)));
+                        if (other_node && other_node->getNumberDOF() != 6) {
+                            opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                                << " - -shearDeformable ties the constrained rotations to the nodal "
+                                << "rotations of the host, so every retained node needs 6 dofs; node "
+                                << m_node_ids(static_cast<int>(other_i)) << " has "
+                                << other_node->getNumberDOF() << ".\n";
+                            exit(-1);
+                        }
+                    }
+                    m_shear = true;
+                }
                 if (m_p_flag && ndf == 4) {
                     // all others should have same ndf (u-p)
                     m_up = true;
@@ -816,6 +870,10 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 else
                     imap_size += 3;
             }
+            else if (m_shear) {
+                // -shearDeformable: the retained nodes expose their rotations too
+                imap_size += 3;
+            }
         }
         else if (m_up) {
             imap_size += 1;
@@ -825,10 +883,10 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
         imap(1) = local_pos + 1; // Uy
         if (m_ndm == 3) {
             imap(2) = local_pos + 2; // Uz
-            if (i == 0 && m_rot_c) {
+            if (m_rot_c && (i == 0 || m_shear)) {
                 imap(3) = local_pos + 3; // Rx
-                imap(4) = local_pos + 4; // Rx
-                imap(5) = local_pos + 5; // Rx
+                imap(4) = local_pos + 4; // Ry
+                imap(5) = local_pos + 5; // Rz
             }
             else if (m_up) {
                 imap(3) = local_pos + 3; // P
@@ -1101,7 +1159,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     int NU0 = m_U0_computed ? m_U0.Size() : 0;
 
     // INT data 1: header with every size needed to read the rest
-    static ID idData1(13);
+    static ID idData1(15);
     idData1(0) = getTag();
     idData1(1) = NN;
     idData1(2) = NMAP;
@@ -1118,6 +1176,8 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     // side and calls resolveFamily, which cannot tell a quadrilateral face from
     // a tetrahedron without it
     idData1(12) = m_shape_request;
+    idData1(13) = m_shear_flag ? 1 : 0;
+    idData1(14) = m_shear ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send ID 1\n";
@@ -1160,7 +1220,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int dataTag = this->getDbTag();
 
     // INT data 1: header
-    static ID idData1(13);
+    static ID idData1(15);
     res = theChannel.recvID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive ID 1\n";
@@ -1179,6 +1239,8 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     m_U0_computed = idData1(10) == 1;
     m_family = idData1(11);
     m_shape_request = idData1(12);
+    m_shear_flag = idData1(13) == 1;
+    m_shear = idData1(14) == 1;
 
     // INT data 2: node ids and dof mapping
     ID idData2(NN + NMAP);
@@ -1483,8 +1545,9 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_U()
 
 const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
 {
-    // output
-    static Matrix K(15, 15);
+    // output: 6 constrained dofs + 3 retained nodes with 3 dofs each, or 6
+    // each when -shearDeformable exposes their rotations
+    static Matrix K;
 
     // collect triangle coordinates
     // in global coordinates
@@ -1557,10 +1620,21 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     // UCx = sum(N*URx) -> sum(N*URx) - UCx = 0
     // UCy = sum(N*URy) -> sum(N*URy) - UCy = 0
     // UCz = sum(N*URz) -> sum(N*URz) - UCz = 0
+    // default (thin, Kirchhoff): bending rotations from the slope of the
+    // transverse displacement
     // RCx = sum( d_URz_dY) -> sum( d_URz_dY) - RCx = 0 (local)
     // RCy = sum(-d_URz_dX) -> sum(-d_URz_dX) - RCy = 0 (local)
+    // -shearDeformable (thick, Mindlin): bending rotations from the
+    // interpolated nodal rotations of the host, theta = slope + gamma
+    // RCx = sum(N*RRx) -> sum(N*RRx) - RCx = 0 (local)
+    // RCy = sum(N*RRy) -> sum(N*RRy) - RCy = 0 (local)
+    // the drilling rotation is not a director rotation and keeps the skew part
+    // of the in-plane gradient in either case:
     // RCz = sum(d_URy_dX - d_URx_dY)/2.0 -> sum(d_URy_dX - d_URx_dY)/2.0 - RCz = 0 (local)
-    static Matrix B(6, 15);
+    int nrdof = m_shear ? 6 : 3;   // dofs each retained node exposes
+    int ncols = 6 + 3 * nrdof;
+    static Matrix B;
+    B.resize(6, ncols);
     B.Zero();
     // fill the -identity 6x6 block (transformed to global coordinates)
     // for constrained node+
@@ -1572,11 +1646,11 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
             for (int col = 0; col < 3; ++col)
                 B(j + row, j + col) = -R(row, col);
     }
-    // fill the 2 rows of 3 3x3 blocks (transformed to global coordinates)
+    // fill the 2 rows of 3 blocks (transformed to global coordinates)
     static Matrix BL(3, 3);
     static Matrix BG(3, 3);
     for (int i = 0; i < 3; ++i) {
-        int j = 6 + i * 3;
+        int j = 6 + i * nrdof;
         // U block
         BL.Zero();
         BL(0, 0) = N(i);
@@ -1586,22 +1660,35 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 3; ++col)
                 B(row, j + col) = BG(row, col);
-        // R block
+        // R block on the translational dofs
         BL.Zero();
-        BL(0, 2) = dNdX(i, 1);
-        BL(1, 2) = -dNdX(i, 0);
-        BL(2, 0) = -dNdX(i, 1) / 2.0; 
+        if (!m_shear) {
+            BL(0, 2) = dNdX(i, 1);
+            BL(1, 2) = -dNdX(i, 0);
+        }
+        BL(2, 0) = -dNdX(i, 1) / 2.0;
         BL(2, 1) = dNdX(i, 0) / 2.0;
         BG.addMatrixProduct(0.0, BL, R, 1.0);
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 3; ++col)
                 B(3 + row, j + col) = BG(row, col);
+        // R block on the rotational dofs: the local bending rotations are the
+        // interpolated nodal rotations resolved on the face frame, theta_local
+        // = R * theta_global
+        if (m_shear) {
+            for (int col = 0; col < 3; ++col) {
+                B(3, j + 3 + col) = N(i) * R(0, col);
+                B(4, j + 3 + col) = N(i) * R(1, col);
+            }
+        }
     }
 
     // Penalty stiffness
     double iK = m_K * std::sqrt(V);
 
     // compute stiffness
+    K.resize(ncols, ncols);
+    K.Zero();
     K.addMatrixTransposeProduct(0.0, B, B, iK);
 
     // done
@@ -1795,8 +1882,12 @@ const Matrix& ASDEmbeddedNodeElement::QUAD_3D(int mode)
 
     // B in local components, then rotated to global.
     // rows: 3 translations + 3 rotations of the constrained node
-    // cols: 6 constrained dofs + 4 retained nodes x 3 dofs
-    static Matrix B(6, 18);
+    // cols: 6 constrained dofs + 4 retained nodes x 3 dofs (x 6 dofs when
+    // -shearDeformable exposes their rotations)
+    int nrdof = m_shear ? 6 : 3;   // dofs each retained node exposes
+    int ncols = 6 + 4 * nrdof;
+    static Matrix B;
+    B.resize(6, ncols);
     B.Zero();
     for (int i = 0; i < 2; ++i) {
         int j = i * 3;
@@ -1807,7 +1898,7 @@ const Matrix& ASDEmbeddedNodeElement::QUAD_3D(int mode)
     static Matrix BL(3, 3);
     static Matrix BG(3, 3);
     for (int i = 0; i < 4; ++i) {
-        int j = 6 + i * 3;
+        int j = 6 + i * nrdof;
         // U block
         BL.Zero();
         BL(0, 0) = N(i);
@@ -1817,21 +1908,36 @@ const Matrix& ASDEmbeddedNodeElement::QUAD_3D(int mode)
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 3; ++col)
                 B(row, j + col) = BG(row, col);
-        // R block: the two bending rotations from the gradient of the
-        // out-of-plane displacement, and the drilling rotation from the skew
-        // part of the in-plane gradient
+        // R block on the translational dofs: by default the two bending
+        // rotations come from the gradient of the out-of-plane displacement
+        // (thin, Kirchhoff); with -shearDeformable they come from the nodal
+        // rotations below instead. The drilling rotation is not a director
+        // rotation and keeps the skew part of the in-plane gradient in
+        // either case.
         BL.Zero();
-        BL(0, 2) = dNdX(i, 1);
-        BL(1, 2) = -dNdX(i, 0);
+        if (!m_shear) {
+            BL(0, 2) = dNdX(i, 1);
+            BL(1, 2) = -dNdX(i, 0);
+        }
         BL(2, 0) = -dNdX(i, 1) / 2.0;
         BL(2, 1) = dNdX(i, 0) / 2.0;
         BG.addMatrixProduct(0.0, BL, R, 1.0);
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 3; ++col)
                 B(3 + row, j + col) = BG(row, col);
+        // R block on the rotational dofs: the local bending rotations are the
+        // interpolated nodal rotations resolved on the face frame, theta_local
+        // = R * theta_global
+        if (m_shear) {
+            for (int col = 0; col < 3; ++col) {
+                B(3, j + 3 + col) = N(i) * R(0, col);
+                B(4, j + 3 + col) = N(i) * R(1, col);
+            }
+        }
     }
 
-    static Matrix K(18, 18);
+    static Matrix K;
+    K.resize(ncols, ncols);
     K.Zero();
     K.addMatrixTransposeProduct(0.0, B, B, iK);
     return K;
