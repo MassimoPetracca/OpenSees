@@ -74,25 +74,16 @@ public:
 		m_origin = (P1global + P2global + P3global + P4global + P5global + P6global + P7global + P8global) * 0.125;
 		// compute the e1 e2 and e3 unit vectors of the local coordinate system
 		Vector3Type e1 = 0.25 * (P2global + P3global + P6global + P7global - P1global - P4global - P5global - P8global);
-		//opserr << " e1: " << e1 << endln;
 		e1.normalize();
-		//opserr << " e1 normalized: " << e1 << endln;
 		Vector3Type e2tmp = 0.25 * (P3global + P4global + P7global + P8global - P1global - P2global - P5global - P6global);
-		//opserr << " e2tmp: " << e2tmp;
 		e2tmp.normalize();
-		//opserr << " e2tmp normalized: " << e2tmp << endln;
 		// compute e3 as cross product of e1 and e2tmp
 		Vector3Type e3 = e1.cross(e2tmp);
-		//opserr << " e3: " << e3 << endln;
 		e3.normalize();
-		//opserr << " e3 normalized: " << e3 << endln;
 		// recompute e2 as cross product of e3 and e1 to ensure orthogonality
 		Vector3Type e2 = e3.cross(e1);
-		//opserr << " e2: " << e2 << endln;
 		e2.normalize();
-		//opserr << " e2 normalized: " << e2 << endln;
 
-		//opserr << "versors system: " << " e1 = " << e1 << "e2 = " << e2 << "e3 = " << e3;
 		// set the orientation matrix
 		for (int ii = 0; ii < 3; ii++) {
 			m_Rtilde(0, ii) = e1(ii);
@@ -100,11 +91,10 @@ public:
 			m_Rtilde(2, ii) = e3(ii);
 		}
 
-		//opserr << "R_tilde " << m_Rtilde;
 
 		if (matrixPtr != nullptr) {
 #if defined(USE_SIMPLE_RFRAME) && (USE_SIMPLE_RFRAME == 1)
-			// m_R = matrixPtr^T  (assumendo Rtilde_init = I).
+			// m_R = matrixPtr^T  (assuming Rtilde_init = I).
 			// matrixPtr is the "active" (best-fit polar/Kabsch) rotation taking
 			// initial -> current. The global->CR-local rotator is its transpose.
 			// m_Rtilde is DELIBERATELY LEFT OUT of the final composition to avoid
@@ -125,8 +115,6 @@ public:
 			m_R(2, 2) = 1.0;
 		}
 
-		//opserr << "Rcr" << m_orientation;
-		//opserr << "Origin" << m_origin;
 		// transform global coordinates to the local coordinate system
 
 		for (int ii = 0; ii < 3; ii++) {
@@ -141,16 +129,6 @@ public:
 
 		}
 
-		//opserr << "Rcr" << m_orientation << "\n";
-		//opserr << "Origin" << m_origin << "\n";
-		//opserr << "P1local" << m_P[0] << "\n";
-		//opserr << "P2local" << m_P[1] << "\n";
-		//opserr << "P3local" << m_P[2] << "\n";
-		//opserr << "P4local" << m_P[3] << "\n";
-		//opserr << "P5local" << m_P[4] << "\n";
-		//opserr << "P6local" << m_P[5] << "\n";
-		//opserr << "P7local" << m_P[6] << "\n";
-		//opserr << "P8local" << m_P[7] << "\n";
 
 	}
 

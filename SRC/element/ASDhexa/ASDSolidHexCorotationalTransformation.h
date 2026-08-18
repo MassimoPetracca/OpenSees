@@ -143,9 +143,6 @@ public:
         // save the T0 matrix in the reference coordiante system 
         m_Q0 = QuaternionType::FromRotationMatrix(LCS0.getRotationMatrix());
 
-		//opserr << "revertToStart: reference centroid C0 = " << m_C0 << endln;
-		//opserr << "revertToStart: reference frame T0 (as quaternion) = " << LCS0.Orientation() << endln;
-        //opserr << "revertToStart: reference Pippo R =" << LCS0.getRotationMatrix() << endln;
 
     }
 
@@ -162,11 +159,11 @@ public:
             }
             return;
         }
-        
+
         // get nodes and save initial displacements and rotations
         for (size_t i = 0; i < 8; i++) {
             m_nodes[i] = domain->getNode(node_ids(i));
-            
+
             if (m_nodes[i] == nullptr) {
                 opserr << "ASDSolidHexCorotationalTransformation::setDomain - no node " << node_ids(i)
                     << " exists in the model\n";
@@ -274,20 +271,13 @@ public:
 			iP(1) += globalDisplacements(index + 1) - m_U0(index + 1);
 			iP(2) += globalDisplacements(index + 2) - m_U0(index + 2);
         }
-        // printa coordinate
-		//opserr << "deformed nodal coordinates:\n";
-        //for (int i = 0; i < 8; i++) {
-            //opserr << "Node " << i + 1 << ": " << def[i] << endln;
-		//}
         // build b in GLOBAL axes (no matrixPtr -> m_R = I) so that the deformation
         // gradient F = J_b * J_a^-1 is the true global F (independent of the edge
         // frame Rtilde and hence of node ordering). polar(F) is then the rigid
         // rotation: = I for pure strain (patch-test exact) and = R for rigid motion.
 		ASDSolidHexLocalCoordinateSystem b(def[0], def[1], def[2], def[3], def[4], def[5], def[6], def[7]);
 
-        //opserr << "m_R:\n" << b.getRotationMatrix();
-		//opserr << "m_Rtilde:\n" << b.Orientation();
-        
+
 #if 0
         return b;
 #else // !0
@@ -308,7 +298,7 @@ public:
         static const int eta_n[8]  = { -1, -1, +1, +1, -1, -1, +1, +1 };
         static const int zeta_n[8] = { -1, -1, -1, -1, +1, +1, +1, +1 };
 
-        // Lambda: calcola F(xi,eta,zeta) e |J_a(xi,eta,zeta)|
+        // Lambda: computes F(xi,eta,zeta) and |J_a(xi,eta,zeta)|
         auto compute_F_at = [&](double xi, double eta, double zeta,
                                 double F_out[3][3], double& detJa_out)
         {
@@ -442,7 +432,7 @@ public:
             }
         }
 
-        // Iterazione di Newton per la decomposizione polare (metodo di Higham)
+        // Newton iteration for the polar decomposition (Higham's method)
         const int maxIter = 20;
         const double tol = 1e-12;
         for (int iter = 0; iter < maxIter; iter++) {
@@ -453,7 +443,7 @@ public:
                 }
             }
 
-            // Calcola l'inversa di R
+            // Compute the inverse of R
             double detR = R(0, 0) * (R(1, 1) * R(2, 2) - R(1, 2) * R(2, 1)) -
                 R(0, 1) * (R(1, 0) * R(2, 2) - R(1, 2) * R(2, 0)) +
                 R(0, 2) * (R(1, 0) * R(2, 1) - R(1, 1) * R(2, 0));
@@ -509,14 +499,11 @@ public:
                 }
             }
         }
-         
 
-        //opserr << "New Rotation Polar DEcomposition: " << R;
+
         //R.addMatrixProduct(0.0, R, a.Orientation(), 1.0);
         ASDSolidHexLocalCoordinateSystem c(def[0], def[1], def[2], def[3], def[4], def[5], def[6], def[7], &R);
 
-        //opserr << "m_R:\n" << c.getRotationMatrix();
-        //opserr << "m_Rtilde:\n" << c.Orientation();
         return c;
 #endif
     }
@@ -532,8 +519,6 @@ public:
 		QuaternionType Q = QuaternionType::FromRotationMatrix(LCS.getRotationMatrix());
         const Vector3Type& C = LCS.Origin();
 
-		//opserr << "Current corotational frame rotation (quaternion): " << Q << "\n";
-        //opserr << "Initial corotational frame rotation (quaternion): " << m_Q0 << "\n";
 
         for (int i = 0; i < 8; i++) {
 
@@ -574,7 +559,6 @@ public:
         // Each 3x3 diagonal block is the orientation matrix of the CR frame
         static MatrixType T(24, 24);
         LCS.ComputeTotalRotationMatrix(T);
-        //opserr << "Matrix T:" << T;
 
         // P: projector, 24x24. Pu alone removes only the rigid TRANSLATIONS;
         // the rotational part comes from -S*G, which accounts for the fact that
@@ -610,7 +594,6 @@ public:
 
         // Global RHS: T^T * P^T * f_local
         RHS.addMatrixTransposeVector(0.0, T, projectedLocalForces, 1.0);
-        //opserr << "RHS: \n" << RHS;
 
         if (!LHSrequired)
             return;
@@ -772,7 +755,7 @@ public:
         static MatrixType T(24, 24);
 
             LCS.ComputeTotalRotationMatrix(T);
-        
+
         return T;
     }
 
@@ -1062,8 +1045,6 @@ private:
             S(row + 2, 0) = xa(1);     S(row + 2, 1) = -xa(0);    S(row + 2, 2) = 0.0;
         }
     }
-
-
 
         inline const NodeContainerType& getNodes()const { return m_nodes; }
         inline NodeContainerType& getNodes() { return m_nodes; }

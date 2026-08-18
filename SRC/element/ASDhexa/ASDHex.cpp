@@ -239,8 +239,6 @@ namespace
 
     }
 
-
-
     /** \brie JacobianOperator
      *
      * This class is a utility to compute at a given integration point,
@@ -532,7 +530,7 @@ namespace
                 J[2][0] += X[i].z() * dNdxi;   J[2][1] += X[i].z() * dNdeta;   J[2][2] += X[i].z() * dNdzet;
             }
 
-            // det(J) con regola di Sarrus
+            // det(J) by Sarrus' rule
             return J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1])
                 - J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0])
                 + J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
@@ -631,15 +629,15 @@ namespace
                 };
 
             // =========================================================
-            // Costruzione trasformazione stress coerente con T0 (strain)
+            // Build the stress transformation consistent with T0 (strain)
             //
-            // Convenzioni usate nel codice:
-            // strain Voigt = [exx eyy ezz gxy gyz gzx]^T  con g = 2e
+            // Conventions used in the code:
+            // strain Voigt = [exx eyy ezz gxy gyz gzx]^T  with g = 2e
             // stress Voigt = [sxx syy szz sxy syz szx]^T
             //
-            // Se eps_phys = T0 * eps_skew,
-            // allora sig_phys = W^{-1} * T0^{-T} * W * sig_skew
-            // con W = diag(1,1,1,1/2,1/2,1/2)
+            // If eps_phys = T0 * eps_skew,
+            // then sig_phys = W^{-1} * T0^{-T} * W * sig_skew
+            // with W = diag(1,1,1,1/2,1/2,1/2)
             // =========================================================
             // ============================================
             // PRELIMINARY: 
@@ -659,10 +657,6 @@ namespace
                 S_ortho[gp] = S_orig[gp];
                 E_ortho[gp] = E_orig[gp];
 
-                // opserr << "S_ortho: \n" << S_ortho[gp];
-                // opserr << "S_orig: \n" << S_orig[gp];
-                 //opserr << "E_ortho: \n" << E_ortho[gp];
-                 //opserr << "E_orig: \n" << E_orig[gp];
             }
 
             // =========================================================
@@ -707,20 +701,6 @@ namespace
                 }
             }
 
-            //for (int i = 0; i < n_sigma; ++i) {
-            //    for (int k = 0; k < i; ++k) {
-            //        double prod = 0.0;
-            //        for (int gp = 0; gp < NumGP; ++gp) {
-            //            double jdet = compute_jdet(XI[gp], ETA[gp], ZETA[gp]);
-            //            double w = WTS[gp];
-            //            double dot = 0.0;
-            //            for (int r = 0; r < 6; ++r)
-            //                dot += S_ortho[gp](r, i) * S_ortho[gp](r, k);
-            //            prod += dot * jdet * w;
-            //        }
-            //        opserr << "STEP1 orth(" << i + 1 << "," << k + 1 << ") = " << prod << endln;
-            //    }
-            //}
             // =========================================================
             // STEP 2: Orthogonalize E_ortho against S_ortho by
             // enforcing C3 directly in skew space:
@@ -767,26 +747,6 @@ namespace
                 }
             }
 
-            //for (int j = 0; j < n_eps; ++j) {
-            //    for (int k = 0; k < n_sigma; ++k) {
-            //        double prod = 0.0;
-            //        for (int gp = 0; gp < NumGP; ++gp) {
-            //            double jdet = compute_jdet(XI[gp], ETA[gp], ZETA[gp]);
-            //            double dot = 0.0;
-            //            for (int r = 0; r < 6; ++r)
-            //                dot += E_ortho[gp](r, j) * S_ortho[gp](r, k);
-            //            prod += dot * jdet * WTS[gp];
-            //        }
-            //        opserr << "STEP2_jdet orth(" << j + 1 << "," << k + 1 << ") = " << prod << endln;
-            //    }
-            //}
-
-
-            // =========================================================
-            // Diagnostic check of C3 in skew space:
-            // ∫_hat E_ortho : S_orig dΩ = 0
-            // HERE it must NOT be multiplied by jdet
-            // =========================================================
             // =========================================================
             // FINAL TRANSFORMATION (eq. 56)
             // G_test = (1/jdet) * T0 * E_ortho
@@ -794,10 +754,8 @@ namespace
             for (int gp = 0; gp < NumGP; gp++) {
                 const double jdet = jdet_gp[gp];
 
-                //opserr << "to: \n" << T0;
                 G_at_gp[gp].Zero();
                 G_at_gp[gp].addMatrixProduct(0.0, T0, E_ortho[gp], 1.0 / jdet);
-                //opserr << "G_at_gp[" << gp << "]: \n" << G_at_gp[gp];
             }
 
 
@@ -826,7 +784,6 @@ namespace
                     sf.J0_inv(2, 0) * dx.x() + sf.J0_inv(2, 1) * dx.y() + sf.J0_inv(2, 2) * dx.z());
             }
 
-            //opserr <<"detJ0: " << sf.detJ0 << "\n";
 
             // evaluate the P vector of monomials at the skew frame pointsl  
             auto P = [](const vec3& xi, Vector& p) {
@@ -969,8 +926,6 @@ namespace
             c3 *= (1.0 / 8.0);
             c4 *= (1.0 / 8.0);
 
-
-
             orthogonalize();
 
             return true;
@@ -1072,9 +1027,6 @@ namespace
             dMdx.Zero();
             dMdx.addMatrixTransposeProduct(0.0, sf.J0_inv, dMdxi, 1.0);
 
-            //opserr << "M :" << M;
-            //opserr << "dMdxi :" << dMdxi;
-            //opserr << "dMdx :" << dMdx;
 
             // compute the B trial matrix in metric coordinates
             B_trial.Zero();
@@ -1095,8 +1047,6 @@ namespace
                 B_trial(5, idx1) = dMdx(2, ii);  // gzx
                 B_trial(5, idx3) = dMdx(0, ii);
             }
-
-
 
             // compute G_trial for the 9 quadratic + 3 volumetric modes
             auto dMTILDEDXI = [](const vec3& xiGP,
@@ -1359,9 +1309,6 @@ namespace
             b_u(5, c0) = dMa_dz;
         }
     }
-
-
-
 
 }
 
@@ -2776,7 +2723,7 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         RHS.Zero();
     if (options & OPT_LHS)
         LHS.Zero();
-                                                                                                                                                                                        
+
     // =========================================================
     // Compute the global displacement vector of nodes
     // =========================================================
@@ -2806,7 +2753,6 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
 		m_transformation->computeGlobalDisplacements(UG);
 
         // global displacement
-       //opserr << "Global displacements: \n" << UG;
 
         if (options & OPT_UPDATE)
             m_transformation->update(UG);
@@ -2817,8 +2763,6 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
 
         // local displacements
         m_transformation->calculateLocalDisplacements(local_cs,UG, UL);
-       // opserr << "PRIMA di transformToGlobal: LCS.Orientation() =\n" << local_cs.Orientation();
-		//opserr << "UL:\n" << UL;
 
     }
 
@@ -2926,7 +2870,6 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         Matrix dNdh(NumGP, 3);
         shapeFunctions(xi, eta, zeta, N);
         dshape(xi, eta, zeta, dNdh);
-        //opserr << "dNdh:\n" << dNdh;
         Jacobian3d J;
         if (!J.calculate(ASDSolidHexGlobals::instance().X, dNdh)) {
             opserr << "ASDSolidHex::calculateAll - element " << this->getTag()
@@ -2935,7 +2878,6 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         }
 
         dv = w * J.detJ;
-        //opserr << "element: " << this->getTag() << " detJ: " << J.detJ << "\n";
 
 
         // ===================================================
@@ -2951,19 +2893,9 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         B_trial = metric_basis.B_trial;
         G_trial = metric_basis.G_trial;
 
-
-        //opserr << "B_trial GP " << igauss << ":\n" << B_trial;
-
-
-
         // Recall G_test
         G_test = metric_basis.G_at_gp[igauss];
 
-        //opserr << "B_test at GP " << igauss << ":\n" << B_test;
-        //opserr << "B_trial at GP " << igauss << ":\n" << B_trial;
-        //opserr << "UG at GP " << igauss << ":\n" << UG;
-        //opserr << "G_trial at GP " << igauss << ":\n" << G_trial;
-        //opserr << "G_test at GP " << igauss << ":\n" << G_test;
 
         // ===================================================
         // Update the Strain and send them to the material
@@ -2972,19 +2904,12 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         {
             // compatible strain at the current GP
             // eps = B_v * u
-            //opserr << "element: " << this->getTag() << " GP: " << igauss << " UG: " << UG;
 
             eps.addMatrixVector(0.0, B_trial, UL, 1.0);
-            //opserr << "compatible strain at GP " << igauss << ":\n" << eps;
             // add incompatble strain from EAS at the current GP
             eps.addMatrixVector(1.0, G_trial, m_eas->alpha, 1.0);
-            //opserr << "alpha:" << m_eas->alpha;
-            //opserr << "incompatible strain at GP " << igauss << ":\n" << eps;
-            //opserr << "eps at GP " << igauss << ":\n" << eps;
             // set the trial strain to the material allocated to the Gauss point
             result += m_material[igauss]->setTrialStrain(eps);
-            //opserr << "Local Displacements: \n" << UL;
-            //opserr << "element: " << this->getTag() << " GP: " << igauss << " eps: " << eps;
         }
 
 
@@ -3004,7 +2929,6 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
             RHS.addMatrixTransposeVector(1.0, B_test, sig, dv);
             // upload the alpha residual for the current GP
             m_eas->alpha_residual.addMatrixTransposeVector(1.0, G_test, sig, -dv);
-            //opserr << "element: " << this->getTag() << " GP: " << igauss << " sig: " << sig;
 
         }
 
@@ -3029,15 +2953,11 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
             auto& BtC = ASDSolidHexGlobals::instance().BtC;
             BtC.addMatrixTransposeProduct(0.0, B_test, C, 1.0);
             m_eas->Kuq.addMatrixProduct(1.0, BtC, G_trial, dv);
-            //opserr << "k_uq at GP " << igauss << ":\n" << k_uq;
 
             // compute K_qu += Bq_test^T C B_u dV
             auto& CtBu = ASDSolidHexGlobals::instance().CtBu;
             CtBu.addMatrixProduct(0.0, C, B_trial, 1.0);
             m_eas->Kqu.addMatrixTransposeProduct(1.0, G_test, CtBu, dv);
-
-
-            //opserr << "k_qu at GP " << igauss << ":\n" << k_qu;
 
             // compute K_qq += Bq_test^T C Bq_trial dV
             auto& CtBq = ASDSolidHexGlobals::instance().CtBq;
@@ -3049,13 +2969,7 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
 
         }
 
-
-
-
     } // End of Gauss Loop
-
-
-
 
     // AGQI: static condensation
     if ((options & OPT_RHS) || (options & OPT_LHS))
@@ -3078,14 +2992,8 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         auto& K_uq_K_qq_inv_K_qu = ASDSolidHexGlobals::instance().Kuq_Kqqinv_Kqu;
         K_uq_K_qq_inv_K_qu.addMatrixProduct(0.0, K_uq_K_qq_inv, m_eas->Kqu, 1.0);
 
-
-
-
-
         if (options & OPT_RHS) {
-            //opserr << "RHS before adding EAS contribution:\n" << RHS;
             RHS.addMatrixVector(1.0, K_uq_K_qq_inv, m_eas->alpha_residual, 1.0);
-            //opserr << "RHS after adding EAS contribution:\n" << RHS;
 
         }
 
@@ -3093,7 +3001,6 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
             LHS.addMatrix(0.0, k_uu, 1.0);
             LHS.addMatrix(1.0, K_uq_K_qq_inv_K_qu, -1.0);
             // After the condensation, before returning LHS:
-			//opserr << "LHS after static condensation:\n" << LHS;
 
         }
     }
