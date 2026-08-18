@@ -42,10 +42,27 @@ class ASDEmbeddedNodeElement : public Element
 
 public:
 
+    // the geometric family of the embedding (host) element, deduced in
+    // setDomain from the number of retained nodes and from ndm
+    enum HostFamily {
+        Fam_Unknown = 0,
+        Fam_Tri = 1,     // 3 retained nodes (2D or 3D)
+        Fam_Tet = 2,     // 4 retained nodes in 3D
+        Fam_Quad = 3,    // 4 retained nodes in 2D
+        Fam_Hexa = 4,    // 8 retained nodes in 3D
+        Fam_Quad3D = 5   // 4 retained nodes in 3D (a shell or solid face)
+    };
+
+    // which dofs of the constrained node the element ties to the host field
+    enum ConstraintMode {
+        Mode_U = 0,   // translations only
+        Mode_UR = 1,  // translations + rotations (skew part of the gradient)
+        Mode_UP = 2   // translations + pressure (u-p nodes)
+    };
+
     // life cycle
     ASDEmbeddedNodeElement();
-    ASDEmbeddedNodeElement(int tag, int cNode, int rNode1, int rNode2, int rNode3, bool rot_flag, bool p_flag, double K, double KP);
-    ASDEmbeddedNodeElement(int tag, int cNode, int rNode1, int rNode2, int rNode3, int rNode4, bool rot_flag, bool p_flag, double K, double KP);
+    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown);
     virtual ~ASDEmbeddedNodeElement();
 
     // domain
@@ -94,17 +111,36 @@ private:
     const Matrix& TET_3D_U();
     const Matrix& TET_3D_UR();
     const Matrix& TET_3D_UP();
+    // isoparametric (non-simplex) hosts: the natural coordinate of the
+    // constrained node is obtained with a Newton inversion of the map, and the
+    // three constraint modes share one generic assembler
+    const Matrix& QUAD_2D(int mode);
+    const Matrix& HEX_3D(int mode);
+    // a quadrilateral host in 3D is a surface, not a volume: the constraint is
+    // written in the local frame of the (possibly warped) face, following the
+    // same scheme as TRI_3D_UR
+    const Matrix& QUAD_3D(int mode);
+    // resolves m_family from the retained node count, from m_ndm and, when
+    // those are not enough, from the user's -shape request
+    int resolveFamily() const;
 
 private:
 
     // the nodal ids, the first one is the constrained node,
-    // the other 3 (triangle in 2D or shell triangle in 3D) or 4 (tetrahedron in 3D)
-    // are the retained nodes
+    // the others are the retained nodes: 3 (triangle in 2D or shell triangle
+    // in 3D), 4 (quadrilateral in 2D or 3D, or tetrahedron in 3D) or 8
+    // (hexahedron)
     ID m_node_ids;
     // the nodes
     std::vector<Node*> m_nodes;
     // store the number of dimensions (2 or 3 are allowed)
     int m_ndm = 0;
+    // geometric family of the host element (see HostFamily)
+    int m_family = Fam_Unknown;
+    // the host family requested with -shape, or Fam_Unknown to let the element
+    // deduce it. It is only ever needed to tell a quadrilateral face from a
+    // tetrahedron, the one case where 4 retained nodes in 3D are ambiguous
+    int m_shape_request = Fam_Unknown;
     // total number of dofs
     int m_num_dofs = 0;
     // user input to constrain, if necessary, the rotation of the constrained node

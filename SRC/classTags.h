@@ -906,6 +906,9 @@
 #define ELE_TAG_CurvedPipe                      270
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_MEFI_3D        			  272 // C. N. Lopez
+#define ELE_TAG_ASDSolidHex                273 // ASDEA - 8-node PG-EAS hexahedron
+#define ELE_TAG_ASDTimoshenkoBeam2d        274 // ASDEA - reduced-integration Timoshenko beam
+#define ELE_TAG_ASDTimoshenkoBeam3d        275 // ASDEA - reduced-integration Timoshenko beam
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2

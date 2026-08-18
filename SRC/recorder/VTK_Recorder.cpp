@@ -1061,6 +1061,7 @@ VTK_Recorder::setVTKType()
     vtktypes[ELE_TAG_ShellMITC9] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ASDShellQ4] = VTK_QUAD;
     vtktypes[ELE_TAG_ASDShellT3] = VTK_TRIANGLE;
+    vtktypes[ELE_TAG_ASDSolidHex] = VTK_HEXAHEDRON;
     vtktypes[ELE_TAG_Plate1] = VTK_QUAD;
     vtktypes[ELE_TAG_Brick] = VTK_HEXAHEDRON;
     vtktypes[ELE_TAG_BbarBrick] = VTK_HEXAHEDRON;

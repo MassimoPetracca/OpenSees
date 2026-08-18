@@ -1308,6 +1308,7 @@ GmshRecorder::setGMSHType()
     gmshtypes[ELE_TAG_ShellMITC9] = GMSH_POLY_VERTEX;
     gmshtypes[ELE_TAG_ASDShellQ4] = GMSH_QUAD;
     gmshtypes[ELE_TAG_ASDShellT3] = GMSH_TRIANGLE;
+    gmshtypes[ELE_TAG_ASDSolidHex] = GMSH_HEXAHEDRON;
     gmshtypes[ELE_TAG_Plate1] = GMSH_QUAD;
     gmshtypes[ELE_TAG_Brick] = GMSH_HEXAHEDRON;
     gmshtypes[ELE_TAG_BbarBrick] = GMSH_HEXAHEDRON;

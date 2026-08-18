@@ -1866,6 +1866,7 @@ PVDRecorder::setVTKType()
     vtktypes[ELE_TAG_ShellMITC9] = VTK_POLY_VERTEX;
     vtktypes[ELE_TAG_ASDShellQ4] = VTK_QUAD;
     vtktypes[ELE_TAG_ASDShellT3] = VTK_TRIANGLE;
+    vtktypes[ELE_TAG_ASDSolidHex] = VTK_HEXAHEDRON;
     vtktypes[ELE_TAG_Plate1] = VTK_QUAD;
     vtktypes[ELE_TAG_Brick] = VTK_HEXAHEDRON;
     vtktypes[ELE_TAG_BbarBrick] = VTK_HEXAHEDRON;
@@ -1965,6 +1966,8 @@ PVDRecorder::setVTKType()
     vtktypes[ELE_TAG_PFEMElement2Dmini] = VTK_TRIANGLE;
     vtktypes[ELE_TAG_ElasticTimoshenkoBeam2d] = VTK_LINE;
     vtktypes[ELE_TAG_ElasticTimoshenkoBeam3d] = VTK_LINE;
+    vtktypes[ELE_TAG_ASDTimoshenkoBeam2d] = VTK_LINE;
+    vtktypes[ELE_TAG_ASDTimoshenkoBeam3d] = VTK_LINE;
     vtktypes[ELE_TAG_ElastomericBearingUFRP2d] = VTK_LINE;
     vtktypes[ELE_TAG_ElastomericBearingUFRP3d] = VTK_LINE;
     vtktypes[ELE_TAG_RJWatsonEQS2d] = VTK_LINE;

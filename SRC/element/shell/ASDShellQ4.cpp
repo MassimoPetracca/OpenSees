@@ -1454,10 +1454,21 @@ int  ASDShellQ4::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     bool use_nldrill = static_cast<bool>(idData(counter++));
     bool use_local_x = static_cast<bool>(idData(counter++));
     
-    // create transformation
-    if (m_transformation)
+    // create transformation.
+    // NOTE: only (re)create it when there is none, or when the received kinematics
+    // differs from the existing one. Do NOT delete and rebuild unconditionally:
+    // restoreInternalData() below restores U0/Q0/C0 but NOT the node pointers, and
+    // the database restore path calls recvSelf() WITHOUT a following setDomain(),
+    // so a freshly built transformation would be left with null nodes and would
+    // segfault on the next computeGlobalDisplacements(). Reusing the existing one
+    // keeps the pointers setDomain() already installed; in the object-broker path
+    // there is nothing to reuse, a new one is built and setDomain() fills it in.
+    if (m_transformation && m_transformation->isLinear() != linear_transform) {
         delete m_transformation;
-    m_transformation = linear_transform ? new ASDShellQ4Transformation() : new ASDShellQ4CorotationalTransformation();
+        m_transformation = nullptr;
+    }
+    if (m_transformation == nullptr)
+        m_transformation = linear_transform ? new ASDShellQ4Transformation() : new ASDShellQ4CorotationalTransformation();
     // create load
     if (has_load) {
         if (m_load == nullptr)
@@ -1510,7 +1521,11 @@ int  ASDShellQ4::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     int Neas = use_eas ? 268 : 0;
     int Nnldrill = use_nldrill ? 72 : 0;
     int NT = m_transformation->internalDataSize();
-    Vector vectData(4 + 4 + 1 + 1 + 1 + Neas + Nnldrill + NLoad + NT);
+    // NOTE: Nlocalx must be part of the size, exactly as in sendSelf. Without it
+    // the received vector is 3 doubles too short whenever -local_x is used, and
+    // restoreInternalData() then aborts on its own size check (or, if the channel
+    // tolerates the mismatch, every field after local_x is read shifted).
+    Vector vectData(4 + 4 + 1 + 1 + 1 + Nlocalx + Neas + Nnldrill + NLoad + NT);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDShellQ4::recvSelf() - " << this->getTag() << " failed to receive Vector\n";

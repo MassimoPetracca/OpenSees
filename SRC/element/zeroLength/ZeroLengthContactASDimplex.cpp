@@ -610,7 +610,7 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     sv.dtime_n = ddata(26);
     sv.dtime_n_commit = ddata(27);
     gap0(0) = ddata(28);
-    gap0(1) = ddata(39);
+    gap0(1) = ddata(29);
     gap0(2) = ddata(30);
 
     return 0;
