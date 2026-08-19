@@ -63,6 +63,9 @@ public:
     // domain
     const char* getClassType(void) const { return "ASDTet"; }
     void setDomain(Domain* theDomain);
+    // staged construction: re-capture the initial displacement offset (m_U0)
+    void onActivate();
+    void onDeactivate();
 
     // print
     void Print(OPS_Stream& s, int flag);
@@ -103,6 +106,8 @@ private:
 
     // displacement since activation (U - U0), 12 components
     void computeDisplacements(Vector& d) const;
+    // fills m_U0 from the trial displacements (see m_U0)
+    void captureInitialDisp();
     // local kernel: strain update (OPT_UPDATE), local stiffness (tangent or
     // initial) and local internal force, on the deformational displacements
     int calculateAll(Matrix& K, Vector& f, int options);

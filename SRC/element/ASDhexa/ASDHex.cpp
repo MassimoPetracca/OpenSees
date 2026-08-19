@@ -1627,16 +1627,50 @@ void  ASDSolidHex::setDomain(Domain* theDomain)
         }
     }
 
-    // only if not already initialized from recvSelf: recvSelf restores both the
-    // EAS state and the transformation's internal data, so re-initializing here
-    // would throw them away.
+    // only if not already initialized from recvSelf: recvSelf restores the
+    // EAS state, the initial displacement offset and the transformation's
+    // internal data, so re-initializing here would throw them away.
     if (!m_initialized) {
         initializePG_EAS();
+        captureInitialDisp();
         m_initialized = true;
     }
 
     // call base class implementation
     DomainComponent::setDomain(theDomain);
+}
+
+void ASDSolidHex::captureInitialDisp()
+{
+    for (int i = 0; i < NumNodes; ++i) {
+        const Vector& iU = nodePtrs[i]->getTrialDisp();
+        for (int j = 0; j < 3; ++j)
+            m_U0(3 * i + j) = iU(j);
+    }
+}
+
+void ASDSolidHex::onActivate()
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free: the element-side one for the linear path,
+    // the transformation's own for the corotational path (the reference frame is
+    // not touched: it comes from the nodal coordinates alone). setDomain() is
+    // deliberately NOT re-run: it would re-initialize the damping and re-validate
+    // the geometry for nothing.
+    captureInitialDisp();
+    if (m_use_corotational)
+        m_transformation->forceCaptureInitialDisp();
+    // The PG-EAS internal DOFs are baselined on the offset displacements, so they
+    // have to follow the new offset or they would keep a stale baseline - same as
+    // ASDShellQ4 re-running AGQIinitialize() on activation. The local displacements
+    // at the activation configuration are exactly the new offset, so the correct
+    // baseline is zero, which is what initializePG_EAS() seeds.
+    initializePG_EAS();
+    this->update();
+}
+
+void ASDSolidHex::onDeactivate()
+{
 }
 
 int ASDSolidHex::setDamping(Domain* theDomain, Damping* damping)
@@ -2112,7 +2146,8 @@ int ASDSolidHex::sendSelf(int commitTag, Channel& theChannel)
     // 1 tag + 8 node tags + 1 corotational flag + 1 initialization flag
     // + 1 has_load flag + 16 -> 8 pairs of (material class tag, material db tag)
     // + 2 -> damping class tag + damping db tag (0, 0 when there is no damping)
-    static ID idData(30);
+    // + 1 activation flag
+    static ID idData(31);
     counter = 0;
     idData(counter++) = this->getTag();
     for (int i = 0; i < NumNodes; ++i)
@@ -2149,6 +2184,8 @@ int ASDSolidHex::sendSelf(int commitTag, Channel& theChannel)
         idData(counter++) = 0;
         idData(counter++) = 0;
     }
+    // activation state: an element deactivated before the transfer must come back deactivated
+    idData(counter++) = is_this_element_active ? 1 : 0;
 
     res = theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
@@ -2158,18 +2195,22 @@ int ASDSolidHex::sendSelf(int commitTag, Channel& theChannel)
 
     // DOUBLE data
     // 4 rayleigh damping factors
+    // + 3 body force
+    // + 24 initial displacement offset (see m_U0), so a restore does not
+    //   re-capture it from the already displaced nodes
     // + EAS state
     // + (optional) 24 load
     // + (optional) transformation internal data
     int NLoad = has_load ? NDOF : 0;
     int NT = m_use_corotational ? m_transformation->internalDataSize() : 0;
-    Vector vectData(4 + 3 + ASDSolidHex_EAS_DATA_SIZE + NLoad + NT);
+    Vector vectData(4 + 3 + NDOF + ASDSolidHex_EAS_DATA_SIZE + NLoad + NT);
     counter = 0;
     vectData(counter++) = alphaM;
     vectData(counter++) = betaK;
     vectData(counter++) = betaK0;
     vectData(counter++) = betaKc;
     for (int i = 0; i < 3; ++i) vectData(counter++) = m_body[i];
+    for (int i = 0; i < NDOF; ++i) vectData(counter++) = m_U0(i);
     for (int i = 0; i < 12; ++i) vectData(counter++) = m_eas->alpha(i);
     for (int i = 0; i < 12; ++i) vectData(counter++) = m_eas->alpha_commit(i);
     for (int i = 0; i < 12; ++i) vectData(counter++) = m_eas->alpha_residual(i);
@@ -2226,7 +2267,7 @@ int  ASDSolidHex::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&
     int counter;
 
     // INT data
-    static ID idData(30);
+    static ID idData(31);
     res = theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDSolidHex::recvSelf() - failed to receive ID\n";
@@ -2292,10 +2333,13 @@ int  ASDSolidHex::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&
     int dmpClassTag = idData(counter++);
     int dmpDbTag = idData(counter++);
 
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = idData(counter++) == 1;
+
     // DOUBLE data
     int NLoad = has_load ? NDOF : 0;
     int NT = m_use_corotational ? m_transformation->internalDataSize() : 0;
-    Vector vectData(4 + 3 + ASDSolidHex_EAS_DATA_SIZE + NLoad + NT);
+    Vector vectData(4 + 3 + NDOF + ASDSolidHex_EAS_DATA_SIZE + NLoad + NT);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDSolidHex::recvSelf() - failed to receive Vector\n";
@@ -2308,6 +2352,7 @@ int  ASDSolidHex::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&
     betaK0 = vectData(counter++);
     betaKc = vectData(counter++);
     for (int i = 0; i < 3; ++i) m_body[i] = vectData(counter++);
+    for (int i = 0; i < NDOF; ++i) m_U0(i) = vectData(counter++);
     if (m_eas == nullptr)
         m_eas = new EASData();
     for (int i = 0; i < 12; ++i) m_eas->alpha(i) = vectData(counter++);
@@ -2745,8 +2790,11 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
     }
 
     if (!m_use_corotational) {
-		// if is linear use that displacmenets as local displacements as well
+		// if is linear use that displacmenets as local displacements as well,
+        // net of the initial displacement offset (see m_U0). In the corotational
+        // path the offset is applied by the transformation itself.
         UL = UG;
+        UL.addVector(1.0, m_U0, -1.0);
     } else {
 		// if is corotaional compute the deformational part of displacements as local displacements
 		// Global Displacements        

@@ -219,17 +219,38 @@ void ASDTet::setDomain(Domain* theDomain)
     if (m_transformation)
         m_transformation->setReference(m_nodes, m_g);
 
-    // initial displacements (activation-time), for staged construction
+    // initial displacements (activation-time), for staged construction.
+    // Not done again after a recvSelf, which brings m_U0 in already captured.
     if (!m_initialized) {
-        for (int a = 0; a < 4; ++a) {
-            const Vector& iu = m_nodes[static_cast<std::size_t>(a)]->getTrialDisp();
-            for (int i = 0; i < 3; ++i)
-                m_U0(3 * a + i) = iu(i);
-        }
+        captureInitialDisp();
         m_initialized = true;
     }
 
     DomainComponent::setDomain(theDomain);
+}
+
+void ASDTet::captureInitialDisp()
+{
+    for (int a = 0; a < 4; ++a) {
+        const Vector& iu = m_nodes[static_cast<std::size_t>(a)]->getTrialDisp();
+        for (int i = 0; i < 3; ++i)
+            m_U0(3 * a + i) = iu(i);
+    }
+}
+
+void ASDTet::onActivate()
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free. setDomain() is deliberately NOT re-run:
+    // everything else it computes comes from the nodal coordinates, which have not
+    // moved. The corotational transformation (if any) is stateless and works on the
+    // already-offset displacements, so it needs nothing.
+    captureInitialDisp();
+    this->update();
+}
+
+void ASDTet::onDeactivate()
+{
 }
 
 void ASDTet::Print(OPS_Stream& s, int flag)
@@ -472,7 +493,8 @@ int ASDTet::sendSelf(int commitTag, Channel& theChannel)
             m_material->setDbTag(matDbTag);
     }
     idData(8) = matDbTag;
-    idData(9) = 0; // reserved
+    // activation state: an element deactivated before the transfer must come back deactivated
+    idData(9) = is_this_element_active ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDTet::sendSelf() - " << getTag() << " failed to send ID\n";
@@ -519,6 +541,8 @@ int ASDTet::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBr
     m_initialized = idData(6) == 1;
     int matClassTag = idData(7);
     int matDbTag = idData(8);
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = idData(9) == 1;
 
     if (m_use_corotational && m_transformation == nullptr)
         m_transformation = new ASDSolidTet4CorotationalTransformation();

@@ -196,6 +196,23 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // forceCaptureInitialDisp
+    // Re-capture the initial displacement offset (m_U0) at the current
+    // configuration. Called by the element on activation, so a staged element
+    // is born strain free. The reference frame (m_C0, m_Q0) comes from the
+    // reference coordinates alone and is not affected.
+    // -----------------------------------------------------------------------
+    void forceCaptureInitialDisp()
+    {
+        for (size_t i = 0; i < 8; i++) {
+            const Vector& iU = m_nodes[i]->getTrialDisp();
+            size_t index = i * 3;
+            for (size_t j = 0; j < 3; j++)
+                m_U0(index + j) = iU(j);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // revertToLastCommit
     // No nodal rotation state to revert for Hex8.
     // -----------------------------------------------------------------------

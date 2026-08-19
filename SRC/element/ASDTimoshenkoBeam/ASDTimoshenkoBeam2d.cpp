@@ -753,7 +753,7 @@ ASDTimoshenkoBeam2d::sendSelf(int commitTag, Channel &theChannel)
 {
     int dbTag = this->getDbTag();
 
-    static Vector data(15);
+    static Vector data(16);
     data(0) = this->getTag();
     data(1) = connectedExternalNodes(0);
     data(2) = connectedExternalNodes(1);
@@ -793,6 +793,9 @@ ASDTimoshenkoBeam2d::sendSelf(int commitTag, Channel &theChannel)
         data(14) = dampingDbTag;
     }
 
+    // activation state: an element deactivated before the transfer must come back deactivated
+    data(15) = is_this_element_active ? 1.0 : 0.0;
+
     if (theChannel.sendVector(dbTag, commitTag, data) < 0) {
         opserr << "ASDTimoshenkoBeam2d::sendSelf() - failed to send data Vector\n";
         return -1;
@@ -825,7 +828,7 @@ ASDTimoshenkoBeam2d::recvSelf(int commitTag, Channel &theChannel,
 {
     int dbTag = this->getDbTag();
 
-    static Vector data(15);
+    static Vector data(16);
 
     if (theChannel.recvVector(dbTag, commitTag, data) < 0) {
         opserr << "ASDTimoshenkoBeam2d::recvSelf() - failed to recv data Vector\n";
@@ -847,6 +850,9 @@ ASDTimoshenkoBeam2d::recvSelf(int commitTag, Channel &theChannel,
     betaK = data(10);
     betaK0 = data(11);
     betaKc = data(12);
+
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = data(15) > 0.0;
 
     // create a new crdTransf object if one needed
     if (crdTransf == 0 || crdTransf->getClassTag() != crdTransfClassTag) {
@@ -1295,4 +1301,25 @@ ASDTimoshenkoBeam2d::activateParameter(int passedParameterID)
 {
     parameterID = passedParameterID;
     return 0;
+}
+
+void
+ASDTimoshenkoBeam2d::onActivate(void)
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free. The offset lives in the coordinate
+    // transformation, together with the reference length and orientation - and those
+    // come from the nodal coordinates alone, so they are not affected.
+    // setDomain() is deliberately NOT re-run: it re-initializes the damping.
+    // NOTE: forceCaptureInitialDisp() comes from the element-activation branch, so
+    // this file compiles only in a tree that includes it.
+    crdTransf->forceCaptureInitialDisp();
+    if (crdTransf->initialize(theNodes[0], theNodes[1]))
+        opserr << "ASDTimoshenkoBeam2d::onActivate() - error re-initializing coordinate transformation\n";
+    this->update();
+}
+
+void
+ASDTimoshenkoBeam2d::onDeactivate(void)
+{
 }

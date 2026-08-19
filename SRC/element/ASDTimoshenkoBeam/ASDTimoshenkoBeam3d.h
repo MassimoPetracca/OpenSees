@@ -74,6 +74,10 @@ class ASDTimoshenkoBeam3d : public Element
 
     int getNumDOF(void);
     void setDomain(Domain *theDomain);
+    // staged construction: re-capture the initial displacement offset,
+    // which lives in the coordinate transformation
+    void onActivate(void);
+    void onDeactivate(void);
 
     // public methods to set the state of the element
     int commitState(void);

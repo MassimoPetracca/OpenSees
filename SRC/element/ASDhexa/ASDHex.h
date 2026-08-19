@@ -109,6 +109,9 @@ public:
 
     // domain
     void setDomain(Domain* theDomain);
+    // staged construction: re-capture the initial displacement offset
+    void onActivate();
+    void onDeactivate();
 
     // damping
     int setDamping(Domain* theDomain, Damping* damping);
@@ -164,6 +167,8 @@ private:
     int calculateAll(Matrix& LHS, Vector& RHS, int options);
     void updatePG_EAS(const Vector& U);
     void initializePG_EAS();
+    // fills m_U0 from the trial displacements (see m_U0)
+    void captureInitialDisp();
 
 private:
 
@@ -195,6 +200,16 @@ private:
     ASDSolidHexCorotationalTransformation* m_transformation;
 
 	bool m_initialized;
+
+    // Initial displacement offset for the LINEAR kinematics path, in global cs
+    // (8 nodes x 3 translations): the nodal displacement present when the element
+    // enters the domain - or when it is activated - subtracted from the trial
+    // displacements so that an element born in an already displaced mesh starts
+    // strain free. In the corotational path the equivalent offset lives inside
+    // m_transformation. Captured under the same m_initialized latch as the
+    // transformation's, and serialized like it, so a recvSelf does not re-capture
+    // it from the already displaced nodes.
+    Vector m_U0 = Vector(NDOF);
 
     // Cache of everything metric_basis::initialize_metric() and its
     // orthogonalize() produce. Both depend on the REFERENCE geometry only --
