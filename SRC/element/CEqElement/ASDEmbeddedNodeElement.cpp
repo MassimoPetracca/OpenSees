@@ -40,6 +40,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <limits>
@@ -576,7 +577,7 @@ OPS_ASDEmbeddedNodeElement(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-p> <-K $K> <-KP $KP> <-shape $shape>\n"
+    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape>\n"
         "   3 retained nodes = triangle (2D or 3D)\n"
         "   4 retained nodes = quadrilateral in 2D; in 3D a tetrahedron, or a\n"
         "                      quadrilateral face with -shape quad\n"
@@ -588,7 +589,9 @@ OPS_ASDEmbeddedNodeElement(void)
         "                      the constrained node to the interpolated nodal\n"
         "                      rotations of the host instead of the slope of the\n"
         "                      transverse displacement (correct for thick shells,\n"
-        "                      where rotation = slope + shear deformation).\n";
+        "                      where rotation = slope + shear deformation).\n"
+        "   -corotational: with -rot on a 3D host, make the constraint exact\n"
+        "                      under finite rotations of the host patch.\n";
 
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs < 5) {
@@ -747,9 +750,9 @@ OPS_ASDEmbeddedNodeElement(void)
         return 0;
     }
     if (corot) {
-        if (!rot || pressure || shear) {
+        if (!rot || pressure) {
             opserr << "ASDEmbeddedNodeElement ERROR: -corotational requires -rot and cannot be "
-                << "combined with -p or (for now) -shearDeformable.\n" << descr;
+                << "combined with -p.\n" << descr;
             return 0;
         }
         if (nret != 8 && nret != 4 && nret != 3) {
@@ -921,14 +924,11 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                     }
                     m_shear = true;
                 }
-                // -corotational: hexa host only for now; same silent downgrade
-                // as -rot when the constrained node has no rotational dofs
+                // -corotational: same silent downgrade as -rot when the
+                // constrained node has no rotational dofs. It combines freely
+                // with -shearDeformable, whose own checks above already
+                // guarantee the surface host and the 6-dof retained nodes.
                 m_corot = m_corot_flag && m_rot_c;
-                if (m_corot && m_shear) {
-                    opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
-                        << " - -corotational with -shearDeformable is not supported yet.\n";
-                    exit(-1);
-                }
                 if (m_p_flag && ndf == 4) {
                     // all others should have same ndf (u-p)
                     m_up = true;
@@ -1044,6 +1044,23 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
         m_U0_computed = true;
     }
 
+    // -corotational + -shearDeformable: per-retained-node quaternion state.
+    // Allocate to identity only when the size is wrong, so that a state
+    // restored by recvSelf (already correctly sized) is preserved.
+    if (m_corot && m_shear) {
+        std::size_t nret = m_nodes.size() - 1;
+        if (m_qa.size() != 4 * nret) {
+            m_qa.assign(4 * nret, 0.0);
+            m_qa_conv.assign(4 * nret, 0.0);
+            m_rva.assign(3 * nret, 0.0);
+            m_rva_conv.assign(3 * nret, 0.0);
+            for (std::size_t a = 0; a < nret; ++a) {
+                m_qa[4 * a] = 1.0;
+                m_qa_conv[4 * a] = 1.0;
+            }
+        }
+    }
+
     // call base class implementation
     DomainComponent::setDomain(theDomain);
 }
@@ -1112,6 +1129,26 @@ int ASDEmbeddedNodeElement::update()
         q.normalize();
         m_qs[0] = q.w(); m_qs[1] = q.x(); m_qs[2] = q.y(); m_qs[3] = q.z();
         for (int i = 0; i < 3; ++i) m_rv[i] = rv[i];
+        // -shearDeformable: the same bookkeeping for every retained node
+        if (m_shear) {
+            int nn = static_cast<int>(m_nodes.size()) - 1;
+            int pos = m_nodes[0]->getNumberDOF();
+            for (int a = 0; a < nn; ++a) {
+                const Vector& au = m_nodes[static_cast<std::size_t>(a + 1)]->getTrialDisp();
+                double arv[3];
+                for (int i = 0; i < 3; ++i)
+                    arv[i] = au(3 + i) - (m_U0_computed ? m_U0(pos + 3 + i) : 0.0);
+                ASDQuaternion<double> adq = ASDQuaternion<double>::FromRotationVector(
+                    arv[0] - m_rva[3 * a], arv[1] - m_rva[3 * a + 1], arv[2] - m_rva[3 * a + 2]);
+                ASDQuaternion<double> aq(m_qa[4 * a], m_qa[4 * a + 1], m_qa[4 * a + 2], m_qa[4 * a + 3]);
+                aq = adq * aq;
+                aq.normalize();
+                m_qa[4 * a] = aq.w(); m_qa[4 * a + 1] = aq.x();
+                m_qa[4 * a + 2] = aq.y(); m_qa[4 * a + 3] = aq.z();
+                for (int i = 0; i < 3; ++i) m_rva[3 * a + i] = arv[i];
+                pos += m_nodes[static_cast<std::size_t>(a + 1)]->getNumberDOF();
+            }
+        }
     }
     return 0;
 }
@@ -1120,6 +1157,8 @@ int ASDEmbeddedNodeElement::commitState()
 {
     for (int i = 0; i < 4; ++i) m_qs_conv[i] = m_qs[i];
     for (int i = 0; i < 3; ++i) m_rv_conv[i] = m_rv[i];
+    m_qa_conv = m_qa;
+    m_rva_conv = m_rva;
     return Element::commitState();
 }
 
@@ -1127,6 +1166,8 @@ int ASDEmbeddedNodeElement::revertToLastCommit()
 {
     for (int i = 0; i < 4; ++i) m_qs[i] = m_qs_conv[i];
     for (int i = 0; i < 3; ++i) m_rv[i] = m_rv_conv[i];
+    m_qa = m_qa_conv;
+    m_rva = m_rva_conv;
     return 0;
 }
 
@@ -1136,6 +1177,13 @@ int ASDEmbeddedNodeElement::revertToStart()
     m_rv[0] = m_rv[1] = m_rv[2] = 0.0;
     for (int i = 0; i < 4; ++i) m_qs_conv[i] = m_qs[i];
     for (int i = 0; i < 3; ++i) m_rv_conv[i] = m_rv[i];
+    for (std::size_t a = 0; 4 * a < m_qa.size(); ++a) {
+        m_qa[4 * a] = 1.0;
+        m_qa[4 * a + 1] = m_qa[4 * a + 2] = m_qa[4 * a + 3] = 0.0;
+    }
+    std::fill(m_rva.begin(), m_rva.end(), 0.0);
+    m_qa_conv = m_qa;
+    m_rva_conv = m_rva;
     return 0;
 }
 
@@ -1320,7 +1368,10 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
     corotSetup();
     typedef ASDQuaternion<double> Q4;
     int nn = static_cast<int>(m_nodes.size()) - 1;
-    int ncols = 6 + 3 * nn;
+    // with -shearDeformable the retained nodes expose their rotations too, so
+    // the reduced dofset interleaves [u(3) r(3)] per retained node
+    int nr = m_shear ? 6 : 3;
+    int ncols = 6 + nr * nn;
 
     // current configuration (getGlobalDisplacements removes U0)
     const Vector& U = getGlobalDisplacements();
@@ -1414,10 +1465,13 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
                 w1 += m_cE0(i, 1) * v(a, i);
                 w2 += m_cE0(i, 2) * v(a, i);
             }
-            // bending from the slope of the transverse deformational field,
+            // bending from the slope of the transverse deformational field
+            // (with -shearDeformable it comes from the nodal rotations below),
             // drilling from the in-plane skew (the linear kernel, corotated)
-            om(0) += m_cD(a, 1) * w2;
-            om(1) += -m_cD(a, 0) * w2;
+            if (!m_shear) {
+                om(0) += m_cD(a, 1) * w2;
+                om(1) += -m_cD(a, 0) * w2;
+            }
             om(2) += 0.5 * (m_cD(a, 0) * w1 - m_cD(a, 1) * w0);
         }
         else {
@@ -1448,6 +1502,23 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
     }
     else {
         thloc = theta;
+    }
+
+    // -shearDeformable: the bending rows read the N-weighted deformational
+    // nodal rotations theta_a = rotvec(R^T Ra) of the host, in E0 components
+    static Matrix ThA;
+    if (m_shear) {
+        ThA.resize(nn, 3);
+        for (int a = 0; a < nn; ++a) {
+            Q4 qa(m_qa[4 * a], m_qa[4 * a + 1], m_qa[4 * a + 2], m_qa[4 * a + 3]);
+            Q4 qda = qR.conjugate() * qa;
+            qda.normalize();
+            double t0, t1, t2;
+            qda.toRotationVector(t0, t1, t2);
+            ThA(a, 0) = t0; ThA(a, 1) = t1; ThA(a, 2) = t2;
+            for (int i = 0; i < 2; ++i)
+                om(i) += m_cN(a) * (m_cE0(0, i) * t0 + m_cE0(1, i) * t1 + m_cE0(2, i) * t2);
+        }
     }
 
     g.resize(6);
@@ -1484,7 +1555,7 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
                 double s = 0.0;
                 for (int k = 0; k < 3; ++k)
                     s += Gb(i, k) * R(j, k);
-                DW(i, 6 + 3 * a + j) = s;
+                DW(i, 6 + nr * a + j) = s;
             }
     }
 
@@ -1503,7 +1574,7 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
             B(i, j) = -R(j, i);                       // -R^T on slave u
         for (int a = 0; a < nn; ++a)
             for (int j = 0; j < 3; ++j)
-                B(i, 6 + 3 * a + j) = m_cN(a) * R(j, i);
+                B(i, 6 + nr * a + j) = m_cN(a) * R(j, i);
     }
     // + skew(z) DW
     for (int col = 0; col < ncols; ++col) {
@@ -1515,16 +1586,23 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
     // or the surface slope/drilling operator premultiplied by E0^T components.
     static Matrix LEV(3, 3);
     LEV.Zero();
+    // -shearDeformable: SHW accumulates sum_a N_a E0^T Tinv_a, the -dw part of
+    // d theta_a = Tinv_a (R^T dphi_a - dw), folded into the frame term below
+    static Matrix SHW(3, 3);
+    SHW.Zero();
     static Matrix OPa(3, 3);
     static Matrix SY(3, 3);
     for (int a = 0; a < nn; ++a) {
         OPa.Zero();
         if (m_corot_surf) {
-            // om_local = OPloc * (E0^T dv_a): rows [D_y w2; -D_x w2; skew/2]
+            // om_local = OPloc * (E0^T dv_a): rows [D_y w2; -D_x w2; skew/2];
+            // with -shearDeformable the bending rows do not read dv_a
             static Matrix OPloc(3, 3);
             OPloc.Zero();
-            OPloc(0, 2) = m_cD(a, 1);
-            OPloc(1, 2) = -m_cD(a, 0);
+            if (!m_shear) {
+                OPloc(0, 2) = m_cD(a, 1);
+                OPloc(1, 2) = -m_cD(a, 0);
+            }
             OPloc(2, 0) = -0.5 * m_cD(a, 1);
             OPloc(2, 1) = 0.5 * m_cD(a, 0);
             // OPa = OPloc * E0^T
@@ -1547,7 +1625,7 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
                 double s = 0.0;
                 for (int k = 0; k < 3; ++k)
                     s += OPa(i, k) * R(j, k);
-                B(3 + i, 6 + 3 * a + j) += s;
+                B(3 + i, 6 + nr * a + j) += s;
             }
         // lever part: LEV += OPa * skew(y_a)
         SY.Zero();
@@ -1555,6 +1633,34 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
         SY(1, 0) = y(a, 2);  SY(1, 2) = -y(a, 0);
         SY(2, 0) = -y(a, 1); SY(2, 1) = y(a, 0);
         LEV.addMatrixProduct(1.0, OPa, SY, 1.0);
+        // -shearDeformable bending rows: + N_a (E0^T Tinv_a) R^T on the
+        // rotation columns of node a (the direct part of d theta_a), and the
+        // N_a E0^T Tinv_a weight into SHW for the shared -dw part
+        if (m_shear) {
+            static Vector tha(3);
+            for (int i = 0; i < 3; ++i)
+                tha(i) = ThA(a, i);
+            static Matrix Tia(3, 3);
+            leftJacobianInv(tha, Tia);
+            static Matrix Wa(3, 3);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) {
+                    double s = 0.0;
+                    for (int k = 0; k < 3; ++k)
+                        s += m_cE0(k, i) * Tia(k, j);
+                    Wa(i, j) = s;
+                }
+            for (int i = 0; i < 2; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    double s = 0.0;
+                    for (int k = 0; k < 3; ++k)
+                        s += Wa(i, k) * R(j, k);
+                    B(3 + i, 6 + nr * a + 3 + j) += m_cN(a) * s;
+                }
+                for (int k = 0; k < 3; ++k)
+                    SHW(i, k) += m_cN(a) * Wa(i, k);
+            }
+        }
     }
     // frame-variation terms: +LEV*DW from d(omega), +E*Tinv*DW from
     // -d(theta_local) = -E (Tinv (R^T dphi_s - dw)), with E = E0^T on
@@ -1578,7 +1684,7 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
         for (int col = 0; col < ncols; ++col) {
             double s = 0.0;
             for (int k = 0; k < 3; ++k)
-                s += (LEV(i, k) + ETi(i, k)) * DW(k, col);
+                s += (LEV(i, k) + ETi(i, k) - SHW(i, k)) * DW(k, col);
             B(3 + i, col) += s;
         }
     // -E Tinv R^T on the slave rotation columns
@@ -1807,9 +1913,11 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
         return res;
     }
 
-    // DOUBLE data: K, KP, the corotational slave-rotation state, and the
-    // initial displacement vector
-    Vector vectData(16 + NU0);
+    // DOUBLE data: K, KP, the corotational slave-rotation state, the
+    // per-retained-node rotation state (-corotational + -shearDeformable:
+    // 14 doubles per retained node), and the initial displacement vector
+    int NQA = (m_corot && m_shear) ? 14 * (NN - 1) : 0;
+    Vector vectData(16 + NQA + NU0);
     pos = 0;
     vectData(pos++) = m_K;
     vectData(pos++) = m_KP;
@@ -1817,6 +1925,14 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv[i];
     for (int i = 0; i < 4; ++i) vectData(pos++) = m_qs_conv[i];
     for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv_conv[i];
+    if (NQA > 0) {
+        for (int a = 0; a < NN - 1; ++a) {
+            for (int i = 0; i < 4; ++i) vectData(pos++) = m_qa[4 * a + i];
+            for (int i = 0; i < 3; ++i) vectData(pos++) = m_rva[3 * a + i];
+            for (int i = 0; i < 4; ++i) vectData(pos++) = m_qa_conv[4 * a + i];
+            for (int i = 0; i < 3; ++i) vectData(pos++) = m_rva_conv[3 * a + i];
+        }
+    }
     for (int i = 0; i < NU0; ++i)
         vectData(pos++) = m_U0(i);
     res = theChannel.sendVector(dataTag, commitTag, vectData);
@@ -1877,7 +1993,8 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
         m_mapping(i) = idData2(pos++);
 
     // DOUBLE data
-    Vector vectData(16 + NU0);
+    int NQA = (m_corot && m_shear) ? 14 * (NN - 1) : 0;
+    Vector vectData(16 + NQA + NU0);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -1890,6 +2007,18 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     for (int i = 0; i < 3; ++i) m_rv[i] = vectData(pos++);
     for (int i = 0; i < 4; ++i) m_qs_conv[i] = vectData(pos++);
     for (int i = 0; i < 3; ++i) m_rv_conv[i] = vectData(pos++);
+    if (NQA > 0) {
+        m_qa.resize(4 * static_cast<std::size_t>(NN - 1));
+        m_rva.resize(3 * static_cast<std::size_t>(NN - 1));
+        m_qa_conv.resize(4 * static_cast<std::size_t>(NN - 1));
+        m_rva_conv.resize(3 * static_cast<std::size_t>(NN - 1));
+        for (int a = 0; a < NN - 1; ++a) {
+            for (int i = 0; i < 4; ++i) m_qa[4 * a + i] = vectData(pos++);
+            for (int i = 0; i < 3; ++i) m_rva[3 * a + i] = vectData(pos++);
+            for (int i = 0; i < 4; ++i) m_qa_conv[4 * a + i] = vectData(pos++);
+            for (int i = 0; i < 3; ++i) m_rva_conv[3 * a + i] = vectData(pos++);
+        }
+    }
     if (NU0 > 0) {
         m_U0.resize(NU0);
         for (int i = 0; i < NU0; ++i)

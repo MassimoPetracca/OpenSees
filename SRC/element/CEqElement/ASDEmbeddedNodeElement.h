@@ -128,9 +128,9 @@ private:
     // resolves m_family from the retained node count, from m_ndm and, when
     // those are not enough, from the user's -shape request
     int resolveFamily() const;
-    // -corotational (hexa host): lazy setup of the reference (activation-time)
-    // quantities, and evaluation of the exact constraint g and its exact first
-    // variation B in the reduced dofset. Gated by the numpy oracle in
+    // -corotational: lazy setup of the reference (activation-time) quantities,
+    // and evaluation of the exact constraint g and its exact first variation B
+    // in the reduced dofset. Gated by the numpy oracles in
     // OpenSees-Testing/new-asd-elements/ASDEmbeddedNodeElement/corot/.
     void corotSetup();
     void corotComputeBg(Matrix& B, Vector& g);
@@ -194,12 +194,17 @@ private:
     // tracked as a quaternion exactly the way the ASD shells track their
     // nodal quaternions (additive rotation dofs -> incremental composition).
     bool m_corot_flag = false;   // user input
-    bool m_corot = false;        // accepted: -rot active, hexa host in 3D
+    bool m_corot = false;        // accepted: -rot active, 3D host
     bool m_corot_init = false;   // reference data below is filled
     double m_qs[4] = { 1.0, 0.0, 0.0, 0.0 };      // slave quaternion (w,x,y,z)
     double m_rv[3] = { 0.0, 0.0, 0.0 };           // last additive rotation vector
     double m_qs_conv[4] = { 1.0, 0.0, 0.0, 0.0 };
     double m_rv_conv[3] = { 0.0, 0.0, 0.0 };
+    // -corotational + -shearDeformable (surface hosts): the bending rows read
+    // the deformational nodal rotations of the host, so each retained node
+    // gets the same quaternion bookkeeping as the slave (4 + 3 doubles per
+    // node, trial and converged). Sized in setDomain, preserved by recvSelf.
+    std::vector<double> m_qa, m_rva, m_qa_conv, m_rva_conv;
     // reference (activation-time) data: shape functions at the material point,
     // cartesian gradients there, center gradients (frame rule), centroid,
     // local positions. Computed on X + U0, where F = I so R0 = I.
