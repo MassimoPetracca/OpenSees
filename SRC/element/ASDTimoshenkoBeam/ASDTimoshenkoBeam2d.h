@@ -33,10 +33,14 @@
 // is rejected: without the shear term this formulation would have a
 // zero-energy mode.
 //
-// The element uses the standard CrdTransf (basic system) machinery.
-// Geometric nonlinearity will be added in a future revision through the
-// corotational formulation of Felippa (EICR), as done for ASDShellQ4,
-// ASDShellT3 and ASDHex.
+// The element uses the standard CrdTransf (basic system) machinery, so
+// geometric nonlinearity is available today through the transformation:
+// PDelta, or Corotational for large displacements. Note that in 2D
+// CorotCrdTransf2d has a hard limit at a total rotation of pi (shared by
+// every basic-system beam, not specific to this element); the 3D element
+// has no such limit. An element-embedded corotational formulation
+// (Felippa EICR, as in ASDShellQ4/T3 and ASDHex) remains possible future
+// work for uniformity, not the repair of a correctness gap.
 
 #ifndef ASDTimoshenkoBeam2d_h
 #define ASDTimoshenkoBeam2d_h

@@ -33,10 +33,13 @@
 // section missing one of those codes is rejected: without the shear
 // terms this formulation would have zero-energy modes.
 //
-// The element uses the standard CrdTransf (basic system) machinery.
-// Geometric nonlinearity will be added in a future revision through the
-// corotational formulation of Felippa (EICR), as done for ASDShellQ4,
-// ASDShellT3 and ASDHex.
+// The element uses the standard CrdTransf (basic system) machinery, so
+// geometric nonlinearity is available today through the transformation:
+// PDelta, or Corotational for large displacements (verified through full
+// 2*pi rotations: rigid-body objectivity, roll-up, torsion, buckling).
+// An element-embedded corotational formulation (Felippa EICR, as in
+// ASDShellQ4/T3 and ASDHex) remains possible future work for uniformity,
+// not the repair of a correctness gap.
 
 #ifndef ASDTimoshenkoBeam3d_h
 #define ASDTimoshenkoBeam3d_h
