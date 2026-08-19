@@ -66,7 +66,7 @@ class InitStrainMaterial : public UniaxialMaterial
 
   Response *setResponse(const char **argv, int argc, 
 			OPS_Stream &theOutputStream);
-  int getResponse(int responseID, Information &matInformation);
+
   
     int setParameter(const char **argv, int argc, Parameter &param);
     int updateParameter(int parameterID, Information &info);
@@ -83,6 +83,9 @@ class InitStrainMaterial : public UniaxialMaterial
     UniaxialMaterial *theMaterial;
     double epsInit;
     double localStrain;
+
+	bool compute_initial_stress;
+
 };
 
 

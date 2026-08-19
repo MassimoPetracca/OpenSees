@@ -83,22 +83,23 @@ InitStrainMaterial::InitStrainMaterial(int tag,
 				       UniaxialMaterial &material,
 				       double epsini)
   :UniaxialMaterial(tag,MAT_TAG_InitStrain), theMaterial(0),
-   epsInit(epsini), localStrain(0.0)
+	epsInit(epsini), localStrain(0.0), compute_initial_stress(true) //request at beginning
 {
   theMaterial = material.getCopy();
 
   if (theMaterial == 0) {
     opserr <<  "InitStrainMaterial::InitStrainMaterial -- failed to get copy of material\n";
-    //exit(-1);
-  } else {
-    theMaterial->setTrialStrain(epsInit);
-    theMaterial->commitState();
-  }
+    exit(-1);
+  } 
+  //else {
+  //  theMaterial->setTrialStrain(epsInit);
+  //  theMaterial->commitState();
+  //}
 }
 
 InitStrainMaterial::InitStrainMaterial()
   :UniaxialMaterial(0,MAT_TAG_InitStrain), theMaterial(0),
-   epsInit(0.0), localStrain(0.0)
+	epsInit(0.0), localStrain(0.0), compute_initial_stress(true) //request at beginning
 {
 
 }
@@ -112,12 +113,16 @@ InitStrainMaterial::~InitStrainMaterial()
 int 
 InitStrainMaterial::setTrialStrain(double strain, double strainRate)
 {
-  localStrain = strain;
+    localStrain = strain;
 
-  if (theMaterial)
-    return theMaterial->setTrialStrain(strain+epsInit, strainRate);
-  else
-    return -1;
+  if (compute_initial_stress) {
+	theMaterial->setTrialStrain(epsInit);
+    commitState();
+	compute_initial_stress = false;
+  }
+  
+   return theMaterial->setTrialStrain(strain+epsInit, strainRate);
+
 }
 
 double 
@@ -227,9 +232,10 @@ InitStrainMaterial::sendSelf(int cTag, Channel &theChannel)
     return -1;
   }
 
-  static Vector dataVec(2);
+  static Vector dataVec(3);
   dataVec(0) = epsInit;
   dataVec(1) = localStrain;
+  dataVec(2) = static_cast<double>(compute_initial_stress);
   
   if (theChannel.sendVector(dbTag, cTag, dataVec) < 0) {
     opserr << "InitStrainMaterial::sendSelf() - failed to send the Vector\n";
@@ -269,7 +275,7 @@ InitStrainMaterial::recvSelf(int cTag, Channel &theChannel,
   }
   theMaterial->setDbTag(dataID(2));
 
-  static Vector dataVec(2);
+  static Vector dataVec(3);
   if (theChannel.recvVector(dbTag, cTag, dataVec) < 0) {
     opserr << "InitStrainMaterial::recvSelf() - failed to get the Vector\n";
     return -3;
@@ -277,6 +283,7 @@ InitStrainMaterial::recvSelf(int cTag, Channel &theChannel,
 
   epsInit = dataVec(0);
   localStrain = dataVec(1);
+  compute_initial_stress = static_cast<bool>(dataVec(2));
   
   if (theMaterial->recvSelf(cTag, theChannel, theBroker) < 0) {
     opserr << "InitStrainMaterial::recvSelf() - failed to get the Material\n";
@@ -312,33 +319,7 @@ InitStrainMaterial::Print(OPS_Stream &s, int flag)
 Response*
 InitStrainMaterial::setResponse(const char **argv, int argc, OPS_Stream &theOutput)
 {
-  Response *theResponse = 0;
-
-  if (strcmp(argv[0],"strain") == 0) {
-    theResponse = new MaterialResponse(this, 100, 0.0);
-    return theResponse;
-  }
-
-  if (strcmp(argv[0],"material") == 0) {
-    theResponse = theMaterial->setResponse(&argv[1], argc-1, theOutput);
-  }
-
-  if (theResponse == 0)
-    theResponse = UniaxialMaterial::setResponse(argv, argc, theOutput);
-
-  return theResponse;
-}
-
-int
-InitStrainMaterial::getResponse(int responseID, Information &info)
-{
-  if (responseID == 100)
-    return info.setDouble(localStrain+epsInit);
-
-  if (theMaterial != 0)
-    return theMaterial->getResponse(responseID, info);
-
-  return UniaxialMaterial::getResponse(responseID, info);
+    return theMaterial->setResponse(argv, argc, theOutput);
 }
 
 int 

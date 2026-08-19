@@ -349,7 +349,7 @@ int CapPlasticity::commitState(void)  {
 int CapPlasticity::revertToLastCommit(void)  {
 
     strain = CStrain;
-    CStress = stress;
+    stress = CStress;
     plastStrain = CPlastStrain;
     hardening_k = CHardening_k;
 
