@@ -643,9 +643,8 @@ void ASDShellT3::setDomain(Domain* theDomain)
     for (int i = 0; i < 3; i++)
         nodePointers[i] = theDomain->getNode(m_node_ids(i));
 
-    // set domain on transformation. the initial displacement offset is re-captured
-    // when activation asks for it, so a staged element is born strain free
-    m_transformation->setDomain(theDomain, m_node_ids, m_initialized && !m_force_capture_initial_disp);
+    // set domain on transformation
+    m_transformation->setDomain(theDomain, m_node_ids, m_initialized);
 
     // only if not already initialized from recvSelf
     if (!m_initialized) {
@@ -703,21 +702,6 @@ void ASDShellT3::setDomain(Domain* theDomain)
 
     // call base class implementation
     DomainComponent::setDomain(theDomain);
-}
-
-void ASDShellT3::onActivate()
-{
-    // the offset (m_U0) is re-captured by setDomain above. Nothing else in the
-    // once-and-for-all block needs to follow it - unlike ASDShellQ4 there are no
-    // AGQI internal DOFs baselined on it.
-    m_force_capture_initial_disp = true;
-    this->setDomain(this->getDomain());
-    m_force_capture_initial_disp = false;
-    this->update();
-}
-
-void ASDShellT3::onDeactivate()
-{
 }
 
 void ASDShellT3::Print(OPS_Stream& s, int flag)
@@ -1050,7 +1034,7 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
     // 1 -> reduced integration flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(19);
+    static ID idData(18);
     counter = 0;
     idData(counter++) = getTag();
     for (int i = 0; i < 3; ++i)
@@ -1088,8 +1072,6 @@ int  ASDShellT3::sendSelf(int commitTag, Channel& theChannel)
     idData(counter++) = static_cast<int>(m_reduced_integration);
     idData(counter++) = static_cast<int>(static_cast<bool>(m_nldrill));
     idData(counter++) = static_cast<int>(static_cast<bool>(m_local_x));
-    // activation state: an element deactivated before the transfer must come back deactivated
-    idData(counter++) = is_this_element_active ? 1 : 0;
 
     res = theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
@@ -1189,7 +1171,7 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     // 1 -> reduced integration flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(19);
+    static ID idData(18);
     res = theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDShellT3::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1221,8 +1203,6 @@ int  ASDShellT3::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     m_reduced_integration = static_cast<bool>(idData(counter++));
     bool use_nldrill = static_cast<bool>(idData(counter++));
     bool use_local_x = static_cast<bool>(idData(counter++));
-    // activation state: an element deactivated before the transfer must come back deactivated
-    is_this_element_active = idData(counter++) == 1 ? true : false;
 
     // create transformation
     if (m_transformation)
