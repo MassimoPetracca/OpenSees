@@ -139,6 +139,9 @@ void* OPS_ASDShellSection()
         "                                          CENTER from the stack face; angle in degrees)\n"
         "    <-offset $z0>                        (stack midplane position in the element frame)\n"
         "    <-shearCorrection $k>                (default 5/6; LayeredShell applies none: k = 1 reproduces it)\n"
+        "    <-modifiers $f11 $f22 $f12 $m11 $m22 $m12 $v13 $v23>\n"
+        "                                         (per-component stiffness modifiers, all > 0: diagonal\n"
+        "                                          terms scale by c, couplings by sqrt(ci*cj))\n"
         "    <-elasticShear <$S1 $S2>>            (freeze the transverse shear channels: no args = from\n"
         "                                          the initial ply tangents, or the two section stiffnesses)\n"
         "    <-rho $extraMassPerArea>\n";
@@ -165,6 +168,7 @@ void* OPS_ASDShellSection()
     int shear_mode = ASDShellSection::Shear_Integrated;
     double S1 = 0.0, S2 = 0.0;
     double rho_extra = 0.0;
+    std::vector<double> modifiers;
 
     auto readRebarCommon = [&](const char* kw, ASDShellSection::RebarItem& item, bool by_area) -> bool {
         int matTag;
@@ -300,6 +304,22 @@ void* OPS_ASDShellSection()
                 return 0;
             }
         }
+        else if (strcmp(what, "-modifiers") == 0) {
+            modifiers.resize(8);
+            int numMod = 8;
+            if (OPS_GetDoubleInput(&numMod, modifiers.data()) < 0) {
+                opserr << "ASDShellSection ERROR: -modifiers wants 8 values "
+                    << "(f11 f22 f12 m11 m22 m12 v13 v23).\n" << descr;
+                return 0;
+            }
+            for (double c : modifiers) {
+                if (c <= 0.0) {
+                    opserr << "ASDShellSection ERROR: stiffness modifiers must be positive "
+                        << "(a zero would make the section singular).\n" << descr;
+                    return 0;
+                }
+            }
+        }
         else {
             opserr << "ASDShellSection ERROR: unknown keyword \"" << what << "\".\n" << descr;
             return 0;
@@ -344,7 +364,7 @@ void* OPS_ASDShellSection()
         // fibers and are computed in the constructor
     }
 
-    return new ASDShellSection(tag, stack, rebars, offset, k_shear, shear_mode, S1, S2, rho_extra);
+    return new ASDShellSection(tag, stack, rebars, offset, k_shear, shear_mode, S1, S2, rho_extra, modifiers);
 }
 
 // static members
@@ -365,7 +385,8 @@ ASDShellSection::ASDShellSection(int tag,
     double k_shear,
     int shear_mode,
     double S1, double S2,
-    double rho_extra)
+    double rho_extra,
+    const std::vector<double>& modifiers)
     : SectionForceDeformation(tag, SEC_TAG_ASDShellSection)
     , m_offset(offset)
     , m_k(k_shear)
@@ -375,6 +396,10 @@ ASDShellSection::ASDShellSection(int tag,
     , m_rho_extra(rho_extra)
     , strainResultant(8)
 {
+    if (modifiers.size() == 8) {
+        for (int i = 0; i < 8; ++i)
+            m_mod[i] = modifiers[static_cast<std::size_t>(i)];
+    }
     buildFibers(stack, rebars);
 }
 
@@ -484,6 +509,8 @@ SectionForceDeformation* ASDShellSection::getCopy()
     // which will carry the lch of the element that owns the copy
     clone->m_S_computed = (m_shear_mode == Shear_ElasticAuto) ? false : m_S_computed;
     clone->m_rho_extra = m_rho_extra;
+    for (int i = 0; i < 8; ++i)
+        clone->m_mod[i] = m_mod[i];
     clone->strainResultant = strainResultant;
     return clone;
 }
@@ -550,17 +577,21 @@ int ASDShellSection::setTrialSectionDeformation(const Vector& strain_from_elemen
     // strain mapping identical to LayeredShellFiberSection: the fiber gets
     // [e1 - zeta k1, e2 - zeta k2, g12 - zeta k12, rk*sr(7), rk*sr(6)],
     // with zeta = z + offset. In the frozen-shear modes no transverse
-    // shear strain reaches the fibers.
+    // shear strain reaches the fibers. The stiffness modifiers enter as
+    // sqrt(c) on the strain side (and sqrt(c) again on the stress side).
     static Vector strain(5);
+    double sm[8];
+    for (int i = 0; i < 8; ++i)
+        sm[i] = std::sqrt(m_mod[i]) * strainResultant(i);
     int success = 0;
     double rk = (m_shear_mode == Shear_Integrated) ? std::sqrt(m_k) : 0.0;
     for (std::size_t i = 0; i < m_fib_mat.size(); ++i) {
         double zeta = m_fib_z[i] + m_offset;
-        strain(0) = strainResultant(0) - zeta * strainResultant(3);
-        strain(1) = strainResultant(1) - zeta * strainResultant(4);
-        strain(2) = strainResultant(2) - zeta * strainResultant(5);
-        strain(4) = rk * strainResultant(6);
-        strain(3) = rk * strainResultant(7);
+        strain(0) = sm[0] - zeta * sm[3];
+        strain(1) = sm[1] - zeta * sm[4];
+        strain(2) = sm[2] - zeta * sm[5];
+        strain(4) = rk * sm[6];
+        strain(3) = rk * sm[7];
         success += m_fib_mat[i]->setTrialStrain(strain);
     }
     return success;
@@ -594,9 +625,14 @@ const Vector& ASDShellSection::getStressResultant()
         stressResultant(7) += rk * stress(3) * weight;
     }
     if (m_shear_mode != Shear_Integrated) {
-        stressResultant(6) = m_S1 * strainResultant(6);
-        stressResultant(7) = m_S2 * strainResultant(7);
+        // the frozen channels see the sqrt(c)-scaled strain; the second
+        // sqrt(c) comes from the common stress-side scaling below
+        stressResultant(6) = m_S1 * std::sqrt(m_mod[6]) * strainResultant(6);
+        stressResultant(7) = m_S2 * std::sqrt(m_mod[7]) * strainResultant(7);
     }
+    // stress-side sqrt(c) of the stiffness modifiers
+    for (int i = 0; i < 8; ++i)
+        stressResultant(i) *= std::sqrt(m_mod[i]);
     return stressResultant;
 }
 
@@ -660,6 +696,10 @@ const Matrix& ASDShellSection::getSectionTangent()
         tangent(6, 6) = m_S1;
         tangent(7, 7) = m_S2;
     }
+    // congruent sqrt(c) scaling of the stiffness modifiers
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j)
+            tangent(i, j) *= std::sqrt(m_mod[i] * m_mod[j]);
     return tangent;
 }
 
@@ -719,6 +759,10 @@ const Matrix& ASDShellSection::getInitialTangent()
         tangent(6, 6) = m_S1;
         tangent(7, 7) = m_S2;
     }
+    // congruent sqrt(c) scaling of the stiffness modifiers
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j)
+            tangent(i, j) *= std::sqrt(m_mod[i] * m_mod[j]);
     return tangent;
 }
 
@@ -742,6 +786,16 @@ void ASDShellSection::Print(OPS_Stream& s, int flag)
     if (m_shear_mode != Shear_Integrated)
         s << ", S = [" << m_S1 << ", " << m_S2 << "]";
     s << endln;
+    bool any_mod = false;
+    for (int i = 0; i < 8; ++i)
+        if (m_mod[i] != 1.0)
+            any_mod = true;
+    if (any_mod) {
+        s << "  stiffness modifiers (f11 f22 f12 m11 m22 m12 v13 v23):";
+        for (int i = 0; i < 8; ++i)
+            s << " " << m_mod[i];
+        s << endln;
+    }
     double zb = -0.5 * m_h;
     int fib = 0;
     for (std::size_t i = 0; i < m_stack_t.size(); ++i) {
@@ -808,8 +862,9 @@ int ASDShellSection::sendSelf(int commitTag, Channel& theChannel)
         return res;
     }
 
-    // DOUBLE data: scalars, stack thicknesses, rebar data, fiber geometry
-    Vector vectData(7 + nStack + 3 * nReb + 2 * nFib);
+    // DOUBLE data: scalars, modifiers, stack thicknesses, rebar data,
+    // fiber geometry
+    Vector vectData(15 + nStack + 3 * nReb + 2 * nFib);
     pos = 0;
     vectData(pos++) = m_h;
     vectData(pos++) = m_offset;
@@ -818,6 +873,8 @@ int ASDShellSection::sendSelf(int commitTag, Channel& theChannel)
     vectData(pos++) = m_S2;
     vectData(pos++) = m_rho_extra;
     vectData(pos++) = 0.0; // reserved
+    for (int i = 0; i < 8; ++i)
+        vectData(pos++) = m_mod[i];
     for (int i = 0; i < nStack; ++i)
         vectData(pos++) = m_stack_t[static_cast<std::size_t>(i)];
     for (int i = 0; i < nReb; ++i) {
@@ -888,7 +945,7 @@ int ASDShellSection::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBrok
     }
 
     // DOUBLE data
-    Vector vectData(7 + nStack + 3 * nReb + 2 * nFib);
+    Vector vectData(15 + nStack + 3 * nReb + 2 * nFib);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDShellSection::recvSelf() - failed to receive Vector\n";
@@ -902,6 +959,8 @@ int ASDShellSection::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBrok
     m_S2 = vectData(pos++);
     m_rho_extra = vectData(pos++);
     pos++; // reserved
+    for (int i = 0; i < 8; ++i)
+        m_mod[i] = vectData(pos++);
     m_stack_t.resize(static_cast<std::size_t>(nStack));
     for (int i = 0; i < nStack; ++i)
         m_stack_t[static_cast<std::size_t>(i)] = vectData(pos++);

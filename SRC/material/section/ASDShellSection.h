@@ -94,7 +94,8 @@ public:
         double k_shear,
         int shear_mode,
         double S1, double S2,
-        double rho_extra);
+        double rho_extra,
+        const std::vector<double>& modifiers = std::vector<double>());
     virtual ~ASDShellSection();
 
     const char* getClassType(void) const { return "ASDShellSection"; }
@@ -161,6 +162,13 @@ private:
     double m_S1 = 0.0;        // frozen shear stiffnesses (elastic modes),
     double m_S2 = 0.0;        // channels (6) and (7) of the resultants
     bool m_S_computed = false; // Shear_ElasticAuto: S1/S2 resolved (lazily)
+    // per-component stiffness modifiers (ETABS-style: f11 f22 f12 m11 m22
+    // m12 v13 v23, the getType order). Applied as sqrt(c) on the strain
+    // side and sqrt(c) on the stress side - the only placement that keeps
+    // the tangent symmetric and the section variationally consistent when
+    // the components are coupled (Poisson, offset). Diagonal terms scale
+    // by c_i exactly, couplings by sqrt(c_i c_j).
+    double m_mod[8] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
     double m_rho_extra = 0.0; // additional mass per unit area (e.g. rebar)
 
     Vector strainResultant;   // 8, the committed trial section deformation
