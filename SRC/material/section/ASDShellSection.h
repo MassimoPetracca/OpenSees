@@ -131,6 +131,12 @@ private:
     // the full constructor; recvSelf receives the fiber arrays directly.
     void buildFibers(const std::vector<StackItem>& stack,
         const std::vector<RebarItem>& rebars);
+    // Shear_ElasticAuto: resolves S1/S2 from the initial ply tangents on
+    // FIRST USE, not at construction: materials with fracture-energy
+    // regularization need an active element (their lch) before they can be
+    // queried, and at parse time there is none. getCopy resets the flag so
+    // every element-owned copy resolves on its own fibers.
+    void ensureAutoShear();
 
     // stack description, kept for Print/getCopy/serialization:
     // m_stack_t[i] thickness, m_stack_nip[i] > 0 for a ply, -1 for a gap
@@ -154,6 +160,7 @@ private:
     int m_shear_mode = Shear_Integrated;
     double m_S1 = 0.0;        // frozen shear stiffnesses (elastic modes),
     double m_S2 = 0.0;        // channels (6) and (7) of the resultants
+    bool m_S_computed = false; // Shear_ElasticAuto: S1/S2 resolved (lazily)
     double m_rho_extra = 0.0; // additional mass per unit area (e.g. rebar)
 
     Vector strainResultant;   // 8, the committed trial section deformation

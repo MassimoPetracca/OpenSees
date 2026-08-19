@@ -435,17 +435,22 @@ void ASDShellSection::buildFibers(const std::vector<StackItem>& stack,
         m_fib_mat.push_back(new PlateRebarMaterial(0, *r.mat, r.angle));
         m_fib_rebar.push_back(1);
     }
-    // frozen shear stiffnesses from the initial ply tangents
-    if (m_shear_mode == Shear_ElasticAuto) {
-        m_S1 = m_S2 = 0.0;
-        for (std::size_t i = 0; i < m_fib_mat.size(); ++i) {
-            if (m_fib_rebar[i])
-                continue;
-            const Matrix& D0 = m_fib_mat[i]->getInitialTangent();
-            m_S1 += m_k * m_fib_w[i] * D0(4, 4);
-            m_S2 += m_k * m_fib_w[i] * D0(3, 3);
-        }
+    // Shear_ElasticAuto: S1/S2 are NOT resolved here. See ensureAutoShear.
+}
+
+void ASDShellSection::ensureAutoShear()
+{
+    if (m_shear_mode != Shear_ElasticAuto || m_S_computed)
+        return;
+    m_S1 = m_S2 = 0.0;
+    for (std::size_t i = 0; i < m_fib_mat.size(); ++i) {
+        if (m_fib_rebar[i])
+            continue;
+        const Matrix& D0 = m_fib_mat[i]->getInitialTangent();
+        m_S1 += m_k * m_fib_w[i] * D0(4, 4);
+        m_S2 += m_k * m_fib_w[i] * D0(3, 3);
     }
+    m_S_computed = true;
 }
 
 ASDShellSection::~ASDShellSection()
@@ -475,6 +480,9 @@ SectionForceDeformation* ASDShellSection::getCopy()
     clone->m_shear_mode = m_shear_mode;
     clone->m_S1 = m_S1;
     clone->m_S2 = m_S2;
+    // Shear_ElasticAuto: force the copy to re-resolve on its own fibers,
+    // which will carry the lch of the element that owns the copy
+    clone->m_S_computed = (m_shear_mode == Shear_ElasticAuto) ? false : m_S_computed;
     clone->m_rho_extra = m_rho_extra;
     clone->strainResultant = strainResultant;
     return clone;
@@ -536,6 +544,7 @@ int ASDShellSection::revertToStart()
 
 int ASDShellSection::setTrialSectionDeformation(const Vector& strain_from_element)
 {
+    ensureAutoShear();
     strainResultant = strain_from_element;
 
     // strain mapping identical to LayeredShellFiberSection: the fiber gets
@@ -564,6 +573,7 @@ const Vector& ASDShellSection::getSectionDeformation()
 
 const Vector& ASDShellSection::getStressResultant()
 {
+    ensureAutoShear();
     static Vector stress(5);
     stressResultant.Zero();
     double rk = (m_shear_mode == Shear_Integrated) ? std::sqrt(m_k) : 0.0;
@@ -592,6 +602,7 @@ const Vector& ASDShellSection::getStressResultant()
 
 const Matrix& ASDShellSection::getSectionTangent()
 {
+    ensureAutoShear();
     tangent.Zero();
     bool integrated = (m_shear_mode == Shear_Integrated);
     double rk = integrated ? std::sqrt(m_k) : 0.0;
@@ -656,6 +667,7 @@ const Matrix& ASDShellSection::getInitialTangent()
 {
     // same assembly on the initial fiber tangents. The shear block of the
     // frozen modes is initial by construction.
+    ensureAutoShear();
     tangent.Zero();
     bool integrated = (m_shear_mode == Shear_Integrated);
     double rk = integrated ? std::sqrt(m_k) : 0.0;
@@ -766,7 +778,7 @@ int ASDShellSection::sendSelf(int commitTag, Channel& theChannel)
     idData1(2) = nReb;
     idData1(3) = nFib;
     idData1(4) = m_shear_mode;
-    idData1(5) = 0; // reserved
+    idData1(5) = m_S_computed ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDShellSection::sendSelf() - " << getTag() << " failed to send ID 1\n";
@@ -853,6 +865,7 @@ int ASDShellSection::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBrok
     int nReb = idData1(2);
     int nFib = idData1(3);
     m_shear_mode = idData1(4);
+    m_S_computed = idData1(5) == 1;
 
     // INT data 2
     ID idData2(nStack + 3 * nFib);
