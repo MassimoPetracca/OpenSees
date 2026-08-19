@@ -231,7 +231,8 @@
 #include "Bidirectional.h"
 #include "Elliptical2.h"
 #include "Isolator2spring.h"
-#include "LayeredShellFiberSection.h" // Yuli Huang & Xinzheng Lu 
+#include "LayeredShellFiberSection.h" // Yuli Huang & Xinzheng Lu
+#include "ASDShellSection.h"
 #include "LayeredMembraneSection/ReinforcedConcreteLayeredMembraneSection.h" // M. J. Nunez
 #include "LayeredMembraneSection/LayeredMembraneSection.h" // M. J. Nunez
 #include "LayeredMembraneSection/ElasticMembraneSection.h" // M. J. Nunez
@@ -2238,6 +2239,9 @@ FEM_ObjectBrokerAllClasses::getNewSection(int classTag)
         case SEC_TAG_LayeredShellFiberSection:
 	  return new LayeredShellFiberSection();
 	//end Yuli Huang & Xinzheng Lu LayeredShellFiberSection
+
+        case SEC_TAG_ASDShellSection:
+	  return new ASDShellSection();
 
 	case SEC_TAG_Bidirectional:
 		return new Bidirectional();

@@ -106,6 +106,7 @@ extern void *OPS_Bidirectional(void);
 extern void *OPS_Elliptical2(void);
 extern void *OPS_ASDCoupledHinge3D(void);
 extern void *OPS_LayeredShellFiberSection(void);
+extern void *OPS_ASDShellSection(void);
 extern void *OPS_MembranePlateFiberSection(void);
 extern void *OPS_LayeredShellFiberSectionThermal(void);
 extern void *OPS_MembranePlateFiberSectionThermal(void);
@@ -416,12 +417,20 @@ TclModelBuilderSectionCommand (ClientData clientData, Tcl_Interp *interp, int ar
     //start Yuli Huang & Xinzheng Lu LayeredShellFiberSection
     else if (strcmp(argv[1],"LayeredShell") == 0) {
       void *theMat = OPS_LayeredShellFiberSection();
-      if (theMat != 0) 
+      if (theMat != 0)
 	theSection = (SectionForceDeformation *)theMat;
-      else 
-	return TCL_ERROR;      
+      else
+	return TCL_ERROR;
     }
     //end Yuli Huang & Xinzheng Lu LayeredShellFiberSection
+
+    else if (strcmp(argv[1],"ASDShellSection") == 0) {
+      void *theMat = OPS_ASDShellSection();
+      if (theMat != 0)
+	theSection = (SectionForceDeformation *)theMat;
+      else
+	return TCL_ERROR;
+    }
 
 	//-----Thermo-mechanical shell sections added by L.Jiang [SIF] 
 	else if (strcmp(argv[1], "PlateFiberThermal") == 0) {

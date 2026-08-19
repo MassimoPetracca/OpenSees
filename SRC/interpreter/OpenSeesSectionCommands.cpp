@@ -92,6 +92,7 @@ void* OPS_SectionAggregator();
 void* OPS_ElasticPlateSection();
 void* OPS_LayeredShellFiberSection();
 void* OPS_LayeredShellFiberSectionThermal();
+void* OPS_ASDShellSection();
 void* OPS_Bidirectional();
 void* OPS_Elliptical2();
 void* OPS_Isolator2spring();
@@ -301,7 +302,8 @@ namespace {
 	functionMap.insert(std::make_pair("AddDeformation", &OPS_SectionAggregator));
 	functionMap.insert(std::make_pair("ElasticPlateSection", &OPS_ElasticPlateSection));
 	functionMap.insert(std::make_pair("LayeredShell", &OPS_LayeredShellFiberSection));
-	functionMap.insert(std::make_pair("LayeredShellThermal", &OPS_LayeredShellFiberSectionThermal));	
+	functionMap.insert(std::make_pair("LayeredShellThermal", &OPS_LayeredShellFiberSectionThermal));
+	functionMap.insert(std::make_pair("ASDShellSection", &OPS_ASDShellSection));
 	functionMap.insert(std::make_pair("Bidirectional", &OPS_Bidirectional));
 	functionMap.insert(std::make_pair("Elliptical", &OPS_Elliptical2));	
 	functionMap.insert(std::make_pair("Isolator2spring", &OPS_Isolator2spring));
