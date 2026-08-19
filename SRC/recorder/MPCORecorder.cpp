@@ -4030,7 +4030,8 @@ namespace mpco {
 				*/
 				else if (
 					// ./tetrahedron
-					elem_class_tag == ELE_TAG_FourNodeTetrahedron
+					elem_class_tag == ELE_TAG_FourNodeTetrahedron ||
+					elem_class_tag == ELE_TAG_ASDTet
 					)
 				{
 					geom_type = ElementGeometryType::Tetrahedron_4N;
