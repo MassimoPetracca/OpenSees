@@ -177,6 +177,7 @@ class Domain
     virtual const Vector &getPhysicalBounds(void); 
     virtual const Vector *getNodeResponse(int nodeTag, NodeResponseType responseType); 
     virtual const Vector *getElementResponse(int eleTag, const char **argv, int argc); 
+    Vector getElementStiffnessOOM(bool verbose = false);
 
     // methods to get element and node graphs
     virtual  Graph  &getElementGraph(void);

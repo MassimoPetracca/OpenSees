@@ -253,6 +253,8 @@ extern int OPS_DomainModalProperties(void);
 extern int OPS_ResponseSpectrumAnalysis(void);
 extern int OPS_sdfResponse(void);
 
+// domain utilities
+extern int OPS_DomainElementStiffnessOOM(void);
 extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 
 #include <Newmark.h>
@@ -1108,6 +1110,9 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
 
     Tcl_CreateCommand(interp, "setMaxOpenFiles", &maxOpenFiles, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
+
+    Tcl_CreateCommand(interp, "EleStiffnessOOM", &getDomainElementStiffnessOOM,
+        (ClientData)NULL, (Tcl_CmdDeleteProc*)NULL);
 
 #ifdef _RELIABILITY
     Tcl_CreateCommand(interp, "wipeReliability", wipeReliability, 
@@ -5686,6 +5691,15 @@ responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TC
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
     if (OPS_ResponseSpectrumAnalysis() < 0)
 	    return TCL_ERROR;
+    return TCL_OK;
+}
+
+int
+getDomainElementStiffnessOOM(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
+{
+    OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
+    if (OPS_DomainElementStiffnessOOM() < 0)
+        return TCL_ERROR;
     return TCL_OK;
 }
 
