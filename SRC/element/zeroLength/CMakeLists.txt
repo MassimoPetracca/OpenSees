@@ -16,6 +16,7 @@ target_sources(OPS_Element
     ZeroLengthImpact3D.cpp
     ZeroLengthInterface2D.cpp
     ZeroLengthND.cpp
+    ZeroLength6D.cpp
     ZeroLengthRocking.cpp
     ZeroLengthSection.cpp
     ZeroLengthVG_HG.cpp
@@ -29,6 +30,7 @@ target_sources(OPS_Element
     ZeroLengthImpact3D.h
     ZeroLengthInterface2D.h
     ZeroLengthND.h
+    ZeroLength6D.h
     ZeroLengthRocking.h
     ZeroLengthSection.h
     ZeroLengthVG_HG.h

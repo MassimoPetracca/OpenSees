@@ -6,6 +6,7 @@ OBJS       = ZeroLength.o \
 	ZeroLengthContact3D.o \
 	ZeroLengthContactASDimplex.o \
 	ZeroLengthND.o \
+	ZeroLength6D.o \
 	ZeroLengthContactNTS2D.o \
 	ZeroLengthInterface2D.o \
 	ZeroLengthRocking.o \
