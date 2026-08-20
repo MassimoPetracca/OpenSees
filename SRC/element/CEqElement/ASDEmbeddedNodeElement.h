@@ -37,6 +37,8 @@
 #include <Matrix.h>
 #include <vector>
 
+class UniaxialMaterial;
+
 class ASDEmbeddedNodeElement : public Element
 {
 
@@ -65,7 +67,8 @@ public:
 
     // life cycle
     ASDEmbeddedNodeElement();
-    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false, bool corot_flag = false);
+    ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false, bool corot_flag = false,
+        UniaxialMaterial* slip_mat = nullptr, int slip_node = 0, double KS = 0.0, const Vector* slip_x = nullptr);
     virtual ~ASDEmbeddedNodeElement();
 
     // domain
@@ -105,6 +108,11 @@ public:
     int sendSelf(int commitTag, Channel& theChannel);
     int recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker);
 
+    // -slip: recorder access to the bond response (the element has no other
+    // responses: without -slip it is a pure penalty constraint)
+    Response* setResponse(const char** argv, int argc, OPS_Stream& output);
+    int getResponse(int responseID, Information& eleInfo);
+
 private:
     const Vector& getGlobalDisplacements() const;
     const Matrix& TRI_2D_U();
@@ -128,6 +136,21 @@ private:
     // resolves m_family from the retained node count, from m_ndm and, when
     // those are not enough, from the user's -shape request
     int resolveFamily() const;
+    // number of retained (host) nodes: the first node is the constrained one
+    // and, with -slip, the last one is the real rebar node, not a host node
+    int numRetained() const;
+    // non-corotational embedding stiffness in the reduced local dofset
+    // (dispatch to the family kernels), WITHOUT the -slip block: it is the
+    // elastic part reused by both getTangentStiff and getResistingForce
+    const Matrix& embedLocalStiffness();
+    // -slip: current relative kinematics real->AUX, resolved on the local
+    // triad (frozen m_slip_T0, or R*T0 with -corotational). Fills m_slip_g
+    // and m_slip_axis, and returns the slip (first component).
+    double slipComputeGap();
+    // -slip, non-corotational path: add the zeroLength-equivalent block to
+    // the FULL element matrix/vector (positions of the AUX and real node dofs
+    // are known without the reduced mapping)
+    void slipAddLinear(Matrix* K, Vector* F);
     // -corotational: lazy setup of the reference (activation-time) quantities,
     // and evaluation of the exact constraint g and its exact first variation B
     // in the reduced dofset. Gated by the numpy oracles in
@@ -220,6 +243,33 @@ private:
     // for the Kabsch frame m_cgc rows hold the reference local positions Xh_a
     bool m_corot_surf = false;
     Matrix m_cE0;
+
+    // -slip: absorb the rebar-slip zeroLength into the element. The real
+    // rebar node is appended as the LAST external node; the AUX (constrained)
+    // node stays embedded in the host. The uniaxial material acts on the
+    // relative displacement along the local X (the bar axis), a stiff elastic
+    // tie (m_KS, a raw [F/L] stiffness like the zeroLength penalty, NOT the
+    // host-scaled -K pressure) acts on every other relative dof. With
+    // -corotational the local X rotates with the host frame R.
+    bool m_slip = false;            // -slip given
+    bool m_slip_rot = false;        // both AUX and real node carry rotations
+    UniaxialMaterial* m_slip_mat = nullptr; // owned copy of the tau-slip law
+    double m_KS = 0.0;              // rigid-tie stiffness, used raw
+    Vector m_slip_x0;               // bar axis in the reference configuration
+    // local triad (rows x0,y0,z0): y0/z0 are an arbitrary stable completion
+    // built with the same rule STKO's frame_from_x uses, so the reported
+    // transverse components match the legacy zeroLength assembly
+    Matrix m_slip_T0;
+    // -corotational rotational tie: the real node gets the same quaternion
+    // bookkeeping as the slave (additive dofs -> incremental composition)
+    double m_qr[4] = { 1.0, 0.0, 0.0, 0.0 };
+    double m_rvr[3] = { 0.0, 0.0, 0.0 };
+    double m_qr_conv[4] = { 1.0, 0.0, 0.0, 0.0 };
+    double m_rvr_conv[3] = { 0.0, 0.0, 0.0 };
+    // last computed local gap [slip, t1, t2, (rx, ry, rz)] and current axis,
+    // kept for the recorder responses
+    Vector m_slip_g;
+    Vector m_slip_axis;
 
 };
 

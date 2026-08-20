@@ -35,6 +35,9 @@
 #include <elementAPI.h>
 #include <Renderer.h>
 #include <analysis/dof_grp/DOF_Group.h>
+#include <UniaxialMaterial.h>
+#include <Information.h>
+#include <ElementResponse.h>
 
 #include <ASDMath.h>
 
@@ -577,7 +580,7 @@ OPS_ASDEmbeddedNodeElement(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape>\n"
+    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape> <-slip $slipMatTag $realNodeTag $KS $Xx $Xy $Xz>\n"
         "   3 retained nodes = triangle (2D or 3D)\n"
         "   4 retained nodes = quadrilateral in 2D; in 3D a tetrahedron, or a\n"
         "                      quadrilateral face with -shape quad\n"
@@ -591,7 +594,15 @@ OPS_ASDEmbeddedNodeElement(void)
         "                      transverse displacement (correct for thick shells,\n"
         "                      where rotation = slope + shear deformation).\n"
         "   -corotational: with -rot on a 3D host, make the constraint exact\n"
-        "                      under finite rotations of the host patch.\n";
+        "                      under finite rotations of the host patch.\n"
+        "   -slip: absorb the rebar-slip zeroLength: $Cnode is the AUX node\n"
+        "                      embedded in the host, $realNodeTag is the real\n"
+        "                      rebar node, tied to it by the uniaxial material\n"
+        "                      $slipMatTag along the bar axis ($Xx $Xy $Xz, in\n"
+        "                      the reference configuration) and by the stiff\n"
+        "                      elastic constant $KS [F/L] on every other\n"
+        "                      relative dof. With -corotational the bar axis\n"
+        "                      rotates with the host frame.\n";
 
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs < 5) {
@@ -625,6 +636,10 @@ OPS_ASDEmbeddedNodeElement(void)
     double KP = 1.0e18;
     bool KP_set = false;
     int shape = ASDEmbeddedNodeElement::Fam_Unknown;
+    UniaxialMaterial* slip_mat = nullptr;
+    int slip_node = 0;
+    double slip_KS = 0.0;
+    Vector slip_x(3);
     for (int i = 5; i < numArgs; i++) {
         const char* what = OPS_GetString();
         if (strcmp(what, "-rot") == 0) {
@@ -669,6 +684,54 @@ OPS_ASDEmbeddedNodeElement(void)
                 return 0;
             }
             KP_set = true;
+        }
+        else if (strcmp(what, "-slip") == 0) {
+            keywords_started = true;
+            // 2 integers (slipMatTag, realNodeTag) + 4 doubles (KS, Xx, Xy, Xz)
+            if (numArgs - i - 1 < 6) {
+                opserr << "ASDEmbeddedNodeElement ERROR: the -slip keyword wants "
+                    << "$slipMatTag $realNodeTag $KS $Xx $Xy $Xz.\n" << descr;
+                return 0;
+            }
+            int slipInt[2];
+            numData = 2;
+            if (OPS_GetInt(&numData, slipInt) != 0) {
+                opserr << "ASDEmbeddedNodeElement ERROR: invalid integer values for the -slip "
+                    << "keyword: it wants $slipMatTag $realNodeTag $KS $Xx $Xy $Xz.\n" << descr;
+                return 0;
+            }
+            double slipDouble[4];
+            numData = 4;
+            if (OPS_GetDouble(&numData, slipDouble) != 0) {
+                opserr << "ASDEmbeddedNodeElement ERROR: invalid floating point values for the "
+                    << "-slip keyword: it wants $slipMatTag $realNodeTag $KS $Xx $Xy $Xz.\n" << descr;
+                return 0;
+            }
+            i += 6;
+            slip_mat = OPS_getUniaxialMaterial(slipInt[0]);
+            if (slip_mat == nullptr) {
+                opserr << "ASDEmbeddedNodeElement ERROR: -slip refers to uniaxialMaterial "
+                    << slipInt[0] << ", which does not exist. Define the tau-slip law "
+                    << "before the element.\n";
+                return 0;
+            }
+            slip_node = slipInt[1];
+            slip_KS = slipDouble[0];
+            if (slip_KS <= 0.0) {
+                opserr << "ASDEmbeddedNodeElement ERROR: -slip wants a positive rigid-tie "
+                    << "stiffness $KS [F/L], got " << slip_KS << ". Use the same value the "
+                    << "rigid Elastic material of the zeroLength assembly would take.\n";
+                return 0;
+            }
+            slip_x(0) = slipDouble[1];
+            slip_x(1) = slipDouble[2];
+            slip_x(2) = slipDouble[3];
+            if (slip_x.Norm() < 1.0e-12) {
+                opserr << "ASDEmbeddedNodeElement ERROR: -slip wants a non-zero bar axis "
+                    << "($Xx $Xy $Xz).\n";
+                return 0;
+            }
+            slip_x.Normalize();
         }
         else if (strcmp(what, "-shape") == 0) {
             keywords_started = true;
@@ -744,6 +807,17 @@ OPS_ASDEmbeddedNodeElement(void)
         opserr << "ASDEmbeddedNodeElement ERROR: Cannot use both -rot and -p flags.\n" << descr;
         return 0;
     }
+    if (slip_mat && pressure) {
+        opserr << "ASDEmbeddedNodeElement ERROR: -slip cannot be combined with -p: the "
+            << "rebar-slip assembly is not defined on u-p nodes.\n" << descr;
+        return 0;
+    }
+    if (slip_mat && (slip_node == iData[1] || rNodes.getLocation(slip_node) >= 0)) {
+        opserr << "ASDEmbeddedNodeElement ERROR: -slip $realNodeTag (" << slip_node
+            << ") must be a node OUTSIDE the element: not the constrained (AUX) node "
+            << "and not a retained host node.\n";
+        return 0;
+    }
     if (shear && !rot) {
         opserr << "ASDEmbeddedNodeElement ERROR: -shearDeformable only modifies the rotational "
             << "constraint, so it requires -rot.\n" << descr;
@@ -763,7 +837,8 @@ OPS_ASDEmbeddedNodeElement(void)
     }
 
     // done
-    return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear, corot);
+    return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear, corot,
+        slip_mat, slip_node, slip_KS, slip_mat ? &slip_x : nullptr);
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement() 
@@ -771,7 +846,8 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement()
 {
 }
 
-ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag, bool corot_flag)
+ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag, bool corot_flag,
+    UniaxialMaterial* slip_mat, int slip_node, double KS, const Vector* slip_x)
     : Element(tag, ELE_TAG_ASDEmbeddedNodeElement)
     , m_shape_request(shape_request)
     , m_rot_c_flag(rot_flag)
@@ -780,17 +856,32 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNo
     , m_corot_flag(corot_flag)
     , m_K(K)
     , m_KP(KP)
+    , m_KS(KS)
 {
     int nn = rNodes.Size();
-    m_node_ids.resize(nn + 1);
+    m_slip = (slip_mat != nullptr);
+    int extra = m_slip ? 2 : 1; // constrained node (+ the real rebar node)
+    m_node_ids.resize(nn + extra);
     m_node_ids(0) = cNode;
     for (int i = 0; i < nn; ++i)
         m_node_ids(i + 1) = rNodes(i);
-    m_nodes.resize(static_cast<std::size_t>(nn + 1), nullptr);
+    if (m_slip) {
+        m_node_ids(nn + 1) = slip_node;
+        m_slip_mat = slip_mat->getCopy();
+        if (m_slip_mat == nullptr) {
+            opserr << "ASDEmbeddedNodeElement ERROR: failed to copy the -slip uniaxial material "
+                << slip_mat->getTag() << "\n";
+            exit(-1);
+        }
+        m_slip_x0 = *slip_x;
+    }
+    m_nodes.resize(static_cast<std::size_t>(nn + extra), nullptr);
 }
 
 ASDEmbeddedNodeElement::~ASDEmbeddedNodeElement( )
 {
+    if (m_slip_mat)
+        delete m_slip_mat;
 }
 
 const char* ASDEmbeddedNodeElement::getClassType(void) const
@@ -798,10 +889,17 @@ const char* ASDEmbeddedNodeElement::getClassType(void) const
     return "ASDEmbeddedNodeElement";
 }
 
+int ASDEmbeddedNodeElement::numRetained() const
+{
+    // the first node is the constrained one and, with -slip, the last one is
+    // the real rebar node: neither is a host node
+    return static_cast<int>(m_nodes.size()) - 1 - (m_slip ? 1 : 0);
+}
+
 int ASDEmbeddedNodeElement::resolveFamily() const
 {
     // number of retained nodes (the first one is the constrained node)
-    int nn = static_cast<int>(m_nodes.size()) - 1;
+    int nn = numRetained();
     if (nn == 3)
         return Fam_Tri;                                  // 2D or 3D (shell face)
     if (nn == 4) {
@@ -826,8 +924,14 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
     m_num_dofs = 0;
     int local_dof_counter = 0;
     int local_pos = 0;
+    int aux_ndf = 0; // dof signature of the constrained (AUX) node
+    // 1 + the retained nodes: the -slip real node (last) is not one of them
+    std::size_t host_end = static_cast<std::size_t>(numRetained()) + 1;
     std::vector<ID> aux_mapping(m_nodes.size());
     for (std::size_t i = 0; i < m_nodes.size(); ++i) {
+
+        // the -slip real rebar node travels last and is NOT a host node
+        bool is_slip_node = m_slip && (i + 1 == m_nodes.size());
 
         // check node
         int node_id = m_node_ids(static_cast<int>(i));
@@ -859,6 +963,22 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
 
         // check NDF
         int ndf = node->getNumberDOF();
+        if (i == 0)
+            aux_ndf = ndf;
+        // -slip: the real rebar node must carry the SAME signature as the AUX
+        // node (STKO generates the AUX as a copy of it); the rotational tie is
+        // active iff that shared signature has rotations, independently of
+        // -rot, exactly as the zeroLength ties -dir 1..ndf
+        if (is_slip_node) {
+            if (ndf != aux_ndf) {
+                opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                    << " - the -slip real node " << node_id << " has " << ndf
+                    << " dofs but the constrained (AUX) node has " << aux_ndf
+                    << ". Generate the AUX node with the same dof signature as the rebar node.\n";
+                exit(-1);
+            }
+            m_slip_rot = (m_ndm == 3) ? (ndf == 6) : (ndf == 3);
+        }
         if (m_ndm == 2) {
             if (ndf != 2 && ndf != 3) {
                 opserr << "ASDEmbeddedNodeElement Error in setDomain: In 2D only 2 or 3 DOFs are allowed, not " << ndf << "\n";
@@ -876,7 +996,7 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 if (m_p_flag && ndf == 3) {
                     // all others should have same ndf (u-p)
                     m_up = true;
-                    for (std::size_t other_i = 1; other_i < m_nodes.size(); ++other_i) {
+                    for (std::size_t other_i = 1; other_i < host_end; ++other_i) {
                         int other_node_id = m_node_ids(static_cast<int>(other_i));
                         Node* other_node = theDomain->getNode(other_node_id);
                         if (other_node && (other_node->getNumberDOF() != ndf)) {
@@ -902,7 +1022,7 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 // whole rotational constraint off, and this refinement with it.
                 m_shear = false;
                 if (m_shear_flag && m_rot_c) {
-                    int nret = static_cast<int>(m_nodes.size()) - 1;
+                    int nret = numRetained();
                     bool surface = (nret == 3) ||
                         (nret == 4 && (m_shape_request == Fam_Quad || m_shape_request == Fam_Quad3D));
                     if (!surface) {
@@ -911,7 +1031,7 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                             << "quadrilateral face with -shape quad.\n";
                         exit(-1);
                     }
-                    for (std::size_t other_i = 1; other_i < m_nodes.size(); ++other_i) {
+                    for (std::size_t other_i = 1; other_i < host_end; ++other_i) {
                         Node* other_node = theDomain->getNode(m_node_ids(static_cast<int>(other_i)));
                         if (other_node && other_node->getNumberDOF() != 6) {
                             opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
@@ -932,7 +1052,7 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 if (m_p_flag && ndf == 4) {
                     // all others should have same ndf (u-p)
                     m_up = true;
-                    for (std::size_t other_i = 1; other_i < m_nodes.size(); ++other_i) {
+                    for (std::size_t other_i = 1; other_i < host_end; ++other_i) {
                         int other_node_id = m_node_ids(static_cast<int>(other_i));
                         Node* other_node = theDomain->getNode(other_node_id);
                         if (other_node && (other_node->getNumberDOF() != ndf)) {
@@ -947,7 +1067,14 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
         // set up mapping
         ID& imap = aux_mapping[i];
         int imap_size = m_ndm;
-        if (m_rot_c) {
+        if (is_slip_node) {
+            // the real rebar node exposes its translations and, when the tie
+            // is rotational, its rotations; never the -shear/-p logic of the
+            // retained nodes
+            if (m_slip_rot)
+                imap_size += (m_ndm == 2) ? 1 : 3;
+        }
+        else if (m_rot_c) {
             if (i == 0) {
                 if (m_ndm == 2)
                     imap_size += 1;
@@ -967,20 +1094,21 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
         imap(1) = local_pos + 1; // Uy
         if (m_ndm == 3) {
             imap(2) = local_pos + 2; // Uz
-            if (m_rot_c && (i == 0 || m_shear)) {
+            if ((is_slip_node && m_slip_rot) ||
+                (!is_slip_node && m_rot_c && (i == 0 || m_shear))) {
                 imap(3) = local_pos + 3; // Rx
                 imap(4) = local_pos + 4; // Ry
                 imap(5) = local_pos + 5; // Rz
             }
-            else if (m_up) {
+            else if (!is_slip_node && m_up) {
                 imap(3) = local_pos + 3; // P
             }
         }
         else {
-            if (i == 0 && m_rot_c) {
+            if ((is_slip_node && m_slip_rot) || (!is_slip_node && i == 0 && m_rot_c)) {
                 imap(2) = local_pos + 2; // Rz
             }
-            else if (m_up) {
+            else if (!is_slip_node && m_up) {
                 imap(2) = local_pos + 2; // P
             }
         }
@@ -1026,6 +1154,69 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 << warp / h * 100.0 << "% of the face size off their mean plane. "
                 << "The constraint is written on that plane, as the shell formulation is.\n";
         }
+    }
+
+    // -slip: reference triad and coincidence check
+    if (m_slip) {
+        if (m_ndm == 2 && std::abs(m_slip_x0(2)) > 1.0e-12) {
+            opserr << "ASDEmbeddedNodeElement Error in setDomain: element " << getTag()
+                << " - in a 2D model the -slip bar axis must lie in the XY plane "
+                << "(got Xz = " << m_slip_x0(2) << "). Set Xz to 0.\n";
+            exit(-1);
+        }
+        // complete x0 to a triad with the same rule STKO's frame_from_x uses,
+        // so the reported transverse components match the legacy zeroLength
+        // assembly. Any completion is mechanically equivalent: the rigid tie
+        // is isotropic in the plane orthogonal to the bar.
+        static Vector ref(3), y0(3), z0(3);
+        ref.Zero();
+        if (std::abs(m_slip_x0(2)) > 0.99)
+            ref(0) = 1.0;
+        else
+            ref(2) = 1.0;
+        cross(ref, m_slip_x0, y0);
+        y0.Normalize();
+        cross(m_slip_x0, y0, z0);
+        m_slip_T0.resize(3, 3);
+        for (int j = 0; j < 3; ++j) {
+            m_slip_T0(0, j) = m_slip_x0(j);
+            m_slip_T0(1, j) = y0(j);
+            m_slip_T0(2, j) = z0(j);
+        }
+        // the AUX node is expected to coincide with the real rebar node: a
+        // gap is not an error (the tie still works on relative displacements,
+        // as the zeroLength does) but it is worth knowing about
+        const Vector& ca = m_nodes[0]->getCrds();
+        const Vector& cr = m_nodes.back()->getCrds();
+        double dist2 = 0.0, scale2 = 0.0;
+        for (int j = 0; j < m_ndm; ++j) {
+            double d = ca(j) - cr(j);
+            dist2 += d * d;
+        }
+        for (int a = 1; a < 1 + numRetained(); ++a)
+            for (int b = a + 1; b < 1 + numRetained(); ++b) {
+                const Vector& xa = m_nodes[static_cast<std::size_t>(a)]->getCrds();
+                const Vector& xb = m_nodes[static_cast<std::size_t>(b)]->getCrds();
+                double s2 = 0.0;
+                for (int j = 0; j < m_ndm; ++j) {
+                    double d = xa(j) - xb(j);
+                    s2 += d * d;
+                }
+                scale2 = std::max(scale2, s2);
+            }
+        if (scale2 > 0.0 && dist2 > 1.0e-12 * scale2) {
+            opserr << "ASDEmbeddedNodeElement WARNING: element " << getTag()
+                << " - the -slip real node " << m_node_ids(m_node_ids.Size() - 1)
+                << " is not coincident with the constrained (AUX) node "
+                << m_node_ids(0) << " (distance = " << std::sqrt(dist2) << ").\n";
+        }
+        // recorder buffers
+        int ns = m_ndm + (m_slip_rot ? (m_ndm == 2 ? 1 : 3) : 0);
+        m_slip_g.resize(ns);
+        m_slip_g.Zero();
+        m_slip_axis.resize(3);
+        for (int j = 0; j < 3; ++j)
+            m_slip_axis(j) = m_slip_x0(j);
     }
 
     // flatten mapping
@@ -1085,7 +1276,10 @@ void ASDEmbeddedNodeElement::Print(OPS_Stream& s, int flag)
                 s << ", ";
             s << m_node_ids(i);
         }
-        s << "]}";
+        s << "]";
+        if (m_slip && m_slip_mat)
+            s << ", \"slipMaterial\": " << m_slip_mat->getTag();
+        s << "}";
     }
 }
 
@@ -1131,7 +1325,7 @@ int ASDEmbeddedNodeElement::update()
         for (int i = 0; i < 3; ++i) m_rv[i] = rv[i];
         // -shearDeformable: the same bookkeeping for every retained node
         if (m_shear) {
-            int nn = static_cast<int>(m_nodes.size()) - 1;
+            int nn = numRetained();
             int pos = m_nodes[0]->getNumberDOF();
             for (int a = 0; a < nn; ++a) {
                 const Vector& au = m_nodes[static_cast<std::size_t>(a + 1)]->getTrialDisp();
@@ -1149,7 +1343,29 @@ int ASDEmbeddedNodeElement::update()
                 pos += m_nodes[static_cast<std::size_t>(a + 1)]->getNumberDOF();
             }
         }
+        // -slip rotational tie: the real rebar node gets the same bookkeeping
+        if (m_slip && m_slip_rot) {
+            const Vector& ru = m_nodes.back()->getTrialDisp();
+            int rpos = m_num_dofs - m_nodes.back()->getNumberDOF();
+            double rrv[3];
+            for (int i = 0; i < 3; ++i)
+                rrv[i] = ru(3 + i) - (m_U0_computed ? m_U0(rpos + 3 + i) : 0.0);
+            ASDQuaternion<double> rdq = ASDQuaternion<double>::FromRotationVector(
+                rrv[0] - m_rvr[0], rrv[1] - m_rvr[1], rrv[2] - m_rvr[2]);
+            ASDQuaternion<double> qr(m_qr[0], m_qr[1], m_qr[2], m_qr[3]);
+            qr = rdq * qr;
+            qr.normalize();
+            m_qr[0] = qr.w(); m_qr[1] = qr.x(); m_qr[2] = qr.y(); m_qr[3] = qr.z();
+            for (int i = 0; i < 3; ++i) m_rvr[i] = rrv[i];
+        }
     }
+    // -slip: strain the tau-slip law with the current relative displacement
+    // along the (frozen or corotated) bar axis. The return code travels: an
+    // IMPL-EX material signals failure from setTrialStrain to ask for a step
+    // cut, and Domain::update aggregates the element codes (as ZeroLength
+    // propagates it for the legacy assembly).
+    if (m_slip)
+        return m_slip_mat->setTrialStrain(slipComputeGap());
     return 0;
 }
 
@@ -1159,6 +1375,10 @@ int ASDEmbeddedNodeElement::commitState()
     for (int i = 0; i < 3; ++i) m_rv_conv[i] = m_rv[i];
     m_qa_conv = m_qa;
     m_rva_conv = m_rva;
+    for (int i = 0; i < 4; ++i) m_qr_conv[i] = m_qr[i];
+    for (int i = 0; i < 3; ++i) m_rvr_conv[i] = m_rvr[i];
+    if (m_slip_mat)
+        m_slip_mat->commitState();
     return Element::commitState();
 }
 
@@ -1168,6 +1388,10 @@ int ASDEmbeddedNodeElement::revertToLastCommit()
     for (int i = 0; i < 3; ++i) m_rv[i] = m_rv_conv[i];
     m_qa = m_qa_conv;
     m_rva = m_rva_conv;
+    for (int i = 0; i < 4; ++i) m_qr[i] = m_qr_conv[i];
+    for (int i = 0; i < 3; ++i) m_rvr[i] = m_rvr_conv[i];
+    if (m_slip_mat)
+        m_slip_mat->revertToLastCommit();
     return 0;
 }
 
@@ -1184,6 +1408,12 @@ int ASDEmbeddedNodeElement::revertToStart()
     std::fill(m_rva.begin(), m_rva.end(), 0.0);
     m_qa_conv = m_qa;
     m_rva_conv = m_rva;
+    m_qr[0] = 1.0; m_qr[1] = m_qr[2] = m_qr[3] = 0.0;
+    m_rvr[0] = m_rvr[1] = m_rvr[2] = 0.0;
+    for (int i = 0; i < 4; ++i) m_qr_conv[i] = m_qr[i];
+    for (int i = 0; i < 3; ++i) m_rvr_conv[i] = m_rvr[i];
+    if (m_slip_mat)
+        m_slip_mat->revertToStart();
     return 0;
 }
 
@@ -1195,7 +1425,7 @@ void ASDEmbeddedNodeElement::corotSetup()
     // are computed ON that configuration, so F(reference) = I and R0 = I.
     // For the 4-node tet F is constant: point and center gradients coincide,
     // and the same closed-form G applies with the tet gradients.
-    int nn = static_cast<int>(m_nodes.size()) - 1;
+    int nn = numRetained();
     static Matrix X;
     X.resize(3, nn);
     int pos = m_nodes[0]->getNumberDOF();
@@ -1367,11 +1597,16 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
 {
     corotSetup();
     typedef ASDQuaternion<double> Q4;
-    int nn = static_cast<int>(m_nodes.size()) - 1;
+    int nn = numRetained();
     // with -shearDeformable the retained nodes expose their rotations too, so
     // the reduced dofset interleaves [u(3) r(3)] per retained node
     int nr = m_shear ? 6 : 3;
-    int ncols = 6 + nr * nn;
+    // -slip: the real rebar node closes the reduced dofset with its 3
+    // translations and, when the tie is rotational, its 3 rotations; the slip
+    // rows are appended after the 6 embedding rows
+    int scols = m_slip ? (3 + (m_slip_rot ? 3 : 0)) : 0;
+    int nsrows = scols;
+    int ncols = 6 + nr * nn + scols;
 
     // current configuration (getGlobalDisplacements removes U0)
     const Vector& U = getGlobalDisplacements();
@@ -1521,7 +1756,8 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
         }
     }
 
-    g.resize(6);
+    g.resize(6 + nsrows);
+    g.Zero();
     for (int i = 0; i < 3; ++i) {
         g(i) = gu(i);
         g(3 + i) = om(i) - thloc(i);
@@ -1559,7 +1795,7 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
             }
     }
 
-    B.resize(6, ncols);
+    B.resize(6 + nsrows, ncols);
     B.Zero();
     // dg_u rows
     static Vector z(3);
@@ -1695,20 +1931,171 @@ void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
                 s += ETi(i, k) * R(j, k);
             B(3 + i, 3 + j) -= s;
         }
+
+    // ---- -slip rows: the zeroLength kernel corotated by the host frame ----
+    if (m_slip) {
+        int c_r = 6 + nr * nn; // first column of the real-node block
+        // relative displacement AUX - real (deformational: the two nodes are
+        // coincident in the reference configuration)
+        int rpos = m_num_dofs - m_nodes.back()->getNumberDOF();
+        static Vector d(3);
+        for (int i = 0; i < 3; ++i)
+            d(i) = U(i) - U(rpos + i);
+        // translational rows: g_i = a_i . d with a_i = R * x0_i the corotated
+        // triad. DW is the LOCAL (right-trivialized) spin of the frame,
+        // dR = R skew(w) with w = DW dq (the same convention the skew(z) DW
+        // and Tinv DW terms above rely on), so the frame variation is
+        // d(a_i . d) = (R (w x x0_i)) . d = (x0_i x R^T d) . w and the host
+        // columns get +(x0_i x R^T d)^T DW -- the geometric stiffness of the
+        // rotating slip direction. Gated by verify_slip_corot.py.
+        static Vector ai(3);
+        static Vector dl(3);
+        static Vector x0i(3);
+        static Vector xxd(3);
+        for (int k = 0; k < 3; ++k) {
+            double s = 0.0;
+            for (int j = 0; j < 3; ++j)
+                s += R(j, k) * d(j);
+            dl(k) = s;                       // R^T d
+        }
+        for (int i = 0; i < 3; ++i) {
+            for (int k = 0; k < 3; ++k) {
+                double s = 0.0;
+                for (int j = 0; j < 3; ++j)
+                    s += R(k, j) * m_slip_T0(i, j);
+                ai(k) = s;
+            }
+            if (i == 0)
+                for (int k = 0; k < 3; ++k)
+                    m_slip_axis(k) = ai(k);
+            g(6 + i) = ai ^ d;
+            for (int j = 0; j < 3; ++j) {
+                B(6 + i, j) += ai(j);        // AUX (slave) translations
+                B(6 + i, c_r + j) -= ai(j);  // real node translations
+            }
+            for (int j = 0; j < 3; ++j)
+                x0i(j) = m_slip_T0(i, j);
+            cross(x0i, dl, xxd);
+            for (int col = 0; col < ncols; ++col)
+                B(6 + i, col) += xxd(0) * DW(0, col) + xxd(1) * DW(1, col) + xxd(2) * DW(2, col);
+        }
+        // rotational tie rows: theta = rotvec(Rs^T Rr) is invariant under a
+        // superposed rigid rotation, so there is no DW coupling; the exact
+        // variation is d(theta) = Tinv(theta) Rs^T (dphi_r - dphi_s)
+        if (m_slip_rot) {
+            Q4 qr(m_qr[0], m_qr[1], m_qr[2], m_qr[3]);
+            Q4 qrel = qs.conjugate() * qr;
+            qrel.normalize();
+            static Vector threl(3);
+            qrel.toRotationVector(threl(0), threl(1), threl(2));
+            for (int i = 0; i < 3; ++i)
+                g(9 + i) = threl(i);
+            static Matrix Rs(3, 3);
+            qs.toRotationMatrix(Rs);
+            static Matrix Tir(3, 3);
+            leftJacobianInv(threl, Tir);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) {
+                    double s = 0.0;
+                    for (int k = 0; k < 3; ++k)
+                        s += Tir(i, k) * Rs(j, k); // Tinv * Rs^T
+                    B(9 + i, 3 + j) -= s;          // AUX (slave) rotations
+                    B(9 + i, c_r + 3 + j) += s;    // real node rotations
+                }
+        }
+        // recorder buffers
+        for (int i = 0; i < nsrows; ++i)
+            m_slip_g(i) = g(6 + i);
+    }
+}
+
+const Matrix& ASDEmbeddedNodeElement::embedLocalStiffness()
+{
+    // the constraint mode is shared by every family
+    int mode = m_rot_c ? Mode_UR : (m_up ? Mode_UP : Mode_U);
+
+    // isoparametric (non-simplex) hosts go through the generic path
+    if (m_family == Fam_Quad)
+        return QUAD_2D(mode);
+    if (m_family == Fam_Quad3D)
+        return QUAD_3D(mode);
+    if (m_family == Fam_Hexa)
+        return HEX_3D(mode);
+    // simplex hosts keep the original, untouched kernels
+    if (numRetained() == 3) {
+        // support shape is a triangle ...
+        if (m_ndm == 2) {
+            // ... in 2D
+            if (m_rot_c) {
+                // ... with rotational dofs
+                return TRI_2D_UR();
+            }
+            else if (m_up) {
+                // ... with pressure dofs
+                return TRI_2D_UP();
+            }
+            else {
+                // ... without rotational dofs
+                return TRI_2D_U();
+            }
+        }
+        else {
+            // ... in 3D
+            if (m_rot_c) {
+                // ... with rotational dofs
+                return TRI_3D_UR();
+            }
+            else if(m_up) {
+                // ... with pressure dofs
+                return TRI_3D_UP();
+            }
+            else {
+                // ... without rotational dofs
+                return TRI_3D_U();
+            }
+        }
+    }
+    else {
+        // support shape is a tetrahedron ...
+        if (m_rot_c) {
+            // ... with rotational dofs
+            return TET_3D_UR();
+        }
+        else if (m_up) {
+            // ... with pressure dofs
+            return TET_3D_UP();
+        }
+        else {
+            // ... without rotational dofs
+            return TET_3D_U();
+        }
+    }
 }
 
 const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
 {
-    // -corotational: K = iK * B^T B on the exact first variation (Gauss-Newton;
-    // the k*g*d2g geometric term vanishes with the constraint violation)
+    // -corotational: K = B^T diag(w) B on the exact first variation
+    // (Gauss-Newton; the k*g*d2g geometric term vanishes with the constraint
+    // violation). Without -slip every row weighs iK and this is the original
+    // iK * B^T B; the slip rows weigh the material tangent (row 6) and the
+    // raw rigid-tie stiffness KS (the others).
     if (m_corot) {
         static Matrix B;
         static Vector g;
         corotComputeBg(B, g);
         int nred = B.noCols();
+        int nrows = B.noRows();
+        static Matrix WB;
+        WB.resize(nrows, nred);
+        for (int i = 0; i < nrows; ++i) {
+            double w = (i < 6) ? m_ciK :
+                (i == 6 ? m_slip_mat->getTangent() : m_KS);
+            for (int j = 0; j < nred; ++j)
+                WB(i, j) = w * B(i, j);
+        }
         static Matrix KL;
         KL.resize(nred, nred);
-        KL.addMatrixTransposeProduct(0.0, B, B, m_ciK);
+        KL.addMatrixTransposeProduct(0.0, B, WB, 1.0);
         static Matrix K;
         K.resize(m_num_dofs, m_num_dofs);
         K.Zero();
@@ -1720,69 +2107,8 @@ const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
         return K;
     }
 
-    // the constraint mode is shared by every family
-    int mode = m_rot_c ? Mode_UR : (m_up ? Mode_UP : Mode_U);
-
     // compute stiffness matrix in reduced local dofset
-    auto compute_local = [this, mode]() -> const Matrix& {
-        // isoparametric (non-simplex) hosts go through the generic path
-        if (m_family == Fam_Quad)
-            return QUAD_2D(mode);
-        if (m_family == Fam_Quad3D)
-            return QUAD_3D(mode);
-        if (m_family == Fam_Hexa)
-            return HEX_3D(mode);
-        // simplex hosts keep the original, untouched kernels
-        if (m_nodes.size() == 4) {
-            // support shape is a triangle ...
-            if (m_ndm == 2) {
-                // ... in 2D
-                if (m_rot_c) {
-                    // ... with rotational dofs
-                    return TRI_2D_UR();
-                }
-                else if (m_up) {
-                    // ... with pressure dofs
-                    return TRI_2D_UP();
-                }
-                else {
-                    // ... without rotational dofs
-                    return TRI_2D_U();
-                }
-            }
-            else {
-                // ... in 3D
-                if (m_rot_c) {
-                    // ... with rotational dofs
-                    return TRI_3D_UR();
-                }
-                else if(m_up) {
-                    // ... with pressure dofs
-                    return TRI_3D_UP();
-                }
-                else {
-                    // ... without rotational dofs
-                    return TRI_3D_U();
-                }
-            }
-        }
-        else {
-            // support shape is a tetrahedron ...
-            if (m_rot_c) {
-                // ... with rotational dofs
-                return TET_3D_UR();
-            }
-            else if (m_up) {
-                // ... with pressure dofs
-                return TET_3D_UP();
-            }
-            else {
-                // ... without rotational dofs
-                return TET_3D_U();
-            }
-        }
-    };
-    const Matrix& KL = compute_local();
+    const Matrix& KL = embedLocalStiffness();
 
     // output matrix
     static Matrix K;
@@ -1797,6 +2123,10 @@ const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
             K(ig, jg) = KL(i, j);
         }
     }
+
+    // -slip: the zeroLength-equivalent block on the frozen triad
+    if (m_slip)
+        slipAddLinear(&K, nullptr);
 
     // done
     return K;
@@ -1833,19 +2163,45 @@ const Vector& ASDEmbeddedNodeElement::getResistingForce()
 {
     static Vector F;
     F.resize(m_num_dofs);
-    // -corotational: f = iK * B^T g, exact at any rotation (and exactly
-    // self-equilibrated: the closed-form B annihilates the rigid modes)
+    // -corotational: f = B^T q, exact at any rotation (and exactly
+    // self-equilibrated: the closed-form B annihilates the rigid modes).
+    // Without -slip q = iK * g and this is the original iK * B^T g; the slip
+    // row carries the material stress, the other tie rows KS * g.
     if (m_corot) {
         static Matrix B;
         static Vector g;
         corotComputeBg(B, g);
         int nred = B.noCols();
+        int nrows = B.noRows();
+        static Vector q;
+        q.resize(nrows);
+        for (int i = 0; i < nrows; ++i)
+            q(i) = (i < 6) ? m_ciK * g(i) :
+                (i == 6 ? m_slip_mat->getStress() : m_KS * g(i));
         static Vector fr;
         fr.resize(nred);
-        fr.addMatrixTransposeVector(0.0, B, g, m_ciK);
+        fr.addMatrixTransposeVector(0.0, B, q, 1.0);
         F.Zero();
         for (int i = 0; i < nred; ++i)
             F(m_mapping(i)) = fr(i);
+        return F;
+    }
+    if (m_slip) {
+        // the slip row is materially non-linear: the force is NOT K * U.
+        // Embedding part (pure elastic penalty): F = K_e * U; slip block
+        // appended with the material stress on the bar axis.
+        const Matrix& KL = embedLocalStiffness();
+        static Matrix KE;
+        KE.resize(m_num_dofs, m_num_dofs);
+        KE.Zero();
+        for (int i = 0; i < KL.noRows(); ++i) {
+            int ig = m_mapping(i);
+            for (int j = 0; j < KL.noCols(); ++j)
+                KE(ig, m_mapping(j)) = KL(i, j);
+        }
+        const Vector& U = getGlobalDisplacements();
+        F.addMatrixVector(0.0, KE, U, 1.0);
+        slipAddLinear(nullptr, &F);
         return F;
     }
     const Matrix& K = getTangentStiff();
@@ -1868,12 +2224,13 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     int res = 0;
     int dataTag = getDbTag();
 
-    int NN = m_node_ids.Size();          // 1 constrained + n retained
+    int NN = m_node_ids.Size();          // 1 constrained + n retained (+ the -slip real node)
+    int NRET = numRetained();
     int NMAP = m_mapping.Size();
     int NU0 = m_U0_computed ? m_U0.Size() : 0;
 
     // INT data 1: header with every size needed to read the rest
-    static ID idData1(17);
+    static ID idData1(21);
     idData1(0) = getTag();
     idData1(1) = NN;
     idData1(2) = NMAP;
@@ -1894,6 +2251,23 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     idData1(14) = m_shear ? 1 : 0;
     idData1(15) = m_corot_flag ? 1 : 0;
     idData1(16) = m_corot ? 1 : 0;
+    // -slip: the flag must travel BEFORE the node list is interpreted (the
+    // real node is the last id, and numRetained depends on it), and the
+    // material class/db tags are needed to rebuild the law on the far side
+    idData1(17) = m_slip ? 1 : 0;
+    idData1(18) = m_slip_rot ? 1 : 0;
+    idData1(19) = 0;
+    idData1(20) = 0;
+    if (m_slip) {
+        int matDbTag = m_slip_mat->getDbTag();
+        if (matDbTag == 0) {
+            matDbTag = theChannel.getDbTag();
+            if (matDbTag != 0)
+                m_slip_mat->setDbTag(matDbTag);
+        }
+        idData1(19) = m_slip_mat->getClassTag();
+        idData1(20) = matDbTag;
+    }
     res = theChannel.sendID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send ID 1\n";
@@ -1915,9 +2289,13 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
 
     // DOUBLE data: K, KP, the corotational slave-rotation state, the
     // per-retained-node rotation state (-corotational + -shearDeformable:
-    // 14 doubles per retained node), and the initial displacement vector
-    int NQA = (m_corot && m_shear) ? 14 * (NN - 1) : 0;
-    Vector vectData(16 + NQA + NU0);
+    // 14 doubles per retained node), the -slip data (KS, x0, and the real
+    // node rotation state when the corotational tie is rotational), and the
+    // initial displacement vector
+    int NQA = (m_corot && m_shear) ? 14 * NRET : 0;
+    int NSLIP = m_slip ? 4 : 0;
+    int NQR = (m_slip && m_corot && m_slip_rot) ? 14 : 0;
+    Vector vectData(16 + NQA + NSLIP + NQR + NU0);
     pos = 0;
     vectData(pos++) = m_K;
     vectData(pos++) = m_KP;
@@ -1926,11 +2304,21 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     for (int i = 0; i < 4; ++i) vectData(pos++) = m_qs_conv[i];
     for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv_conv[i];
     if (NQA > 0) {
-        for (int a = 0; a < NN - 1; ++a) {
+        for (int a = 0; a < NRET; ++a) {
             for (int i = 0; i < 4; ++i) vectData(pos++) = m_qa[4 * a + i];
             for (int i = 0; i < 3; ++i) vectData(pos++) = m_rva[3 * a + i];
             for (int i = 0; i < 4; ++i) vectData(pos++) = m_qa_conv[4 * a + i];
             for (int i = 0; i < 3; ++i) vectData(pos++) = m_rva_conv[3 * a + i];
+        }
+    }
+    if (m_slip) {
+        vectData(pos++) = m_KS;
+        for (int i = 0; i < 3; ++i) vectData(pos++) = m_slip_x0(i);
+        if (NQR > 0) {
+            for (int i = 0; i < 4; ++i) vectData(pos++) = m_qr[i];
+            for (int i = 0; i < 3; ++i) vectData(pos++) = m_rvr[i];
+            for (int i = 0; i < 4; ++i) vectData(pos++) = m_qr_conv[i];
+            for (int i = 0; i < 3; ++i) vectData(pos++) = m_rvr_conv[i];
         }
     }
     for (int i = 0; i < NU0; ++i)
@@ -1939,6 +2327,15 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send Vector\n";
         return res;
+    }
+
+    // -slip: the material state travels with its own sendSelf
+    if (m_slip) {
+        res = m_slip_mat->sendSelf(commitTag, theChannel);
+        if (res < 0) {
+            opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send the -slip material\n";
+            return res;
+        }
     }
 
     // done
@@ -1951,7 +2348,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int dataTag = this->getDbTag();
 
     // INT data 1: header
-    static ID idData1(17);
+    static ID idData1(21);
     res = theChannel.recvID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive ID 1\n";
@@ -1975,6 +2372,23 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     m_corot_flag = idData1(15) == 1;
     m_corot = idData1(16) == 1;
     m_corot_init = false; // reference data is recomputed lazily from coords + U0
+    m_slip = idData1(17) == 1;
+    m_slip_rot = idData1(18) == 1;
+    if (m_slip) {
+        int matClassTag = idData1(19);
+        if (m_slip_mat == nullptr || m_slip_mat->getClassTag() != matClassTag) {
+            if (m_slip_mat)
+                delete m_slip_mat;
+            m_slip_mat = theBroker.getNewUniaxialMaterial(matClassTag);
+            if (m_slip_mat == nullptr) {
+                opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag()
+                    << " failed to create the -slip material with class tag " << matClassTag << "\n";
+                return -1;
+            }
+        }
+        m_slip_mat->setDbTag(idData1(20));
+    }
+    int NRET = NN - 1 - (m_slip ? 1 : 0);
 
     // INT data 2: node ids and dof mapping
     ID idData2(NN + NMAP);
@@ -1993,8 +2407,10 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
         m_mapping(i) = idData2(pos++);
 
     // DOUBLE data
-    int NQA = (m_corot && m_shear) ? 14 * (NN - 1) : 0;
-    Vector vectData(16 + NQA + NU0);
+    int NQA = (m_corot && m_shear) ? 14 * NRET : 0;
+    int NSLIP = m_slip ? 4 : 0;
+    int NQR = (m_slip && m_corot && m_slip_rot) ? 14 : 0;
+    Vector vectData(16 + NQA + NSLIP + NQR + NU0);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -2008,15 +2424,26 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     for (int i = 0; i < 4; ++i) m_qs_conv[i] = vectData(pos++);
     for (int i = 0; i < 3; ++i) m_rv_conv[i] = vectData(pos++);
     if (NQA > 0) {
-        m_qa.resize(4 * static_cast<std::size_t>(NN - 1));
-        m_rva.resize(3 * static_cast<std::size_t>(NN - 1));
-        m_qa_conv.resize(4 * static_cast<std::size_t>(NN - 1));
-        m_rva_conv.resize(3 * static_cast<std::size_t>(NN - 1));
-        for (int a = 0; a < NN - 1; ++a) {
+        m_qa.resize(4 * static_cast<std::size_t>(NRET));
+        m_rva.resize(3 * static_cast<std::size_t>(NRET));
+        m_qa_conv.resize(4 * static_cast<std::size_t>(NRET));
+        m_rva_conv.resize(3 * static_cast<std::size_t>(NRET));
+        for (int a = 0; a < NRET; ++a) {
             for (int i = 0; i < 4; ++i) m_qa[4 * a + i] = vectData(pos++);
             for (int i = 0; i < 3; ++i) m_rva[3 * a + i] = vectData(pos++);
             for (int i = 0; i < 4; ++i) m_qa_conv[4 * a + i] = vectData(pos++);
             for (int i = 0; i < 3; ++i) m_rva_conv[3 * a + i] = vectData(pos++);
+        }
+    }
+    if (m_slip) {
+        m_KS = vectData(pos++);
+        m_slip_x0.resize(3);
+        for (int i = 0; i < 3; ++i) m_slip_x0(i) = vectData(pos++);
+        if (NQR > 0) {
+            for (int i = 0; i < 4; ++i) m_qr[i] = vectData(pos++);
+            for (int i = 0; i < 3; ++i) m_rvr[i] = vectData(pos++);
+            for (int i = 0; i < 4; ++i) m_qr_conv[i] = vectData(pos++);
+            for (int i = 0; i < 3; ++i) m_rvr_conv[i] = vectData(pos++);
         }
     }
     if (NU0 > 0) {
@@ -2025,8 +2452,112 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
             m_U0(i) = vectData(pos++);
     }
 
+    // -slip: the material state travels with its own recvSelf
+    if (m_slip) {
+        res = m_slip_mat->recvSelf(commitTag, theChannel, theBroker);
+        if (res < 0) {
+            opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive the -slip material\n";
+            return res;
+        }
+    }
+
     // done
     return res;
+}
+
+Response* ASDEmbeddedNodeElement::setResponse(const char** argv, int argc, OPS_Stream& output)
+{
+    // every response belongs to the -slip machinery: without it the element
+    // is a pure penalty constraint and has nothing to record
+    if (!m_slip || argc < 1)
+        return Element::setResponse(argv, argc, output);
+
+    Response* theResponse = nullptr;
+    output.tag("ElementOutput");
+    output.attr("eleType", this->getClassType());
+    output.attr("eleTag", this->getTag());
+
+    if (strcmp(argv[0], "slip") == 0) {
+        // the scalar slip: the strain of the tau-slip law
+        output.tag("ResponseType", "slip");
+        theResponse = new ElementResponse(this, 1, Vector(1));
+    }
+    else if (strcmp(argv[0], "slipForce") == 0 || strcmp(argv[0], "bondForce") == 0) {
+        // the scalar bond force: the stress of the tau-slip law
+        output.tag("ResponseType", "slipForce");
+        theResponse = new ElementResponse(this, 2, Vector(1));
+    }
+    else if (strcmp(argv[0], "gap") == 0) {
+        // local relative displacement AUX - real: [slip, t1, (t2)]
+        output.tag("ResponseType", "slip");
+        for (int i = 1; i < m_ndm; ++i)
+            output.tag("ResponseType", i == 1 ? "t1" : "t2");
+        theResponse = new ElementResponse(this, 3, Vector(m_ndm));
+    }
+    else if (strcmp(argv[0], "gapForce") == 0) {
+        // conjugate local forces: [bond force, KS*t1, (KS*t2)]
+        output.tag("ResponseType", "slipForce");
+        for (int i = 1; i < m_ndm; ++i)
+            output.tag("ResponseType", i == 1 ? "Ft1" : "Ft2");
+        theResponse = new ElementResponse(this, 4, Vector(m_ndm));
+    }
+    else if (strcmp(argv[0], "slipAxis") == 0) {
+        // current bar axis (rotated by the host frame with -corotational)
+        output.tag("ResponseType", "x1");
+        output.tag("ResponseType", "x2");
+        output.tag("ResponseType", "x3");
+        theResponse = new ElementResponse(this, 5, Vector(3));
+    }
+    else if (strcmp(argv[0], "slipMaterial") == 0 && argc > 1) {
+        // forward to the tau-slip law (e.g. stress/strain/tangent of the
+        // inner material of a Parallel wrapper)
+        theResponse = m_slip_mat->setResponse(&argv[1], argc - 1, output);
+    }
+
+    output.endTag();
+    return theResponse;
+}
+
+int ASDEmbeddedNodeElement::getResponse(int responseID, Information& eleInfo)
+{
+    if (!m_slip)
+        return Element::getResponse(responseID, eleInfo);
+
+    static Vector r1(1);
+    switch (responseID) {
+    case 1:
+        r1(0) = m_slip_mat->getStrain();
+        return eleInfo.setVector(r1);
+    case 2:
+        r1(0) = m_slip_mat->getStress();
+        return eleInfo.setVector(r1);
+    case 3: {
+        slipComputeGap();
+        static Vector rg;
+        rg.resize(m_ndm);
+        for (int i = 0; i < m_ndm; ++i)
+            rg(i) = m_slip_g(i);
+        return eleInfo.setVector(rg);
+    }
+    case 4: {
+        slipComputeGap();
+        static Vector rf;
+        rf.resize(m_ndm);
+        rf(0) = m_slip_mat->getStress();
+        for (int i = 1; i < m_ndm; ++i)
+            rf(i) = m_KS * m_slip_g(i);
+        return eleInfo.setVector(rf);
+    }
+    case 5: {
+        slipComputeGap();
+        static Vector ra(3);
+        for (int i = 0; i < 3; ++i)
+            ra(i) = m_slip_axis(i);
+        return eleInfo.setVector(ra);
+    }
+    default:
+        return Element::getResponse(responseID, eleInfo);
+    }
 }
 
 const Vector& ASDEmbeddedNodeElement::getGlobalDisplacements() const
@@ -2044,6 +2575,94 @@ const Vector& ASDEmbeddedNodeElement::getGlobalDisplacements() const
         U.addVector(1.0, m_U0, -1.0);
     }
     return U;
+}
+
+double ASDEmbeddedNodeElement::slipComputeGap()
+{
+    if (m_corot) {
+        // the corotational kernel computes the slip rows (and refreshes the
+        // recorder buffers) as part of B and g
+        static Matrix B;
+        static Vector g;
+        corotComputeBg(B, g);
+        return m_slip_g(0);
+    }
+    // frozen frame: exactly the zeroLength kinematics, gap = u_AUX - u_real
+    // on the deformational displacements
+    const Vector& U = getGlobalDisplacements();
+    int rpos = m_num_dofs - m_nodes.back()->getNumberDOF();
+    for (int i = 0; i < m_ndm; ++i) {
+        double s = 0.0;
+        for (int j = 0; j < m_ndm; ++j)
+            s += m_slip_T0(i, j) * (U(j) - U(rpos + j));
+        m_slip_g(i) = s;
+    }
+    if (m_slip_rot) {
+        int nrot = (m_ndm == 2) ? 1 : 3;
+        for (int i = 0; i < nrot; ++i)
+            m_slip_g(m_ndm + i) = U(m_ndm + i) - U(rpos + m_ndm + i);
+    }
+    for (int j = 0; j < 3; ++j)
+        m_slip_axis(j) = m_slip_x0(j);
+    return m_slip_g(0);
+}
+
+void ASDEmbeddedNodeElement::slipAddLinear(Matrix* K, Vector* F)
+{
+    // zeroLength-equivalent block on the frozen triad: the slip law on the
+    // bar axis, the raw rigid-tie stiffness KS on every other relative dof.
+    // Written directly in the FULL element dofset: the AUX dofs start at 0,
+    // the real node dofs at rpos, and no other dof is touched.
+    int rpos = m_num_dofs - m_nodes.back()->getNumberDOF();
+    int nrot = m_slip_rot ? ((m_ndm == 2) ? 1 : 3) : 0;
+    if (K) {
+        // C = k_mat * x (x) x + KS * (t_r (x) t_r) on the translations
+        static Matrix C(3, 3);
+        C.Zero();
+        double kmat = m_slip_mat->getTangent();
+        for (int r = 0; r < m_ndm; ++r) {
+            double kr = (r == 0) ? kmat : m_KS;
+            for (int i = 0; i < m_ndm; ++i)
+                for (int j = 0; j < m_ndm; ++j)
+                    C(i, j) += kr * m_slip_T0(r, i) * m_slip_T0(r, j);
+        }
+        for (int i = 0; i < m_ndm; ++i)
+            for (int j = 0; j < m_ndm; ++j) {
+                (*K)(i, j) += C(i, j);
+                (*K)(i, rpos + j) -= C(i, j);
+                (*K)(rpos + i, j) -= C(i, j);
+                (*K)(rpos + i, rpos + j) += C(i, j);
+            }
+        for (int i = 0; i < nrot; ++i) {
+            int a = m_ndm + i;
+            int r = rpos + m_ndm + i;
+            (*K)(a, a) += m_KS;
+            (*K)(a, r) -= m_KS;
+            (*K)(r, a) -= m_KS;
+            (*K)(r, r) += m_KS;
+        }
+    }
+    if (F) {
+        // refresh the local gap (a recorder can ask for forces outside the
+        // update sequence) and assemble f = B^T q with q = [sigma, KS * g...]
+        slipComputeGap();
+        static Vector fv(3);
+        fv.Zero();
+        for (int r = 0; r < m_ndm; ++r) {
+            double qr = (r == 0) ? m_slip_mat->getStress() : m_KS * m_slip_g(r);
+            for (int i = 0; i < m_ndm; ++i)
+                fv(i) += qr * m_slip_T0(r, i);
+        }
+        for (int i = 0; i < m_ndm; ++i) {
+            (*F)(i) += fv(i);
+            (*F)(rpos + i) -= fv(i);
+        }
+        for (int i = 0; i < nrot; ++i) {
+            double m = m_KS * m_slip_g(m_ndm + i);
+            (*F)(m_ndm + i) += m;
+            (*F)(rpos + m_ndm + i) -= m;
+        }
+    }
 }
 
 const Matrix& ASDEmbeddedNodeElement::TRI_2D_U()
