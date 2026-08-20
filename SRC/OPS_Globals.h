@@ -49,7 +49,7 @@ extern OPS_Stream *opserrPtr;
 #include <string.h>
 #include <stdlib.h>
 
-enum NodeResponseType { Disp = 1, Vel = 2, Accel =3, IncrDisp =4, IncrDeltaDisp =5, Reaction =6, Unbalance =7, RayleighForces =8};
+enum NodeResponseType { Disp = 1, Vel = 2, Accel =3, IncrDisp =4, IncrDeltaDisp =5, Reaction =6, Unbalance =7, RayleighForces =8, TrialDisp=9, TrialVel=10, TrialAccel=11};
 
 #ifdef _TCL85
 #define TCL_Char const char

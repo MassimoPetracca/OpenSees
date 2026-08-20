@@ -77,8 +77,14 @@ setTime(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 int 
 getTime(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
+int
+getCommittedTime(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
 int 
 getLoadFactor(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
+
+int
+domainCommitTag(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
 int 
 buildModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
@@ -137,6 +143,9 @@ responseSpectrumAnalysis(ClientData clientData, Tcl_Interp* interp, int argc, TC
 
 int
 getDomainElementStiffnessOOM(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
+
+int
+setAnalysisCommitFilter(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv);
 
 int 
 videoPlayer(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);

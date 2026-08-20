@@ -1754,6 +1754,11 @@ Domain::getCurrentTime(void) const
     return currentTime;
 }
 
+double Domain::getCommittedTime(void) const
+{
+    return committedTime;
+}
+
 double
 Domain::getDT(void) const
 {
