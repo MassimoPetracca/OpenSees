@@ -51,8 +51,6 @@ public:
     // domain
     const char* getClassType(void) const;
     void setDomain(Domain* theDomain);
-    void onActivate(void);
-    void onDeactivate(void);
 
     // print
     void Print(OPS_Stream& s, int flag);
@@ -128,9 +126,6 @@ private:
     // initial displacements
     Vector m_U0;
     bool m_U0_computed = false;
-    // (Re)captures m_U0 at the current configuration. Clears m_U0_computed first,
-    // because getGlobalDisplacements() subtracts m_U0 while that flag is set.
-    void captureInitialDisp(void);
 
 };
 
