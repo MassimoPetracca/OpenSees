@@ -1429,7 +1429,11 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
   }
 
   
-  else if (strcmp(argv[1], "LysmerTriangle") == 0) {
+  // a single if/else-if chain over every element name exceeds MSVC's 128-block
+  // nesting limit (fatal error C1061), so the dispatch restarts here as a new
+  // chain. Equivalent to the else-if it replaces: every branch above either
+  // sets theElement or returns, and element names are unique across the chains.
+  if (theElement == 0 && strcmp(argv[1], "LysmerTriangle") == 0) {
       void *theEle = OPS_LysmerTriangle();
       if (theEle != 0) {
     theElement = (Element*)theEle;
