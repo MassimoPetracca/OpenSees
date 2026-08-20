@@ -448,7 +448,9 @@ if(MPI_FOUND)
   else()
      set (MUMPS_FLAG -D_MUMPS)
      if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-       set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps;${MUMPS_DIR}/mumps_common;${MUMPS_DIR}/pord")
+       # note: the extension is mandatory here. Without it MSBuild treats the
+       # extension-less absolute path as an object file and looks for dmumps.obj
+       set (MUMPS_LIBRARIES "${MUMPS_DIR}/dmumps.lib;${MUMPS_DIR}/mumps_common.lib;${MUMPS_DIR}/pord.lib")
      else()
        set (MUMPS_LIBRARIES "${MUMPS_DIR}/libdmumps.a;${MUMPS_DIR}/libmumps_common.a;${MUMPS_DIR}/libpord.a")
      endif()
@@ -475,8 +477,11 @@ if(MKL_FOUND)
     else()
       message(FATAL_ERROR "MKL libraries not found in expected locations")
     endif()
-
-    set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_ilp64.lib;${MKL_LPATH}/mkl_intel_ilp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_ilp64.lib")
+    set (TEMP_SCALAPACK_LIBRARIES ${SCALAPACK_LIBRARIES})
+    set (SCALAPACK_LIBRARIES "")
+    foreach(scalapack_lib ${TEMP_SCALAPACK_LIBRARIES})
+        list(APPEND SCALAPACK_LIBRARIES "${MKL_LPATH}/${scalapack_lib}.lib")
+    endforeach()
   endif()
 
 else()
@@ -704,7 +709,6 @@ target_link_libraries(OpenSees
   HDF5::HDF5
   tcl::tcl
   ZLIB::ZLIB
-  Eigen3::Eigen
 )
 
 
@@ -763,7 +767,6 @@ if(MPI_FOUND)
        HDF5::HDF5
        tcl::tcl
        ZLIB::ZLIB
-       Eigen3::Eigen
        ${MPI_CXX_LIBRARIES}
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
@@ -828,7 +831,6 @@ if(MPI_FOUND)
        HDF5::HDF5
        tcl::tcl	
        ZLIB::ZLIB		
-       Eigen3::Eigen
        ${MPI_CXX_LIBRARIES}
        ${SCALAPACK_LIBRARIES}
        ${MPI_Fortran_LIBRARIES}
@@ -859,7 +861,6 @@ target_link_libraries(OpenSeesPy
    OPS_Numerics
    HDF5::HDF5	
    ZLIB::ZLIB	
-   Eigen3::Eigen	
    ${Python_LIBRARIES}
 )
 

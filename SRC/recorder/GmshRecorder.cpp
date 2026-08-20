@@ -23,6 +23,10 @@
 // Description: This file contains the class definition for 
 // GmshRecorder. A GmshRecorder is used to store mesh and all responses in gmsh format.
 
+#ifdef _PARALLEL_PROCESSING
+#undef _PARALLEL_PROCESSING
+#endif
+
 #include "GmshRecorder.h"
 #include <sstream>
 #include <elementAPI.h>
