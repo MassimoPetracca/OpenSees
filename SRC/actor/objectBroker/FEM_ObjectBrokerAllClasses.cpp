@@ -233,7 +233,8 @@
 #include "Bidirectional.h"
 #include "Elliptical2.h"
 #include "Isolator2spring.h"
-#include "LayeredShellFiberSection.h" // Yuli Huang & Xinzheng Lu 
+#include "LayeredShellFiberSection.h" // Yuli Huang & Xinzheng Lu
+#include "ASDShellSection.h"
 #include "LayeredMembraneSection/ReinforcedConcreteLayeredMembraneSection.h" // M. J. Nunez
 #include "LayeredMembraneSection/LayeredMembraneSection.h" // M. J. Nunez
 #include "LayeredMembraneSection/ElasticMembraneSection.h" // M. J. Nunez
@@ -462,7 +463,11 @@
 #include "shell/ShellDKGT.h"
 #include "shell/ShellNLDKGT.h"
 #include "shell/ASDShellQ4.h" // Massimo Petracca
+#include "ASDhexa/ASDHex.h"      // ASDEA
+#include "ASDtetra/ASDTet.h"     // ASDEA
 #include "shell/ASDShellT3.h" // Massimo Petracca
+#include "ASDTimoshenkoBeam/ASDTimoshenkoBeam2d.h" // ASDEA
+#include "ASDTimoshenkoBeam/ASDTimoshenkoBeam3d.h" // ASDEA
 #include "brick/Brick.h"
 #include "brick/BbarBrick.h"
 #include "joint/Joint2D.h"		// Arash
@@ -1130,10 +1135,22 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_ASDShellQ4:   // Massimo Petracca
       return new ASDShellQ4(); // Massimo Petracca
+
+    case ELE_TAG_ASDSolidHex:   // ASDEA
+      return new ASDSolidHex();
+
+    case ELE_TAG_ASDTet:   // ASDEA
+      return new ASDTet();
     
     case ELE_TAG_ASDShellT3:   // Massimo Petracca
       return new ASDShellT3(); // Massimo Petracca
     
+    case ELE_TAG_ASDTimoshenkoBeam2d:   // ASDEA
+      return new ASDTimoshenkoBeam2d();
+
+    case ELE_TAG_ASDTimoshenkoBeam3d:   // ASDEA
+      return new ASDTimoshenkoBeam3d();
+
     case ELE_TAG_BbarBrick:
       return new BbarBrick();
             
@@ -2246,6 +2263,9 @@ FEM_ObjectBrokerAllClasses::getNewSection(int classTag)
         case SEC_TAG_LayeredShellFiberSection:
 	  return new LayeredShellFiberSection();
 	//end Yuli Huang & Xinzheng Lu LayeredShellFiberSection
+
+        case SEC_TAG_ASDShellSection:
+	  return new ASDShellSection();
 
 	case SEC_TAG_Bidirectional:
 		return new Bidirectional();

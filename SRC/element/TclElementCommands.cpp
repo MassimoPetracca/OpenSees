@@ -127,7 +127,11 @@ extern void *OPS_ShellNLDKGQ(void);   //Added by Lisha Wang, Xinzheng Lu, Linlin
 extern void *OPS_ShellDKGT(void);     //Added by Shuhao Zhang and  Xinzheng Lu 
 extern void *OPS_ShellNLDKGT(void);   //Added by Shuhao Zhang and  Xinzheng Lu 
 extern void *OPS_ASDShellQ4(void);   // Massimo Petracca (ASDEA)
+extern void *OPS_ASDSolidHex(void);  // ASDEA
+extern void *OPS_ASDTet(void);  // ASDEA
 extern void *OPS_ASDShellT3(void);   // Massimo Petracca (ASDEA)
+extern void *OPS_ASDTimoshenkoBeam2d(void);  // ASDEA
+extern void *OPS_ASDTimoshenkoBeam3d(void);  // ASDEA
 extern void *OPS_Quad4FiberOverlay(void);
 extern void *OPS_Brick8FiberOverlay(void);
 extern void *OPS_QuadBeamEmbedContact(void);
@@ -1102,6 +1106,40 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
       return TCL_ERROR;
     } 
     
+  } else if (strcmp(argv[1],"ASDHex") == 0) {
+
+    void *theEle = OPS_ASDSolidHex();
+    if (theEle != 0)
+      theElement = (Element *)theEle;
+    else {
+      opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+      return TCL_ERROR;
+    }
+
+  } else if (strcmp(argv[1],"ASDTet") == 0) {
+
+    void *theEle = OPS_ASDTet();
+    if (theEle != 0)
+      theElement = (Element *)theEle;
+    else {
+      opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+      return TCL_ERROR;
+    }
+
+  } else if (strcmp(argv[1],"ASDTimoshenkoBeam") == 0) {
+
+    void *theEle = 0;
+    if (OPS_GetNDM() == 2)
+      theEle = OPS_ASDTimoshenkoBeam2d();
+    else
+      theEle = OPS_ASDTimoshenkoBeam3d();
+    if (theEle != 0)
+      theElement = (Element *)theEle;
+    else {
+      opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+      return TCL_ERROR;
+    }
+
   } else if (strcmp(argv[1],"ASDShellQ4") == 0) {
     
     void *theEle = OPS_ASDShellQ4();

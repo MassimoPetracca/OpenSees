@@ -3882,6 +3882,9 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_ElasticTimoshenkoBeam2d ||
 					elem_class_tag == ELE_TAG_ElasticTimoshenkoBeam3d ||
 					elem_class_tag == ELE_TAG_ModElasticBeam2d ||
+					// ./ASDTimoshenkoBeam
+					elem_class_tag == ELE_TAG_ASDTimoshenkoBeam2d ||
+					elem_class_tag == ELE_TAG_ASDTimoshenkoBeam3d ||
 					// .elastomericBearing
 					elem_class_tag == ELE_TAG_ElastomericBearingBoucWen2d ||
 					elem_class_tag == ELE_TAG_ElastomericBearingBoucWen3d ||
@@ -4031,7 +4034,8 @@ namespace mpco {
 				*/
 				else if (
 					// ./tetrahedron
-					elem_class_tag == ELE_TAG_FourNodeTetrahedron
+					elem_class_tag == ELE_TAG_FourNodeTetrahedron ||
+					elem_class_tag == ELE_TAG_ASDTet
 					)
 				{
 					geom_type = ElementGeometryType::Tetrahedron_4N;
@@ -4074,7 +4078,9 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_BBarBrickUP ||
 					elem_class_tag == ELE_TAG_BrickUP ||
 					// ./XMUelements
-					elem_class_tag == ELE_TAG_AC3D8HexWithSensitivity
+					elem_class_tag == ELE_TAG_AC3D8HexWithSensitivity ||
+					// ./ASDhexa
+					elem_class_tag == ELE_TAG_ASDSolidHex
 					)
 				{
 					geom_type = ElementGeometryType::Hexahedron_8N;

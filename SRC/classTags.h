@@ -383,6 +383,7 @@
 #define SEC_TAG_ReinforcedConcreteLayeredMembraneSection 7701 // M. J. Nunez - UChile
 #define SEC_TAG_LayeredMembraneSection 7702 // M. J. Nunez - UChile
 #define SEC_TAG_ElasticMembraneSection 7703 // M. J. Nunez - UChile
+#define SEC_TAG_ASDShellSection 7801 // ASDEA
 
 #define SECTION_INTEGRATION_TAG_WideFlange 1
 #define SECTION_INTEGRATION_TAG_RC 2
@@ -917,7 +918,11 @@
 #define ELE_TAG_CurvedPipe                      270
 #define ELE_TAG_PML3DVISCOUS               271 // Amin Pakzad
 #define ELE_TAG_MEFI_3D        			  272 // C. N. Lopez
-#define ELE_TAG_ZeroLength6D	        273 // Davide Noe Gorini
+#define ELE_TAG_ASDSolidHex                273 // ASDEA - 8-node PG-EAS hexahedron
+#define ELE_TAG_ASDTimoshenkoBeam2d        274 // ASDEA - reduced-integration Timoshenko beam
+#define ELE_TAG_ASDTimoshenkoBeam3d        275 // ASDEA - reduced-integration Timoshenko beam
+#define ELE_TAG_ASDTet                     276 // ASDEA - 4-node tetrahedron, linear or corotational
+#define ELE_TAG_ZeroLength6D	        280 // Davide Noe Gorini
 
 #define FRN_TAG_Coulomb            1
 #define FRN_TAG_VelDependent       2

@@ -574,6 +574,10 @@ ELE_LIBS   =  $(FE)/element/Element.o \
 	$(FE)/element/shell/ShellNLDKGQThermal.o \
 	$(FE)/element/shell/ShellNLDKGTThermal.o \
 	$(FE)/element/shell/ASDShellQ4.o \
+	$(FE)/element/ASDhexa/ASDHex.o \
+	$(FE)/element/ASDtetra/ASDTet.o \
+	$(FE)/element/ASDTimoshenkoBeam/ASDTimoshenkoBeam2d.o \
+	$(FE)/element/ASDTimoshenkoBeam/ASDTimoshenkoBeam3d.o \
 	$(FE)/element/shell/ASDShellT3.o \
 	$(FE)/element/shell/R3vectors.o \
 	$(FE)/element/brick/Brick.o \

@@ -21,6 +21,8 @@ all:         $(OBJS)
 	@$(CD) $(FE)/element/beamWithHinges; $(MAKE);
 	@$(CD) $(FE)/element/UP-ucsd; $(MAKE);
 	@$(CD) $(FE)/element/shell; $(MAKE);
+	@$(CD) $(FE)/element/ASDhexa; $(MAKE);
+	@$(CD) $(FE)/element/ASDtetra; $(MAKE);
 	@$(CD) $(FE)/element/brick; $(MAKE);
 	@$(CD) $(FE)/element/joint; $(MAKE);
 	@$(CD) $(FE)/element/triangle; $(MAKE);

@@ -826,8 +826,9 @@ void  ASDShellQ4::setDomain(Domain* theDomain)
     for (int i = 0; i < 4; i++)
         nodePointers[i] = theDomain->getNode(m_node_ids(i));
 
-    // set domain on transformation
-    m_transformation->setDomain(theDomain, m_node_ids, m_initialized);
+    // set domain on transformation. the initial displacement offset is re-captured
+    // when activation asks for it, so a staged element is born strain free
+    m_transformation->setDomain(theDomain, m_node_ids, m_initialized && !m_force_capture_initial_disp);
 
     // only if not already initialized from recvSelf
     if (!m_initialized) {
@@ -888,9 +889,30 @@ void  ASDShellQ4::setDomain(Domain* theDomain)
         // initialized
         m_initialized = true;
     }
+    else if (m_force_capture_initial_disp) {
+        // the offset was just re-captured above, and the AGQI internal DOFs are
+        // baselined on the offset displacements: they have to follow it, or they
+        // would keep a stale baseline. Everything else in the block above is done
+        // once and for all - in particular the damping, whose setDomain allocates
+        // without freeing and would leak if re-run.
+        if (m_eas)
+            AGQIinitialize();
+    }
 
     // call base class implementation
     DomainComponent::setDomain(theDomain);
+}
+
+void ASDShellQ4::onActivate()
+{
+    m_force_capture_initial_disp = true;
+    this->setDomain(this->getDomain());
+    m_force_capture_initial_disp = false;
+    this->update();
+}
+
+void ASDShellQ4::onDeactivate()
+{
 }
 
 void ASDShellQ4::Print(OPS_Stream& s, int flag)
@@ -1256,7 +1278,7 @@ int  ASDShellQ4::sendSelf(int commitTag, Channel& theChannel)
     // 1 -> EAS flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(21);
+    static ID idData(22);
     counter = 0;
     idData(counter++) = getTag();
     for(int i = 0; i < 4; ++i)
@@ -1294,6 +1316,8 @@ int  ASDShellQ4::sendSelf(int commitTag, Channel& theChannel)
     idData(counter++) = static_cast<int>(static_cast<bool>(m_eas));
     idData(counter++) = static_cast<int>(static_cast<bool>(m_nldrill));
     idData(counter++) = static_cast<int>(static_cast<bool>(m_local_x));
+    // activation state: an element deactivated before the transfer must come back deactivated
+    idData(counter++) = is_this_element_active ? 1 : 0;
 
     res = theChannel.sendID(dataTag, commitTag, idData);
     if (res < 0) {
@@ -1421,7 +1445,7 @@ int  ASDShellQ4::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     // 1 -> EAS flag
     // 1 -> non-linear drilling flag
     // 1 -> local_x flag
-    static ID idData(21);
+    static ID idData(22);
     res = theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING ASDShellQ4::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1453,11 +1477,24 @@ int  ASDShellQ4::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     bool use_eas = static_cast<bool>(idData(counter++));
     bool use_nldrill = static_cast<bool>(idData(counter++));
     bool use_local_x = static_cast<bool>(idData(counter++));
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = idData(counter++) == 1 ? true : false;
     
-    // create transformation
-    if (m_transformation)
+    // create transformation.
+    // NOTE: only (re)create it when there is none, or when the received kinematics
+    // differs from the existing one. Do NOT delete and rebuild unconditionally:
+    // restoreInternalData() below restores U0/Q0/C0 but NOT the node pointers, and
+    // the database restore path calls recvSelf() WITHOUT a following setDomain(),
+    // so a freshly built transformation would be left with null nodes and would
+    // segfault on the next computeGlobalDisplacements(). Reusing the existing one
+    // keeps the pointers setDomain() already installed; in the object-broker path
+    // there is nothing to reuse, a new one is built and setDomain() fills it in.
+    if (m_transformation && m_transformation->isLinear() != linear_transform) {
         delete m_transformation;
-    m_transformation = linear_transform ? new ASDShellQ4Transformation() : new ASDShellQ4CorotationalTransformation();
+        m_transformation = nullptr;
+    }
+    if (m_transformation == nullptr)
+        m_transformation = linear_transform ? new ASDShellQ4Transformation() : new ASDShellQ4CorotationalTransformation();
     // create load
     if (has_load) {
         if (m_load == nullptr)
@@ -1510,7 +1547,11 @@ int  ASDShellQ4::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& 
     int Neas = use_eas ? 268 : 0;
     int Nnldrill = use_nldrill ? 72 : 0;
     int NT = m_transformation->internalDataSize();
-    Vector vectData(4 + 4 + 1 + 1 + 1 + Neas + Nnldrill + NLoad + NT);
+    // NOTE: Nlocalx must be part of the size, exactly as in sendSelf. Without it
+    // the received vector is 3 doubles too short whenever -local_x is used, and
+    // restoreInternalData() then aborts on its own size check (or, if the channel
+    // tolerates the mismatch, every field after local_x is read shifted).
+    Vector vectData(4 + 4 + 1 + 1 + 1 + Nlocalx + Neas + Nnldrill + NLoad + NT);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDShellQ4::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
