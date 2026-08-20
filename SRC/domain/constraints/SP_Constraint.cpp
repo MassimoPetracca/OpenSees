@@ -316,15 +316,15 @@ SP_Constraint::getValue(void)
 double
 SP_Constraint::getInitialValue(void)
 {
-
-  if (retZeroInitValue == false)
-    
-    // return the initial value of the constraint if retZeroInitValue is false,
-    //   - constraint handlers will subtract this off the current getValue()    
     return initialValue;
-  
-  else
-    return 0;
+  //if (retZeroInitValue == false)
+  //  
+  //  // return the initial value of the constraint if retZeroInitValue is false,
+  //  //   - constraint handlers will subtract this off the current getValue()    
+  //  return initialValue;
+  //
+  //else
+  //  return 0;
 }
 
 int

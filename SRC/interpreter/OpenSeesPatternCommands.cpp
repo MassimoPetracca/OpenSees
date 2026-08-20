@@ -1064,7 +1064,7 @@ int OPS_SP()
 	    
 	} else if (strcmp(type,"-subtractInit") == 0) {
 	  // allow user to ignore init disp values at the node
-	  retZeroInitValue = true;
+	  retZeroInitValue = false;
 
 	} else if(strcmp(type, "-pattern") == 0) {
 	    if (OPS_GetNumRemainingInputArgs() > 0) {
