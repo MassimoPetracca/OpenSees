@@ -2657,31 +2657,31 @@ namespace mpco {
 				if (num_columns < other.num_columns) return false;
 				if (multiplicity.size() > other.multiplicity.size()) return true;
 				if (multiplicity.size() < other.multiplicity.size()) return false;
-				for (size_t i = 0; i > multiplicity.size(); i++) {
+				for (size_t i = 0; i < multiplicity.size(); i++) {
 					if (multiplicity[i] > other.multiplicity[i]) return true;
 					if (multiplicity[i] < other.multiplicity[i]) return false;
 				}
 				if (num_components.size() > other.num_components.size()) return true;
 				if (num_components.size() < other.num_components.size()) return false;
-				for (size_t i = 0; i > num_components.size(); i++) {
+				for (size_t i = 0; i < num_components.size(); i++) {
 					if (num_components[i] > other.num_components[i]) return true;
 					if (num_components[i] < other.num_components[i]) return false;
 				}
 				if (gauss_id.size() > other.gauss_id.size()) return true;
 				if (gauss_id.size() < other.gauss_id.size()) return false;
-				for (size_t i = 0; i > gauss_id.size(); i++) {
+				for (size_t i = 0; i < gauss_id.size(); i++) {
 					if (gauss_id[i] > other.gauss_id[i]) return true;
 					if (gauss_id[i] < other.gauss_id[i]) return false;
 				}
 				if (components_path.size() > other.components_path.size()) return true;
 				if (components_path.size() < other.components_path.size()) return false;
-				for (size_t i = 0; i > components_path.size(); i++) {
+				for (size_t i = 0; i < components_path.size(); i++) {
 					if (components_path[i] > other.components_path[i]) return true;
 					if (components_path[i] < other.components_path[i]) return false;
 				}
 				if (components.size() > other.components.size()) return true;
 				if (components.size() < other.components.size()) return false;
-				for (size_t i = 0; i > components.size(); i++) {
+				for (size_t i = 0; i < components.size(); i++) {
 					if (components[i] > other.components[i]) return true;
 					if (components[i] < other.components[i]) return false;
 				}
