@@ -797,11 +797,16 @@ if(MPI_FOUND)
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsSolver.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSOE.cpp
       ${OPS_SRC_DIR}/system_of_eqn/linearSOE/mumps/MumpsParallelSolver.cpp
+      # ClusterPardiso is MP-only: commands.cpp references it under
+      # _PARALLEL_INTERPRETERS, which only this target defines
+      ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardisoCluster/ClusterPardisoSOE.cpp
+      ${OPS_SRC_DIR}/system_of_eqn/linearSOE/pardisoCluster/ClusterPardisoSolver.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ActorSubdomain.cpp
       ${OPS_SRC_DIR}/domain/subdomain/ShadowSubdomain.cpp
     )
 
-    target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
+    # MKL headers for ClusterPardiso (mkl_cluster_sparse_solver.h)
+    target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS} ${MKL_ROOT}/include)
 
     target_compile_options(OpenSeesMP PRIVATE ${MPI_CXX_COMPILE_FLAGS})
 

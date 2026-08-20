@@ -347,6 +347,11 @@ extern void OPS_SetReliabilityDomain(ReliabilityDomain *);
 #endif
 #endif
 
+#ifdef _PARALLEL_INTERPRETERS
+#include <ClusterPardisoSOE.h>
+#include <ClusterPardisoSolver.h>
+#endif
+
 #ifdef _PETSC
 #include <PetscSOE.h>
 #include <PetscSolver.h>
@@ -3719,7 +3724,81 @@ specifySOE(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 
 #endif
 
-  
+#ifdef _PARALLEL_INTERPRETERS
+  else if (strcmp(argv[1],"ClusterPardiso") == 0) {
+
+    // MKL cluster_sparse_solver, distributed row-block input; requires
+    // numberer ParallelPlain (EquationPartition) when np > 1.
+    // Optional flags (iparm indices are 0-based as in the MKL C docs;
+    // full table in SRC/system_of_eqn/linearSOE/pardisoCluster/README.md):
+    //   -ordering <0|2|3>  fill-reducing ordering            (iparm[1])
+    //   -refine <n>        iterative refinement steps        (iparm[7])
+    //   -noscale           disable scaling+matching          (iparm[10],[12]=0)
+    //   -spd               SPD matrix, Cholesky LL^T         (mtype=2)
+    //   -sym               symmetric indefinite, LDL^T       (mtype=-2)
+    //   -msglvl            print MKL statistics
+    //   -iparm <i> <v>     raw override (reserved: 0, 34, 39-41)
+    ClusterPardisoSolver *theSolver = new ClusterPardisoSolver();
+
+    int argErr = 0;
+    for (int i = 2; i < argc && argErr == 0; i++) {
+      if (strcmp(argv[i], "-ordering") == 0 && i + 1 < argc) {
+	int v;
+	if (Tcl_GetInt(interp, argv[++i], &v) != TCL_OK ||
+	    (v != 0 && v != 2 && v != 3)) {
+	  opserr << "system ClusterPardiso -ordering: expected 0 (min degree), "
+		 << "2 (METIS) or 3 (parallel METIS)\n";
+	  argErr = -1;
+	} else
+	  argErr = theSolver->setIparm(1, v);
+      }
+      else if (strcmp(argv[i], "-refine") == 0 && i + 1 < argc) {
+	int v;
+	if (Tcl_GetInt(interp, argv[++i], &v) != TCL_OK || v < 0) {
+	  opserr << "system ClusterPardiso -refine: expected n >= 0\n";
+	  argErr = -1;
+	} else
+	  argErr = theSolver->setIparm(7, v);
+      }
+      else if (strcmp(argv[i], "-noscale") == 0) {
+	argErr = theSolver->setIparm(10, 0);
+	if (argErr == 0)
+	  argErr = theSolver->setIparm(12, 0);
+      }
+      else if (strcmp(argv[i], "-spd") == 0) {
+	argErr = theSolver->setMatrixType(2);
+      }
+      else if (strcmp(argv[i], "-sym") == 0) {
+	argErr = theSolver->setMatrixType(-2);
+      }
+      else if (strcmp(argv[i], "-msglvl") == 0) {
+	theSolver->setMsglvl(1);
+      }
+      else if (strcmp(argv[i], "-iparm") == 0 && i + 2 < argc) {
+	int idx, v;
+	if (Tcl_GetInt(interp, argv[i + 1], &idx) != TCL_OK ||
+	    Tcl_GetInt(interp, argv[i + 2], &v) != TCL_OK) {
+	  opserr << "system ClusterPardiso -iparm: expected <index> <value>\n";
+	  argErr = -1;
+	} else
+	  argErr = theSolver->setIparm(idx, v);
+	i += 2;
+      }
+      else {
+	opserr << "system ClusterPardiso: unknown or incomplete option '"
+	       << argv[i] << "'\n";
+	argErr = -1;
+      }
+    }
+    if (argErr != 0) {
+      delete theSolver;
+      return TCL_ERROR;
+    }
+
+    theSOE = new ClusterPardisoSOE(*theSolver);
+  }
+#endif
+
   else {
 
     //
@@ -5649,10 +5728,47 @@ eigenAnalysis(ClientData clientData, Tcl_Interp *interp, int argc,
 
       } else {
 
-	theEigenSOE = new ArpackSOE(shift);    
+#ifdef _PARALLEL_INTERPRETERS
+	// OpenSeesMP guard: with more than one interpreter the wrapped
+	// LinearSOE must be a distributed one (e.g. 'system Mumps'),
+	// otherwise the shift-invert solves cannot be global and the
+	// eigen results would be partition-local garbage.
+	if (OPS_np > 1) {
+	  bool parallelSOE = false;
+	  if (theSOE != 0) {
+	    int soeClassTag = theSOE->getClassTag();
+	    if (soeClassTag == LinSOE_TAGS_MumpsParallelSOE ||
+		soeClassTag == LinSOE_TAGS_ClusterPardisoSOE ||
+		soeClassTag == LinSOE_TAGS_DistributedBandGenLinSOE ||
+		soeClassTag == LinSOE_TAGS_DistributedBandSPDLinSOE ||
+		soeClassTag == LinSOE_TAGS_DistributedProfileSPDLinSOE ||
+		soeClassTag == LinSOE_TAGS_DistributedSparseGenColLinSOE ||
+		soeClassTag == LinSOE_TAGS_DistributedSparseGenRowLinSOE)
+	      parallelSOE = true;
+	  }
+	  if (parallelSOE == false) {
+	    opserr << "ERROR eigen (OpenSeesMP, np>1): the analysis LinearSOE must be a\n";
+	    opserr << "distributed one (e.g. 'system Mumps') for a parallel eigen solve.\n";
+	    return TCL_ERROR;
+	  }
+	}
+#endif
+
+	theEigenSOE = new ArpackSOE(shift);
+
+#ifdef _PARALLEL_INTERPRETERS
+	// wire the ArpackSOE into the multi-interpreter world (same idiom as
+	// ParallelNumberer / MumpsParallelSOE): activates the global-size
+	// branch of setSize and the M*x reduction in ArpackSolver::myMv.
+	if (OPS_np > 1) {
+	  ArpackSOE *theArpackSOE = (ArpackSOE *)theEigenSOE;
+	  theArpackSOE->setProcessID(OPS_rank);
+	  theArpackSOE->setChannels(numChannels, theChannels);
+	}
+#endif
 
       }
-      
+
       //
       // set the eigen soe in the system
       //

@@ -47,6 +47,9 @@
 #include <MP_Constraint.h>
 #include <MP_ConstraintIter.h>
 #include <Node.h>
+#include <unordered_set>
+#include <vector>
+#include <EquationPartition.h>
 
 
 ParallelNumberer::ParallelNumberer(int dTag, int numSub, Channel **theC) 
@@ -171,7 +174,22 @@ ParallelNumberer::numberDOF(int lastDOF)
     }
 
     theChannel->sendID(0, 0, theID);
-  } 
+
+    // receive the equation-ownership block boundaries (EquationPartition):
+    // first an ID(1) with the boundary count, or -1 when no block structure
+    // exists (a GraphNumberer such as ParallelRCM was used on P0)
+    ID bndSize(1);
+    theChannel->recvID(0, 0, bndSize);
+    if (bndSize(0) > 0) {
+      ID bnd(bndSize(0));
+      theChannel->recvID(0, 0, bnd);
+      std::vector<int> boundaries(bndSize(0));
+      for (int k=0; k<bndSize(0); k++)
+	boundaries[k] = bnd(k);
+      EquationPartition::instance().set(processID, bndSize(0)-1, boundaries);
+    } else
+      EquationPartition::instance().clear();
+  }
   
   // if main domain, collect graphs from all subdomains,
   // merge into 1, number this one, send to subdomains the
@@ -179,17 +197,22 @@ ParallelNumberer::numberDOF(int lastDOF)
   else {
 
     // for P0 domain determine original vertex and ref tags
-    int numVertex = theGraph.getNumVertex(); 
+    int numVertex = theGraph.getNumVertex();
     int numVertexP0 = numVertex;
 
     ID vertexTags(numVertex);
     ID vertexRefs(numVertex);
+    // ref (node tag) -> merged vertex tag, O(1) lookup in mergeSubGraph
+    // instead of a linear ID scan per received vertex
+    std::unordered_map<int,int> refToMergedTag;
+    refToMergedTag.reserve(2*numVertex);
     Vertex *vertexPtr;
     int loc = 0;
     VertexIter &theVertices = theGraph.getVertices();
     while ((vertexPtr = theVertices()) != 0) {
       vertexTags[loc] = vertexPtr->getTag();
       vertexRefs[loc] = vertexPtr->getRef();
+      refToMergedTag[vertexPtr->getRef()] = vertexPtr->getTag();
       loc++;
     }
     
@@ -209,7 +232,7 @@ ParallelNumberer::numberDOF(int lastDOF)
 
       theSubdomainIDs[j] = new ID(theSubGraph->getNumVertex()*2);
 
-      this->mergeSubGraph(theGraph, *theSubGraph, vertexTags, vertexRefs, *theSubdomainIDs[j]);
+      this->mergeSubGraph(theGraph, *theSubGraph, vertexTags, vertexRefs, *theSubdomainIDs[j], refToMergedTag);
 
       delete theSubGraph;
     }
@@ -221,38 +244,67 @@ ParallelNumberer::numberDOF(int lastDOF)
 
     ID *theOrderedRefs = new ID(theGraph.getNumVertex());
 
+    // positions in theOrderedRefs where each ownership block begins
+    // (one per channel/worker, then P0's block); only meaningful for the
+    // Plain by-subdomain ordering below (EquationPartition)
+    std::vector<int> blockStartPos;
+    std::vector<int> eqBoundaries;
+
     if (theNumberer != 0) {
 
       // use the supplied graph numberer to number the merged graph
-      *theOrderedRefs = theNumberer->number(theGraph, lastDOF);     
+      *theOrderedRefs = theNumberer->number(theGraph, lastDOF);
 
     } else {
 
       // assign numbers based on the subdomains
+
+      // set-based replacement of theOrderedRefs->getLocation(tag) == -1.
+      // theOrderedRefs is zero-initialized, so the original linear scan also
+      // "finds" tag 0 in any not-yet-filled slot: tag 0 is skipped here and
+      // numbered by the trailing zero slot in the counting loop below. The
+      // (tag == 0 && loc < orderedSize) term reproduces that exactly.
+      std::unordered_set<int> orderedTags;
+      orderedTags.reserve(2*theOrderedRefs->Size());
+      const int orderedSize = theOrderedRefs->Size();
 
       int loc = 0;
       for (int l=0; l<numChannels; l++) {
 	const ID &theSubdomain = *theSubdomainIDs[l];
 	int numVertexSubdomain = theSubdomain.Size()/2;
 
+	blockStartPos.push_back(loc);
+
 	for (int i=0; i<numVertexSubdomain; i++) {
 	  int vertexTagMerged = theSubdomain(i+numVertexSubdomain);
-	  //  int refTag = vertexRefs[vertexTags.getLocation(vertexTagMerged)];
-	  if (theOrderedRefs->getLocation(vertexTagMerged) == -1)
+	  if (orderedTags.find(vertexTagMerged) == orderedTags.end() &&
+	      !(vertexTagMerged == 0 && loc < orderedSize)) {
 	    (*theOrderedRefs)[loc++] = vertexTagMerged;
+	    orderedTags.insert(vertexTagMerged);
+	  }
 	}
       }
 
       // now order those not yet ordered in p0
+      blockStartPos.push_back(loc);
       for (int j=0; j<numVertexP0; j++) {
 	int refTagP0 = vertexTags[j];
-	if (theOrderedRefs->getLocation(refTagP0) == -1)
+	if (orderedTags.find(refTagP0) == orderedTags.end() &&
+	    !(refTagP0 == 0 && loc < orderedSize)) {
 	  (*theOrderedRefs)[loc++] = refTagP0;
-      }	
+	  orderedTags.insert(refTagP0);
+	}
+      }
     }
 
     int count = 0;
+    size_t bNext = 0;
     for (int i=0; i<theOrderedRefs->Size(); i++) {
+      // record the equation number at which each ownership block begins
+      while (bNext < blockStartPos.size() && i == blockStartPos[bNext]) {
+	eqBoundaries.push_back(count);
+	bNext++;
+      }
       int vertexTag = (*theOrderedRefs)(i);
       //      int vertexTag = vertexTags[vertexRefs.getLocation(tag)];
       Vertex *vertexPtr = theGraph.getVertexPtr(vertexTag);
@@ -260,6 +312,13 @@ ParallelNumberer::numberDOF(int lastDOF)
       vertexPtr->setTmp(count);
       count += numDOF;
     }
+    // trailing empty blocks, then the total equation count
+    while (bNext < blockStartPos.size()) {
+      eqBoundaries.push_back(count);
+      bNext++;
+    }
+    if (theNumberer == 0)
+      eqBoundaries.push_back(count);
 
     if (theNumberer == 0)
       delete theOrderedRefs;
@@ -303,8 +362,29 @@ ParallelNumberer::numberDOF(int lastDOF)
       theChannel->sendID(0, 0, theSubdomain);
       theChannel->recvID(0, 0, theSubdomain);
       delete theSubdomainIDs[k];
-    }      
+    }
     delete [] theSubdomainIDs;
+
+    // ship the equation-ownership block boundaries (EquationPartition) to
+    // the workers: ID(1) with the boundary count, or -1 when a graph
+    // numberer was used (no contiguous block structure exists)
+    ID bndSize(1);
+    if (theNumberer == 0 && eqBoundaries.size() == (size_t)(numChannels+2)) {
+      bndSize(0) = (int)eqBoundaries.size();
+      ID bnd((int)eqBoundaries.size());
+      for (int k=0; k<(int)eqBoundaries.size(); k++)
+	bnd(k) = eqBoundaries[k];
+      for (int k=0; k<numChannels; k++) {
+	theChannels[k]->sendID(0, 0, bndSize);
+	theChannels[k]->sendID(0, 0, bnd);
+      }
+      EquationPartition::instance().set(0, numChannels+1, eqBoundaries);
+    } else {
+      bndSize(0) = -1;
+      for (int k=0; k<numChannels; k++)
+	theChannels[k]->sendID(0, 0, bndSize);
+      EquationPartition::instance().clear();
+    }
   }
 
 
@@ -362,12 +442,15 @@ ParallelNumberer::numberDOF(int lastDOF)
 
 
 int
-ParallelNumberer::mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexTags, ID &vertexRefs, ID &theSubdomainMap)
-{  
+ParallelNumberer::mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexTags, ID &vertexRefs, ID &theSubdomainMap,
+				std::unordered_map<int,int> &refToMergedTag)
+{
   // for each vertex in the SubGraph we see if a vertex exists in the Graph which has the same
-  // reference tag (Reference tag in the AnalysisModel graph is the node tag) .. if so this will be 
+  // reference tag (Reference tag in the AnalysisModel graph is the node tag) .. if so this will be
   // the new vertex tag for SubGraph vertex in new graph, otherwise we assign it some new vertex tag,
-  // create a vertex for this new vertex tag & add it to the graph
+  // create a vertex for this new vertex tag & add it to the graph.
+  // refToMergedTag mirrors the (vertexRefs, vertexTags) pair for O(1) lookup; the IDs are still
+  // maintained because callers use them after the merge.
 
   Vertex *subVertexPtr;
   VertexIter &theSubGraphIter1 = theSubGraph.getVertices();
@@ -375,27 +458,33 @@ ParallelNumberer::mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexT
   int numVertex = theGraph.getNumVertex();
   int numVertexSub = theSubGraph.getNumVertex();
 
+  // subgraph vertex tag -> merged vertex tag, local to this subdomain
+  std::unordered_map<int,int> subToMergedTag;
+  subToMergedTag.reserve(2*numVertexSub);
+
   while ((subVertexPtr = theSubGraphIter1()) != 0) {
     int vertexTagSub = subVertexPtr->getTag();
     int vertexTagRef = subVertexPtr->getRef();
-    int loc = vertexRefs.getLocation(vertexTagRef);
+    std::unordered_map<int,int>::iterator refIt = refToMergedTag.find(vertexTagRef);
 
     int vertexTagMerged;
-    if (loc < 0) {
+    if (refIt == refToMergedTag.end()) {
       // if not already in, we will be creating a new vertex
       vertexTagMerged = theGraph.getFreeTag();
       vertexTags[numVertex] = vertexTagMerged;
       vertexRefs[numVertex] = vertexTagRef;
+      refToMergedTag[vertexTagRef] = vertexTagMerged;
       Vertex *newVertex = new Vertex(vertexTagMerged, vertexTagRef, subVertexPtr->getWeight(), subVertexPtr->getColor());
 
       theGraph.addVertex(newVertex);
       numVertex++;
     } else
-      vertexTagMerged = vertexTags[loc];
+      vertexTagMerged = refIt->second;
 
     // use the subgraphs ID to hold the mapping of vertex numbers between merged and original
     theSubdomainMap[count] = vertexTagSub;
     theSubdomainMap[count+numVertexSub] = vertexTagMerged;
+    subToMergedTag[vertexTagSub] = vertexTagMerged;
     count++;
   }
 
@@ -403,15 +492,13 @@ ParallelNumberer::mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexT
   VertexIter &theSubGraphIter2 = theSubGraph.getVertices();
   while ((subVertexPtr = theSubGraphIter2()) != 0) {
     int vertexTagSub = subVertexPtr->getTag();
-    int loc = theSubdomainMap.getLocation(vertexTagSub);
-    int vertexTagMerged = theSubdomainMap[loc+numVertexSub];
+    int vertexTagMerged = subToMergedTag[vertexTagSub];
 
     const ID &adjacency = subVertexPtr->getAdjacency();
 
     for (int i=0; i<adjacency.Size(); i++) {
       int vertexTagSubAdjacent = adjacency(i);
-      int loc = theSubdomainMap.getLocation(vertexTagSubAdjacent);
-      int vertexTagMergedAdjacent = theSubdomainMap[loc+numVertexSub];      
+      int vertexTagMergedAdjacent = subToMergedTag[vertexTagSubAdjacent];
       theGraph.addEdge(vertexTagMerged, vertexTagMergedAdjacent);
     }
   }
@@ -556,12 +643,15 @@ ParallelNumberer::numberDOF(ID &lastDOFs)
     int numVertex = theGraph.getNumVertex();
     ID vertexTags(numVertex);
     ID vertexRefs(numVertex);
+    std::unordered_map<int,int> refToMergedTag;
+    refToMergedTag.reserve(2*numVertex);
     Vertex *vertexPtr;
     int loc = 0;
     VertexIter &theVertices = theGraph.getVertices();
     while ((vertexPtr = theVertices()) != 0) {
       vertexTags[loc] = vertexPtr->getTag();
       vertexRefs[loc] = vertexPtr->getRef();
+      refToMergedTag[vertexPtr->getRef()] = vertexPtr->getTag();
       loc++;
     }
     
@@ -575,7 +665,7 @@ ParallelNumberer::numberDOF(ID &lastDOFs)
       theSubGraph.recvSelf(0, *theChannel, theBroker);
       
       theSubdomainIDs[j] = new ID(theSubGraph.getNumVertex()*2);
-      this->mergeSubGraph(theGraph, theSubGraph, vertexTags, vertexRefs, *theSubdomainIDs[j]);
+      this->mergeSubGraph(theGraph, theSubGraph, vertexTags, vertexRefs, *theSubdomainIDs[j], refToMergedTag);
     }
 
     // number the merged graph

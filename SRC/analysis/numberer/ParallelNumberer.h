@@ -41,6 +41,7 @@
 class Graph;
 
 #include <DOF_Numberer.h>
+#include <unordered_map>
 
 class ParallelNumberer: public DOF_Numberer
 {
@@ -62,7 +63,8 @@ class ParallelNumberer: public DOF_Numberer
     virtual int setChannels(int numChannels, Channel **theChannels);
 
   protected:
-    int mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexTags, ID &vertexRefs, ID &theSubdomainMap);
+    int mergeSubGraph(Graph &theGraph, Graph &theSubGraph, ID &vertexTags, ID &vertexRefs, ID &theSubdomainMap,
+		      std::unordered_map<int,int> &refToMergedTag);
 
   private:
     GraphNumberer *theNumberer;

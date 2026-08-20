@@ -230,23 +230,56 @@ MumpsParallelSolver::solveAfterInitialization(void)
   id.jcn_loc = colA;
   id.a_loc   = A; 
 
-  if (theMumpsSOE->factored == false) {
+  // MUMPS returns -8 or -9 when the working space it sized from ICNTL(14) turns
+  // out to be too small. Both are recoverable exactly as the message below says:
+  // raise ICNTL(14) and factor again. Leaving it to the user made the solver fail
+  // 4 runs in 50 (8%) on the N=16 cube at np=4, and the failure surfaces as an
+  // analysis that stops after k of n load steps with a partial displacement - a
+  // reported failure, but one nobody expects from a well-posed model.
+  //
+  // Safe without any extra communication: infog is MUMPS's GLOBAL info array,
+  // replicated on every process, so every process sees the same code and takes
+  // the same branch. A retry is a factorisation, so `factored` is cleared to force
+  // job=5 rather than a substitution on a factorisation that does not exist.
+  const int maxWorkRetries = 4;
+  int icntl14eff = icntl14;
+  int info = 0;
+  int info2 = 0;
 
-    // Call the MUMPS package to factor & solve the system
-    id.job = 5;
-    dmumps_c(&id);
-    theMumpsSOE->factored = true;
+  for (int attempt = 0; ; attempt++) {
 
-  } else {
+    id.ICNTL(14) = icntl14eff;
 
-    // Call the MUMPS package to solve the system
-    id.job = 3;
-    dmumps_c(&id);
-  }	
+    if (theMumpsSOE->factored == false) {
 
-  int info = id.infog[0];
-  int info2   = id.infog[1];
-  if (info != 0) {	
+      // Call the MUMPS package to factor & solve the system
+      id.job = 5;
+      dmumps_c(&id);
+      theMumpsSOE->factored = true;
+
+    } else {
+
+      // Call the MUMPS package to solve the system
+      id.job = 3;
+      dmumps_c(&id);
+    }
+
+    info = id.infog[0];
+    info2 = id.infog[1];
+
+    if ((info != -8 && info != -9) || attempt >= maxWorkRetries)
+      break;
+
+    // grow the working space and factor again
+    int grown = (icntl14eff < 20) ? 40 : (2 * icntl14eff);
+    opserr << "MumpsParallelSolver::solve(void) - MUMPS returned " << info
+	   << " (working space too small); retrying with ICNTL(14) "
+	   << icntl14eff << " -> " << grown << "\n";
+    icntl14eff = grown;
+    theMumpsSOE->factored = false;
+  }
+
+  if (info != 0) {
     opserr << "WARNING MumpsParallelSolver::solve(void)- ";
     opserr << " Error " << info << " returned in substitution dmumps()\n";
     switch(info) {
@@ -277,6 +310,16 @@ MumpsParallelSolver::solveAfterInitialization(void)
     default:
       opserr << " mumps returned infog[0] and infog[1] error codes: " << info << " and " << info2;
     }
+
+    // The Fortran indexing has to be undone on THIS path too. It was not, so a
+    // failed solve left rowA/colA one too high and whatever ran next - a retry, or
+    // the next step after the analysis chose to carry on - worked on shifted
+    // indices. Nothing reported it.
+    for (int i=0; i<nnz; i++) {
+      rowA[i]--;
+      colA[i]--;
+    }
+
     return info;
   }
 

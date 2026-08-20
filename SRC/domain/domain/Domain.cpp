@@ -595,6 +595,13 @@ Domain::addNode(Node * node)
 //	Method to add a constraint to the model.
 //
 
+// key of theSPsIndex: (nodeTag, dof) packed into one integer
+static inline long long
+Domain_spKey(int nodeTag, int dof)
+{
+  return (((long long)nodeTag) << 32) | (long long)((unsigned int)dof);
+}
+
 bool
 Domain::addSP_Constraint(SP_Constraint *spConstraint)
 {
@@ -619,18 +626,12 @@ Domain::addSP_Constraint(SP_Constraint *spConstraint)
     }      
     // #endif
 
-    // check if an existing SP_COnstraint exists for that dof at the node
-    bool found = false;
-    SP_ConstraintIter &theExistingSPs = this->getSPs();
-    SP_Constraint *theExistingSP = 0;
-    while ((found == false) && ((theExistingSP = theExistingSPs()) != 0)) {
-      int spNodeTag = theExistingSP->getNodeTag();
-      int spDof = theExistingSP->getDOF_Number();
-      if (nodeTag == spNodeTag && spDof == dof) {
-	found = true;
-      }
-    }
-    
+    // check if an existing SP_COnstraint exists for that dof at the node.
+    // theSPsIndex answers this without walking theSPs: that walk made the cost
+    // of defining m constraints O(m^2), which a staged model - every node of
+    // the not-yet-active parts fixed - pays in full at model build time.
+    bool found = (theSPsIndex.find(Domain_spKey(nodeTag, dof)) != theSPsIndex.end());
+
     if (found == true) {
 	opserr << "Domain::addSP_Constraint - cannot add as node already constrained in that dof by existing SP_Constraint\n";
 	spConstraint->Print(opserr);
@@ -654,6 +655,8 @@ Domain::addSP_Constraint(SP_Constraint *spConstraint)
 	tag << "to the container\n";             
       return false;
   } 
+
+  theSPsIndex[Domain_spKey(nodeTag, dof)] = spConstraint;
 
   spConstraint->setDomain(this);
   this->domainChange();  
@@ -1082,6 +1085,7 @@ Domain::clearAll(void) {
   theElements->clearAll();
   theNodes->clearAll();
   theSPs->clearAll();
+  theSPsIndex.clear();
   thePCs->clearAll();
   theMPs->clearAll();
   theLoadPatterns->clearAll();
@@ -1210,16 +1214,17 @@ Domain::removeSP_Constraint(int theNode, int theDOF, int loadPatternTag)
   int spTag = 0;
 
   if (loadPatternTag == -1) {
-    SP_ConstraintIter &theSPs = this->getSPs();
-    while ((found == false) && ((theSP = theSPs()) != 0)) {
-      int nodeTag = theSP->getNodeTag();
-      int dof = theSP->getDOF_Number();
-      if (nodeTag == theNode && dof == theDOF) {
-	spTag = theSP->getTag();
-	found = true;
-      }
+    // theSPsIndex answers this without walking theSPs: that walk made the cost
+    // of releasing m constraints O(m^2), which a staged analysis pays at every
+    // stage. The (nodeTag, dof) pair is unique in theSPs - addSP_Constraint()
+    // rejects a duplicate - so the walk could only ever find this one match.
+    std::unordered_map<long long, SP_Constraint *>::iterator theSPEntry
+      = theSPsIndex.find(Domain_spKey(theNode, theDOF));
+    if (theSPEntry != theSPsIndex.end()) {
+      spTag = theSPEntry->second->getTag();
+      found = true;
     }
-    
+
   } else {
 
     LoadPattern *thePattern = this->getLoadPattern(loadPatternTag);
@@ -1267,6 +1272,8 @@ Domain::removeSP_Constraint(int tag)
     // and return the result of the cast    
     SP_Constraint *result = (SP_Constraint *)mc;
     // result->setDomain(0);
+
+    theSPsIndex.erase(Domain_spKey(result->getNodeTag(), result->getDOF_Number()));
 
     // should check that theLoad and result are the same    
     return result;
@@ -2274,11 +2281,38 @@ Domain::commit(void)
       nodePtr->commitState();
     }
 
+    // Every commitState() return used to be dropped here, so an element that
+    // refused to commit said so to nobody. Reported now - worst code, how many
+    // elements, the tag of the first - with the same shape as Domain::update.
+    //
+    // The RETURN VALUE is deliberately left at 0. A failure at commit time cannot
+    // be turned into a rejected step: by then the state has been overwritten (a
+    // material that extrapolates has already moved the state it extrapolates
+    // from), so the caller would revert to a base that no longer exists. Whoever
+    // wants a step rejected has to signal it during update(), where the rollback
+    // is clean. Making this signal actionable rather than merely visible is the
+    // subject of item #M4.
+    int worst = 0, numFailed = 0, firstFailedTag = 0;
+
     Element *elePtr;
-    ElementIter &theElemIter = this->getElements();    
+    ElementIter &theElemIter = this->getElements();
     while ((elePtr = theElemIter()) != 0) {
-      elePtr->commitState();
+      int eleResult = elePtr->commitState();
+      if (eleResult != 0) {
+	numFailed++;
+	if (numFailed == 1)
+	  firstFailedTag = elePtr->getTag();
+	if (worst == 0 || eleResult < worst)
+	  worst = eleResult;
+      }
     }
+
+    if (worst != 0)
+      opserr << "WARNING Domain::commit - " << numFailed
+	     << " element(s) failed to commit at time " << currentTime
+	     << ", first was element " << firstFailedTag
+	     << ", worst code " << worst
+	     << " (the step is NOT rejected, see Domain::commit)\n";
 
     // set the new committed time in the domain
     committedTime = currentTime;
@@ -2365,7 +2399,16 @@ Domain::update(void)
   ops_Dt = dT;
   ops_TheActiveDomain = this;
 
+  // Worst-wins, not a sum. `ok += theEle->update()` let two elements returning -5
+  // and +5 cancel, so a genuine material failure could leave this function
+  // reporting success - and in a nonlinear analysis, where update() is where the
+  // constitutive iteration lives, that is the failure that matters most. The
+  // convention callers rely on is unchanged: 0 means every element updated, and a
+  // negative return means a failure.
   int ok = 0;
+  int numFailed = 0;
+  int firstFailedTag = 0;
+  int firstFailedCode = 0;
 
   // invoke update on all the ele's
   ElementIter &theEles = this->getElements();
@@ -2373,11 +2416,27 @@ Domain::update(void)
 
   while ((theEle = theEles()) != 0) {
     ops_TheActiveElement = theEle;
-    ok += theEle->update();
+    int eleResult = theEle->update();
+
+    if (eleResult != 0) {
+      numFailed++;
+      if (numFailed == 1) {
+	firstFailedTag = theEle->getTag();
+	firstFailedCode = eleResult;
+      }
+      // the first nonzero code, then whichever is most negative: a real failure
+      // (negative) must never be masked by a positive code from another element
+      if (ok == 0 || eleResult < ok)
+	ok = eleResult;
+    }
   }
 
-  if (ok != 0)
-    opserr << "Domain::update - domain failed in update\n";
+  // and say WHICH element, which costs nothing - the tag was in hand all along
+  if (ok != 0) {
+    opserr << "Domain::update - domain failed in update: " << numFailed
+	   << " element(s) failed, first was element " << firstFailedTag
+	   << " returning " << firstFailedCode << "\n";
+  }
 
   return ok;
 }
