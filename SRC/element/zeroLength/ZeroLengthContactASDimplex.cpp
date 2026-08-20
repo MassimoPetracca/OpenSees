@@ -483,7 +483,7 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     int dataTag = this->getDbTag();
 
     // int data
-    static ID idata(13);
+    static ID idata(11);
     idata(0) = getTag();
     idata(1) = numDIM;
     idata(2) = numDOF[0];
@@ -494,10 +494,8 @@ int ZeroLengthContactASDimplex::sendSelf(int commitTag, Channel& theChannel) {
     idata(7) = sv.dtime_is_user_defined ? 1 : 0;
     idata(8) = sv.dtime_first_set ? 1 : 0;
     idata(9) = gap0_initialized ? 1 : 0;
-    idata(10) = nup;
-    idata(11) = static_cast<int>(UPDepExplicit);
     // activation state: an element deactivated before the transfer must come back deactivated
-    idata(12) = is_this_element_active ? 1 : 0;
+    idata(10) = is_this_element_active ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::sendSelf() - " << this->getTag() << " failed to send ID\n";
@@ -553,7 +551,7 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     int dataTag = this->getDbTag();
 
     // int data
-    static ID idata(13);
+    static ID idata(11);
     res = theChannel.recvID(dataTag, commitTag, idata);
     if (res < 0) {
         opserr << "WARNING ZeroLengthContactASDimplex::recvSelf() - failed to receive ID\n";
@@ -569,11 +567,8 @@ int ZeroLengthContactASDimplex::recvSelf(int commitTag, Channel& theChannel, FEM
     sv.dtime_is_user_defined = idata(7) == 1;
     sv.dtime_first_set = idata(8) == 1;
     gap0_initialized = idata(9) == 1;
-    int nup = idata(10);
-    theUPNodes.resize(nup);
-    UPDepExplicit = static_cast<bool>(idata(11));
     // activation state: an element deactivated before the transfer must come back deactivated
-    is_this_element_active = idata(12) == 1 ? true : false;
+    is_this_element_active = idata(10) == 1 ? true : false;
 
     // double data
     static Vector ddata(31);
