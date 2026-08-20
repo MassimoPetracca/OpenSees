@@ -277,18 +277,6 @@ LinearCrdTransf3d::computeElemtLengthAndOrient()
         dx(2) -= nodeIOffset[2];
     }
     
-    if (nodeIInitialDisp != 0) {
-        dx(0) -= nodeIInitialDisp[0];
-        dx(1) -= nodeIInitialDisp[1];
-        dx(2) -= nodeIInitialDisp[2];
-    }
-    
-    if (nodeJInitialDisp != 0) {
-        dx(0) += nodeJInitialDisp[0];
-        dx(1) += nodeJInitialDisp[1];
-        dx(2) += nodeJInitialDisp[2];
-    }
-    
     // calculate the element length
     L = dx.Norm();
     
@@ -1351,12 +1339,6 @@ LinearCrdTransf3d::getPointGlobalCoordFromLocal(const Vector &xl)
         xg(2) += nodeIOffset[2];
     }
     
-    if (nodeIInitialDisp != 0) {
-        xg(0) -= nodeIInitialDisp[0];
-        xg(1) -= nodeIInitialDisp[1];
-        xg(2) -= nodeIInitialDisp[2];
-    }
-    
     
     // xg = xg + Rlj'*xl
     //xg.addMatrixTransposeVector(1.0, Rlj, xl, 1.0);
@@ -1600,4 +1582,23 @@ LinearCrdTransf3d::getBasicDisplSensitivity(int gradNumber)
 	ub(5) = ul[9] - ul[3];
 
 	return ub;
+}
+
+void
+LinearCrdTransf3d::forceCaptureInitialDisp(void)
+{
+    // One-shot: discard the captured initial displacement offset so that the next
+    // initialize() re-captures it at the current configuration. Called by an element
+    // on activation, so that a staged element is born strain free. The arrays are
+    // freed here because initialize() allocates without checking, and the latch is
+    // reset so the capture happens exactly once more.
+    if (nodeIInitialDisp != 0) {
+        delete [] nodeIInitialDisp;
+        nodeIInitialDisp = 0;
+    }
+    if (nodeJInitialDisp != 0) {
+        delete [] nodeJInitialDisp;
+        nodeJInitialDisp = 0;
+    }
+    initialDispChecked = false;
 }

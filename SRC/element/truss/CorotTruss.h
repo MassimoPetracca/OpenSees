@@ -63,6 +63,8 @@ class CorotTruss : public Element
 
     int getNumDOF(void);	
     void setDomain(Domain *theDomain);
+    void onActivate(void);
+    void onDeactivate(void);
 
     // public methods to set the state of the element    
     int commitState(void);
@@ -109,6 +111,11 @@ class CorotTruss : public Element
     double Ln;              // current length of truss
     double d21[3];          // current displacement offsets in basic system
     double v21[3];          // current velocity offsets in basic system
+    double initialDisp[3] = { 0.0, 0.0, 0.0 }; // relative nodal displacement at birth
+    bool initialDispCaptured = false;          // true once initialDisp has been set
+    // one-shot request set by onActivate(): makes setDomain() re-capture
+    // initialDisp at the current configuration. Not serialized.
+    bool m_force_capture_initial_disp = false;
     double A;               // area of CorotTruss
     double rho;             // mass density per unit length
     int doRayleighDamping;  // flag to include Rayleigh damping

@@ -348,9 +348,10 @@ void  TenNodeTetrahedron::setDomain( Domain *theDomain )
     {
         nodePointers[i] = theDomain->getNode( connectedExternalNodes(i) ) ;
 
-        if(do_init_disp)
+        if ((do_init_disp && !initDispCaptured) || m_force_capture_initial_disp)
         {
             initDisp[i] = nodePointers[i]->getDisp();
+            initDispCaptured = true;
         }
     }
 
@@ -1522,7 +1523,7 @@ int  TenNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
     // Now quad sends the ids of its materials
     int matDbTag;
 
-    static ID idData(27);
+    static ID idData(28);
 
     idData(24) = this->getTag();
     if (alphaM != 0 || betaK != 0 || betaK0 != 0 || betaKc != 0)
@@ -1553,6 +1554,8 @@ int  TenNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
     idData(18) = connectedExternalNodes(2);
     idData(19) = connectedExternalNodes(3);
     idData(26) = (int) do_update;
+  // activation state: an element deactivated before the transfer must come back deactivated
+  idData(27) = is_this_element_active ? 1 : 0;
     // idData(20) = connectedExternalNodes(4);
     // idData(21) = connectedExternalNodes(5);
     // idData(22) = connectedExternalNodes(6);
@@ -1564,7 +1567,7 @@ int  TenNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
         return res;
     }
 
-    static Vector dData(7);
+    static Vector dData(38);
     dData(0) = alphaM;
     dData(1) = betaK;
     dData(2) = betaK0;
@@ -1572,6 +1575,12 @@ int  TenNodeTetrahedron::sendSelf (int commitTag, Channel &theChannel)
     dData(4) = b[0];
     dData(5) = b[1];
     dData(6) = b[2];
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int i = 0; i < 10; i++)
+      for (int j = 0; j < 3; j++)
+        dData(7 + 3*i + j) = initDisp[i](j);
+    dData(37) = initDispCaptured ? 1.0 : 0.0;
 
     if (theChannel.sendVector(dataTag, commitTag, dData) < 0) {
         opserr << "TenNodeTetrahedron::sendSelf() - failed to send double data\n";
@@ -1600,7 +1609,7 @@ int  TenNodeTetrahedron::recvSelf (int commitTag,
 
     int dataTag = this->getDbTag();
 
-    static ID idData(27);
+    static ID idData(28);
     res += theChannel.recvID(dataTag, commitTag, idData);
     if (res < 0) {
         opserr << "WARNING TenNodeTetrahedron::recvSelf() - " << this->getTag() << " failed to receive ID\n";
@@ -1609,7 +1618,7 @@ int  TenNodeTetrahedron::recvSelf (int commitTag,
 
     this->setTag(idData(24));
 
-    static Vector dData(7);
+    static Vector dData(38);
     if (theChannel.recvVector(dataTag, commitTag, dData) < 0) {
         opserr << "DispBeamColumn2d::sendSelf() - failed to recv double data\n";
         return -1;
@@ -1621,6 +1630,12 @@ int  TenNodeTetrahedron::recvSelf (int commitTag,
     b[0] = dData(4);
     b[1] = dData(5);
     b[2] = dData(6);
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int i = 0; i < 10; i++)
+      for (int j = 0; j < 3; j++)
+        initDisp[i](j) = dData(7 + 3*i + j);
+    initDispCaptured = dData(37) > 0.0 ? true : false;
 
 
     connectedExternalNodes(0) = idData(16);
@@ -1628,6 +1643,8 @@ int  TenNodeTetrahedron::recvSelf (int commitTag,
     connectedExternalNodes(2) = idData(18);
     connectedExternalNodes(3) = idData(19);
     do_update = (bool) idData(26);
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = idData(27) == 1 ? true : false;
     // connectedExternalNodes(4) = idData(20);
     // connectedExternalNodes(5) = idData(21);
     // connectedExternalNodes(6) = idData(22);
@@ -1848,7 +1865,10 @@ TenNodeTetrahedron::setResponse(const char **argv, int argc, OPS_Stream &output)
 int
 TenNodeTetrahedron::getResponse(int responseID, Information &eleInfo)
 {
-    static Vector stresses(6);
+    // 6 components at each of the FOUR integration points. It used to be Vector(6),
+    // copied from FourNodeTetrahedron, while the loops below fill 4*6 - a silent
+    // 144-byte heap overrun on every `eleResponse ... stresses` / `strains`.
+    static Vector stresses(6*4);
 
     if (responseID == 1)
         return eleInfo.setVector(this->getResistingForce());
@@ -2211,9 +2231,15 @@ TenNodeTetrahedron::shp3d( const double zeta[4], double &xsj, double shp[4][NumN
 void
 TenNodeTetrahedron::onActivate()
 {
-
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free: strain = B * (trial - initDisp). The
+    // reference geometry stays undeformed, only the strain measure is offset.
+    // Forced regardless of do_init_disp: that option only governs the capture at
+    // the time the element enters the domain, on activation it is not optional.
     Domain* theDomain = this->getDomain();
+    m_force_capture_initial_disp = true;
     this->setDomain(theDomain);
+    m_force_capture_initial_disp = false;
     this->update();
 }
 

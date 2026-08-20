@@ -79,6 +79,8 @@ class ElasticBeam3d : public Element
 
     int getNumDOF(void);
     void setDomain(Domain *theDomain);
+    void onActivate(void);
+    void onDeactivate(void);
     int setDamping(Domain *theDomain, Damping *theDamping);
     
     int commitState(void);

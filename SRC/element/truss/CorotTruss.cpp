@@ -478,6 +478,18 @@ CorotTruss::setDomain(Domain *theDomain)
         return;
     }          
     
+	// Capture the initial (artefact) relative nodal displacement, so that an
+	// element born in an already displaced mesh starts strain free. Lo and R
+	// below come from the nodal coordinates only: the reference configuration
+	// must not depend on this offset, only the strain measure does.
+	if (!initialDispCaptured || m_force_capture_initial_disp) {
+		const Vector &iDisp1 = theNodes[0]->getTrialDisp();
+		const Vector &iDisp2 = theNodes[1]->getTrialDisp();
+		for (int j = 0; j < numDIM; j++)
+			initialDisp[j] = iDisp2(j) - iDisp1(j);
+		initialDispCaptured = true;
+	}
+
 	// call the base class method
 	this->DomainComponent::setDomain(theDomain);
 
@@ -585,7 +597,7 @@ CorotTruss::update(void)
   
   // Update offsets in basic system due to nodal displacements
   for (int i = 0; i < numDIM; i++) {
-    double deltaDisp = end2Disp(i) - end1Disp(i);
+    double deltaDisp = end2Disp(i) - end1Disp(i) - initialDisp[i];
     d21[0] += deltaDisp*R(0,i);
     d21[1] += deltaDisp*R(1,i);
     d21[2] += deltaDisp*R(2,i);
@@ -901,7 +913,7 @@ CorotTruss::sendSelf(int commitTag, Channel &theChannel)
   // truss packs it's data into a Vector and sends this to theChannel
   // along with it's dbTag and the commitTag passed in the arguments
 
-  static Vector data(9);
+  static Vector data(14);
   data(0) = this->getTag();
   data(1) = numDIM;
   data(2) = numDOF;
@@ -909,6 +921,12 @@ CorotTruss::sendSelf(int commitTag, Channel &theChannel)
   data(6) = rho;
   data(7) = doRayleighDamping;
   data(8) = cMass;
+  data(9) = initialDisp[0];
+  data(10) = initialDisp[1];
+  data(11) = initialDisp[2];
+  data(12) = initialDispCaptured ? 1.0 : 0.0;
+  // activation state: an element deactivated before the transfer must come back deactivated
+  data(13) = is_this_element_active ? 1.0 : 0.0;
   
   data(4) = theMaterial->getClassTag();
   int matDbTag = theMaterial->getDbTag();
@@ -954,7 +972,7 @@ CorotTruss::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBr
   // truss creates a Vector, receives the Vector and then sets the 
   // internal data with the data in the Vector
 
-  static Vector data(9);
+  static Vector data(14);
   res = theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING Truss::recvSelf() - failed to receive Vector\n";
@@ -968,6 +986,12 @@ CorotTruss::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBr
   rho = data(6);
   doRayleighDamping = (int)data(7);
   cMass = (int)data(8);
+  initialDisp[0] = data(9);
+  initialDisp[1] = data(10);
+  initialDisp[2] = data(11);
+  initialDispCaptured = data(12) > 0.0 ? true : false;
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = data(13) > 0.0 ? true : false;
 
   // truss now receives the tags of it's two external nodes
   res = theChannel.recvID(dataTag, commitTag, connectedExternalNodes);
@@ -1191,4 +1215,23 @@ CorotTruss::updateParameter (int parameterID, Information &info)
   default:
     return -1;
   }
+}
+
+void
+CorotTruss::onActivate(void)
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free. Lo and R are left alone: the reference
+    // configuration must not depend on the offset. Ln and the current direction keep
+    // evolving during the analysis as they must for a corotational element, they just
+    // no longer see the artefact displacement.
+    m_force_capture_initial_disp = true;
+    this->setDomain(this->getDomain());
+    m_force_capture_initial_disp = false;
+    this->update();
+}
+
+void
+CorotTruss::onDeactivate(void)
+{
 }

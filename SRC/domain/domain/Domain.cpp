@@ -2154,6 +2154,11 @@ Domain::applyLoad(double timeStep)
     while ((nodePtr = theNodeIter()) != 0)
 	nodePtr->zeroUnbalancedLoad();
 
+    // note: zeroLoad() is invoked on the deactivated elements too, on purpose.
+    // addLoad() and addInertiaLoadToUnbalance() accumulate into the element
+    // load vector without zeroing it first - they rely on this very loop - so
+    // skipping it here would let the load vector of a deactivated element grow
+    // without bound.
     Element *elePtr;
     ElementIter &theElemIter = this->getElements();    
     while ((elePtr = theElemIter()) != 0)
@@ -2415,6 +2420,11 @@ Domain::update(void)
   Element *theEle;
 
   while ((theEle = theEles()) != 0) {
+    // a deactivated element is frozen: it must not follow the nodes while it
+    // is switched off, or it would keep accumulating strain (and damage) and
+    // would then be committed in that state by Domain::commit().
+    if (theEle->isActive() == false)
+      continue;
     ops_TheActiveElement = theEle;
     int eleResult = theEle->update();
 
@@ -4068,8 +4078,10 @@ Domain::calculateNodalReactions(int flag)
   }
 
   ElementIter &theElements = this->getElements();
+  // a deactivated element carries no load path, so it must not show up in the
+  // reactions either
   while ((theElement = theElements()) != 0)
-    if (theElement->isSubdomain() == false)
+    if (theElement->isSubdomain() == false && theElement->isActive())
       theElement->addResistingForceToNodalReaction(flag);
   return 0;
 }
@@ -4100,7 +4112,8 @@ Domain::getRecorder(int tag)
 
 int Domain::activateElements(const ID& elementList)
 {
-    ElementIter& iter = getElements();
+    // ElementIter& iter = getElements(); // dead, and getElements() resets the shared iterator
+    bool changed = false;
     Element* theElement;
     for (int i = 0; i < elementList.Size(); ++i)
     {
@@ -4108,9 +4121,19 @@ int Domain::activateElements(const ID& elementList)
         theElement = this->getElement(eleTag);
         if (theElement != 0)
         {
+            if (!theElement->isActive())
+                changed = true;
             theElement->activate();
         }
     }
+    // The composition of the model changed. Not needed for the tangent - FE_Element gates every
+    // contribution on isActive() at run time - but MPCORecorder keys its MODEL_STAGE on
+    // hasDomainChanged(), so without this a stage whose transition touches no constraint (a brace
+    // or a prop between two already-active floors: nothing to fix, nothing to release) would never
+    // get its mesh, and its activation flags, rewritten. Guarded on a REAL state change so a
+    // repeated or redundant command does not force a renumber.
+    if (changed)
+        this->domainChange();
     return 0;
 }
 
@@ -4119,6 +4142,7 @@ int Domain::activateElements(const ID& elementList)
 int Domain::deactivateElements(const ID& elementList)
 {
     // ElementIter& iter = getElements();
+    bool changed = false;
     Element* theElement;
     for (int i = 0; i < elementList.Size(); ++i)
     {
@@ -4126,8 +4150,13 @@ int Domain::deactivateElements(const ID& elementList)
         theElement = this->getElement(eleTag);
         if (theElement != 0)
         {
+            if (theElement->isActive())
+                changed = true;
             theElement->deactivate();
         }
     }
+    // see activateElements
+    if (changed)
+        this->domainChange();
     return 0;
 }

@@ -336,6 +336,11 @@ SSPbrickUP::setDomain(Domain *theDomain)
 	// establish permeability matrix (constant, only need to compute once)
 	GetPermeabilityMatrix();
 
+	// Capture the initial displacement offset (see m_U0). Not done again after a
+	// recvSelf, which brings m_U0 in already captured.
+	if (!m_U0_initialized)
+		this->captureInitialDisp();
+
 	// call the base-class method
 	this->DomainComponent::setDomain(theDomain);
 }
@@ -405,6 +410,9 @@ SSPbrickUP::update(void)
 	u(21) = mDisp_8(0);
 	u(22) = mDisp_8(1);
 	u(23) = mDisp_8(2);
+
+	// subtract the initial displacement offset (see m_U0)
+	u.addVector(1.0, m_U0, -1.0);
 
 	// compute strain and send it to the material
 	Vector strain(6);
@@ -755,6 +763,9 @@ SSPbrickUP::getResistingForce(void)
 	d(22) = mDisp_8(1);
 	d(23) = mDisp_8(2);
 
+	// subtract the initial displacement offset (see m_U0)
+	d.addVector(1.0, m_U0, -1.0);
+
 	// add stabilization force to internal force vector
 	f1 = Kstab*d;
 
@@ -966,7 +977,7 @@ SSPbrickUP::sendSelf(int commitTag, Channel &theChannel)
   
 	// SSPbrickUP packs its data into a Vector and sends this to theChannel
 	// along with its dbTag and the commitTag passed in the arguments
-  	static Vector data(13);
+  	static Vector data(39);
   	data(0) = this->getTag();
 	data(1) = fBulk;
 	data(2) = fDens;
@@ -993,6 +1004,13 @@ SSPbrickUP::sendSelf(int commitTag, Channel &theChannel)
 			  theMaterial->setDbTag(matDbTag);
     }
     data(12) = matDbTag;
+    // activation state: an element deactivated before the transfer must come back deactivated
+    data(13) = is_this_element_active ? 1.0 : 0.0;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int i = 0; i < 24; i++)
+      data(14 + i) = m_U0(i);
+    data(38) = m_U0_initialized ? 1.0 : 0.0;
 
 	res += theChannel.sendVector(dataTag, commitTag, data);
   	if (res < 0) {
@@ -1025,7 +1043,7 @@ SSPbrickUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBr
 
   	// SSPbrickUP creates a Vector, receives the Vector and then sets the 
   	// internal data with the data in the Vector
-  	static Vector data(13);
+  	static Vector data(39);
   	res += theChannel.recvVector(dataTag, commitTag, data);
   	if (res < 0) {
     	opserr << "WARNING SSPbrickUP::recvSelf() - failed to receive Vector\n";
@@ -1055,6 +1073,13 @@ SSPbrickUP::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBr
 	// database tag, and asks this new object to receive itself
 	int matClass = (int)data(11);
 	int matDb    = (int)data(12);
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = data(13) > 0.0 ? true : false;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int i = 0; i < 24; i++)
+      m_U0(i) = data(14 + i);
+    m_U0_initialized = data(38) > 0.0 ? true : false;
 
 	// check if material object exists and that it is the right type
 	if ((theMaterial == 0) || (theMaterial->getClassTag() != matClass)) {
@@ -2383,4 +2408,31 @@ SSPbrickUP::GetPermeabilityMatrix(void)
 	}
 
 	return;
+}
+
+void
+SSPbrickUP::captureInitialDisp(void)
+{
+  for (int i = 0; i < 8; i++) {
+    const Vector &iDisp = theNodes[i]->getTrialDisp();
+    m_U0(3*i)     = iDisp(0);
+    m_U0(3*i + 1) = iDisp(1);
+    m_U0(3*i + 2) = iDisp(2);
+  }
+  m_U0_initialized = true;
+}
+
+void
+SSPbrickUP::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+SSPbrickUP::onDeactivate(void)
+{
 }

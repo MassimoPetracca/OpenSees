@@ -1120,6 +1120,11 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "version", &version, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
 
+    Tcl_CreateCommand(interp, "elementActivate", &elementActivate,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "elementDeactivate", &elementDeactivate,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+
     Tcl_CreateCommand(interp, "setParameter", &setParameter, 
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);  
 
@@ -10495,40 +10500,55 @@ numIter(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   return TCL_OK;
 }
 
+// gathers the element tags of an "elementActivate"/"elementDeactivate" command line.
+// note: tags not found in the (local) domain are silently skipped by the domain
+// itself. this is not an error: under OpenSeesMP the same script runs on every
+// process and each one only owns a partition of the model.
+static int
+elementActivationTags(Tcl_Interp *interp, int argc, TCL_Char **argv, const char *cmdName, ID &tags)
+{
+	if (argc < 2) {
+		opserr << "WARNING want - " << cmdName << " eleTag1? <eleTag2? ...>\n";
+		return TCL_ERROR;
+	}
+
+	for (int argLoc = 1; argLoc < argc; ++argLoc) {
+		int eleTag;
+		if (Tcl_GetInt(interp, argv[argLoc], &eleTag) != TCL_OK) {
+			opserr << "WARNING " << cmdName << " - invalid eleTag " << argv[argLoc] << endln;
+			return TCL_ERROR;
+		}
+		tags.insert(eleTag);
+	}
+
+	return TCL_OK;
+}
+
 int
 elementActivate(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
-	int eleTag;
-	int argLoc = 1;
-	int Nelements = argc;
-	ID activate_us(0, Nelements);
+	ID activate_us(0, argc > 1 ? argc - 1 : 1);
 
-	while (argLoc < argc && Tcl_GetInt(interp, argv[argLoc], &eleTag) == TCL_OK) {
-		activate_us.insert(eleTag);
-		++argLoc;
-	}
+	if (elementActivationTags(interp, argc, argv, "elementActivate", activate_us) != TCL_OK)
+		return TCL_ERROR;
 
 	theDomain.activateElements(activate_us);
 
-  return TCL_OK;
+	return TCL_OK;
 }
 
-int 
+int
 elementDeactivate(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
 {
+	ID deactivate_us(0, argc > 1 ? argc - 1 : 1);
 
-	int eleTag;
-	int argLoc = 1;
-	int Nelements = argc;
-	ID deactivate_us(0, Nelements);
-
-	while (argLoc < argc && Tcl_GetInt(interp, argv[argLoc], &eleTag) == TCL_OK) {
-		deactivate_us.insert(eleTag);
-		++argLoc;
-	}
+	if (elementActivationTags(interp, argc, argv, "elementDeactivate", deactivate_us) != TCL_OK)
+		return TCL_ERROR;
 
 	theDomain.deactivateElements(deactivate_us);
-  return TCL_OK;}
+
+	return TCL_OK;
+}
 
 int
 version(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)

@@ -170,6 +170,8 @@ ZeroLengthSection::~ZeroLengthSection()
 		delete A;
 	if (v != 0)
 		delete v;
+	if (d0 != 0)
+		delete d0;
 }
 
 int
@@ -277,6 +279,11 @@ this->DomainComponent::setDomain(theDomain);
 
 // Set up the A matrix
 	this->setTransformation();
+
+	// Capture the initial relative displacement, so an element born in an already
+	// displaced mesh starts strain free. A null d0 means never captured.
+	if (d0 == 0 && !d0Restored)
+		this->captureInitialDisp();
 }   
 
 int
@@ -429,7 +436,7 @@ ZeroLengthSection::sendSelf(int commitTag, Channel &theChannel)
 
 	// ZeroLengthSection packs its data into an ID and sends this to theChannel
 	// along with its dbTag and the commitTag passed in the arguments
-	static ID idData(9);
+	static ID idData(10);
 
 	idData(0) = this->getTag();
 	idData(1) = dimension;
@@ -447,6 +454,8 @@ ZeroLengthSection::sendSelf(int commitTag, Channel &theChannel)
 	}
 	idData(7) = secDbTag;
 	idData(8) = useRayleighDamping;
+	// activation state: an element deactivated before the transfer must come back deactivated
+	idData(9) = is_this_element_active ? 1 : 0;
 
 
 	res += theChannel.sendID(dataTag, commitTag, idData);
@@ -461,6 +470,23 @@ ZeroLengthSection::sendSelf(int commitTag, Channel &theChannel)
 	res += theChannel.sendMatrix(dataTag, commitTag, transformation);
 	if (res < 0) {
 	  opserr << "ZeroLengthSection::sendSelf -- failed to send transformation Matrix\n";
+	  return res;
+	}
+
+	// Initial relative displacement offset. It is captured in setDomain, so without this the
+	// restored element would be born carrying the whole strain. numDOF/2 long, plus one slot
+	// saying whether the sender had it at all - an element that never saw a domain has none,
+	// and must be left free to capture one later. The only Vector this sendSelf pushes.
+	Vector d0Data(numDOF/2 + 1);
+	d0Data.Zero();
+	if (d0 != 0 && d0->Size() == numDOF/2) {
+		for (int i = 0; i < numDOF/2; i++)
+			d0Data(i) = (*d0)(i);
+		d0Data(numDOF/2) = 1.0;
+	}
+	res += theChannel.sendVector(dataTag, commitTag, d0Data);
+	if (res < 0) {
+	  opserr << "ZeroLengthSection::sendSelf -- failed to send d0 Vector\n";
 	  return res;
 	}
 
@@ -484,7 +510,7 @@ ZeroLengthSection::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
 	// ZeroLengthSection creates an ID, receives the ID and then sets the 
 	// internal data with the data in the ID
 
-	static ID idData(9);
+	static ID idData(10);
 
 	res += theChannel.recvID(dataTag, commitTag, idData);
 	if (res < 0) {
@@ -504,6 +530,33 @@ ZeroLengthSection::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
 	connectedExternalNodes(0) = idData(4);
 	connectedExternalNodes(1) = idData(5);
 	useRayleighDamping =idData(8);
+	// activation state: an element deactivated before the transfer must come back deactivated
+	is_this_element_active = idData(9) == 1 ? true : false;
+
+	// Initial relative displacement offset, see the matching block in sendSelf. It has to come
+	// after numDOF above. d0Restored is driven by the presence flag rather than set blindly:
+	// if the sender had no offset, setDomain must still be allowed to capture one.
+	Vector d0Data(numDOF/2 + 1);
+	res += theChannel.recvVector(dataTag, commitTag, d0Data);
+	if (res < 0) {
+	  opserr << "ZeroLengthSection::recvSelf -- failed to receive d0 Vector\n";
+	  return res;
+	}
+	d0Restored = d0Data(numDOF/2) > 0.0 ? true : false;
+	if (d0Restored) {
+		if (d0 != 0 && d0->Size() != numDOF/2) {
+			delete d0;
+			d0 = 0;
+		}
+		if (d0 == 0)
+			d0 = new Vector(numDOF/2);
+		for (int i = 0; i < numDOF/2; i++)
+			(*d0)(i) = d0Data(i);
+	}
+	else if (d0 != 0) {
+		delete d0;
+		d0 = 0;
+	}
 
 	// Check that there is correct number of materials, reallocate if needed
 	if (order != idData(3)) {
@@ -923,8 +976,10 @@ ZeroLengthSection::computeSectionDefs(void)
 	const Vector &u1 = theNodes[0]->getTrialDisp();
 	const Vector &u2 = theNodes[1]->getTrialDisp();
 
-	// Compute differential displacements
+	// Compute differential displacements, offset by the initial (artefact) one
 	Vector diff = u2 - u1;
+	if (d0 != 0)
+		diff -= *d0;
 
 	// Set some references to make the syntax nicer
 	Vector &def = *v;
@@ -986,4 +1041,36 @@ ZeroLengthSection::commitSensitivity(int gradIndex, int numGrads)
       dedh(i) += -diff(j)*tran(i,j);
 
   return theSection->commitSensitivity(dedh, gradIndex, numGrads);
+}
+
+void
+ZeroLengthSection::captureInitialDisp(void)
+{
+	const Vector &u1 = theNodes[0]->getTrialDisp();
+	const Vector &u2 = theNodes[1]->getTrialDisp();
+	Vector diffD = u2 - u1;
+
+	if (d0 != 0 && d0->Size() != diffD.Size()) {
+		delete d0;
+		d0 = 0;
+	}
+	if (d0 == 0)
+		d0 = new Vector(diffD);
+	else
+		*d0 = diffD;
+}
+
+void
+ZeroLengthSection::onActivate(void)
+{
+	// Re-capture the initial relative displacement at the current configuration, so a
+	// staged element is born strain free. setDomain() is deliberately not re-run:
+	// nothing it computes depends on the offset.
+	this->captureInitialDisp();
+	this->update();
+}
+
+void
+ZeroLengthSection::onDeactivate(void)
+{
 }

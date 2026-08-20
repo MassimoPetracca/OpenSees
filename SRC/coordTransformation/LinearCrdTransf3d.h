@@ -54,6 +54,7 @@ public:
     const char *getClassType() const {return "LinearCrdTransf3d";};
     
     int initialize(Node *node1Pointer, Node *node2Pointer);
+    void forceCaptureInitialDisp(void);
     int update(void);
     double getInitialLength(void);
     double getDeformedLength(void);

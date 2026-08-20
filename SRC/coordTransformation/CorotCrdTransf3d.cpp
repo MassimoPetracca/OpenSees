@@ -451,18 +451,6 @@ CorotCrdTransf3d::update(void)
             static Vector xJI(3);
             xJI = nodeJPtr->getCrds() - nodeIPtr->getCrds();
             
-            if (nodeIInitialDisp != 0) {
-                xJI(0) -= nodeIInitialDisp[0];
-                xJI(1) -= nodeIInitialDisp[1];
-                xJI(2) -= nodeIInitialDisp[2];
-            }
-            
-            if (nodeJInitialDisp != 0) {
-                xJI(0) += nodeJInitialDisp[0];
-                xJI(1) += nodeJInitialDisp[1];
-                xJI(2) += nodeJInitialDisp[2];
-            }
-            
             static Vector dx(3);
             // dx = xJI + dJI;  
             dx = xJI;
@@ -1473,18 +1461,6 @@ CorotCrdTransf3d::getLocalAxes(Vector &XAxis, Vector &YAxis, Vector &ZAxis)
     static Vector dx(3);
     
     dx = (nodeJPtr->getCrds() + nodeJOffset) - (nodeIPtr->getCrds() + nodeIOffset);  
-    if (nodeIInitialDisp != 0) {
-        dx(0) -= nodeIInitialDisp[0];
-        dx(1) -= nodeIInitialDisp[1];
-        dx(2) -= nodeIInitialDisp[2];
-    }
-    
-    if (nodeJInitialDisp != 0) {
-        dx(0) += nodeJInitialDisp[0];
-        dx(1) += nodeJInitialDisp[1];
-        dx(2) += nodeJInitialDisp[2];
-    }
-    
     // calculate the element length
     
     L = dx.Norm();
@@ -2204,4 +2180,23 @@ CorotCrdTransf3d::Print(OPS_Stream &s, int flag)
             s << ", \"jOffset\": [" << nodeJOffset[0] << ", " << nodeJOffset[1] << ", " << nodeJOffset[2] << "]";
         s << "}";
     }
+}
+
+void
+CorotCrdTransf3d::forceCaptureInitialDisp(void)
+{
+    // One-shot: discard the captured initial displacement offset so that the next
+    // initialize() re-captures it at the current configuration. Called by an element
+    // on activation, so that a staged element is born strain free. The arrays are
+    // freed here because initialize() allocates without checking, and the latch is
+    // reset so the capture happens exactly once more.
+    if (nodeIInitialDisp != 0) {
+        delete [] nodeIInitialDisp;
+        nodeIInitialDisp = 0;
+    }
+    if (nodeJInitialDisp != 0) {
+        delete [] nodeJInitialDisp;
+        nodeJInitialDisp = 0;
+    }
+    initialDispChecked = false;
 }

@@ -88,6 +88,9 @@ class Truss : public Element
     const Vector &getResistingForce(void);
     const Vector &getResistingForceIncInertia(void);            
 
+    void onActivate(void);
+    void onDeactivate(void);
+
     // public methods for element output
     int sendSelf(int commitTag, Channel &theChannel);
     int recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker);
@@ -135,6 +138,10 @@ class Truss : public Element
 
     Node *theNodes[2];
     double *initialDisp;
+    // one-shot request set by onActivate(): makes setDomain() re-capture
+    // initialDisp at the current configuration. Not serialized: it is a
+    // request, not state.
+    bool m_force_capture_initial_disp = false;
 
 	
 // AddingSensitivity:BEGIN //////////////////////////////////////////

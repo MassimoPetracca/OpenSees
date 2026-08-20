@@ -1216,13 +1216,15 @@ ElasticBeam2d::sendSelf(int cTag, Channel &theChannel)
 {
   int res = 0;
 
-    static Vector data(21);
+    static Vector data(22);
     
     data(0) = A;
     data(1) = E; 
     data(2) = I;
     data(19) = G;
     data(20) = Av;
+    // activation state: an element deactivated before the transfer must come back deactivated
+    data(21) = is_this_element_active ? 1.0 : 0.0;
     data(3) = rho;
     data(4) = cMass;
     data(5) = this->getTag();
@@ -1292,7 +1294,7 @@ ElasticBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBrok
 {
     int res = 0;
 	
-    static Vector data(21);
+    static Vector data(22);
 
     res += theChannel.recvVector(this->getDbTag(), cTag, data);
     if (res < 0) {
@@ -1305,6 +1307,8 @@ ElasticBeam2d::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &theBrok
     I = data(2);
     G = data(19);
     Av = data(20);
+    // activation state: an element deactivated before the transfer must come back deactivated
+    is_this_element_active = data(21) > 0.0 ? true : false;
     alpha = data(10);
     d = data(11);
 
@@ -1824,3 +1828,22 @@ ElasticBeam2d::updateParameter (int parameterID, Information &info)
 	}
 }
 
+
+void
+ElasticBeam2d::onActivate(void)
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free. The offset lives in the coordinate
+    // transformation, together with the reference length and orientation - and those
+    // come from the nodal coordinates alone, so they are not affected.
+    // setDomain() is deliberately NOT re-run: it re-initializes the damping.
+    theCoordTransf->forceCaptureInitialDisp();
+    if (theCoordTransf->initialize(theNodes[0], theNodes[1]))
+        opserr << "ElasticBeam2d::onActivate() - error re-initializing coordinate transformation\n";
+    this->update();
+}
+
+void
+ElasticBeam2d::onDeactivate(void)
+{
+}

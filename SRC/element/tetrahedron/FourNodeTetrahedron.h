@@ -199,6 +199,12 @@ class FourNodeTetrahedron : public Element {
 
     bool do_update;
     bool do_init_disp;
+    // one-shot request set by onActivate(): makes setDomain() capture initDisp
+    // regardless of do_init_disp. Not serialized: it is a request, not state.
+    bool m_force_capture_initial_disp = false;
+    // one-shot latch: without it a restore would re-capture the offset from the
+    // nodes, which Domain::recvSelf has already put back at their displacements
+    bool initDispCaptured = false;
 } ; 
 
 #endif

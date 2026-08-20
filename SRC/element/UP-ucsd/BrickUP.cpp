@@ -249,6 +249,11 @@ void  BrickUP::setDomain( Domain *theDomain )
      }
   }
 
+  // Capture the initial displacement offset (see m_U0). Not done again after a
+  // recvSelf, which brings m_U0 in already captured.
+  if (!m_U0_initialized)
+    this->captureInitialDisp();
+
   this->DomainComponent::setDomain(theDomain);
 }
 
@@ -1056,9 +1061,9 @@ void  BrickUP::formResidAndTangent( int tang_flag )
       //nodal displacements
       const Vector &ul = nodePointers[j]->getTrialDisp( ) ;
       Vector ul3(3);
-	  ul3(0) = ul(0);
-      ul3(1) = ul(1);
-	  ul3(2) = ul(2);
+	  ul3(0) = ul(0) - m_U0(3*j);
+      ul3(1) = ul(1) - m_U0(3*j + 1);
+	  ul3(2) = ul(2) - m_U0(3*j + 2);
       //compute the strain
       //strain += (BJ*ul) ;
       strain.addMatrixVector(1.0,BJ,ul3,1.0 ) ;
@@ -1264,7 +1269,7 @@ int  BrickUP::sendSelf (int commitTag, Channel &theChannel)
 
   // BrickUP packs its data into a Vector and sends this to theChannel
   // along with its dbTag and the commitTag passed in the arguments
-  static Vector data(13);
+  static Vector data(38);
   data(0) = this->getTag();
   data(1) = rho;
   data(2) = b[0];
@@ -1280,6 +1285,11 @@ int  BrickUP::sendSelf (int commitTag, Channel &theChannel)
   data(10) = perm[0];
   data(11) = perm[1];
   data(12) = perm[2];
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    data(13 + i) = m_U0(i);
+  data(37) = m_U0_initialized ? 1.0 : 0.0;
 
   res += theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
@@ -1290,7 +1300,7 @@ int  BrickUP::sendSelf (int commitTag, Channel &theChannel)
   // Now BrickUP sends the ids of its materials
   int matDbTag;
 
-  static ID idData(24);
+  static ID idData(25);
 
   int i;
   for (i = 0; i < 8; i++) {
@@ -1314,6 +1324,8 @@ int  BrickUP::sendSelf (int commitTag, Channel &theChannel)
   idData(21) = connectedExternalNodes(5);
   idData(22) = connectedExternalNodes(6);
   idData(23) = connectedExternalNodes(7);
+  // activation state: an element deactivated before the transfer must come back deactivated
+  idData(24) = is_this_element_active ? 1 : 0;
 
   res += theChannel.sendID(dataTag, commitTag, idData);
   if (res < 0) {
@@ -1345,7 +1357,7 @@ int  BrickUP::recvSelf (int commitTag,
 
   // BrickUP creates a Vector, receives the Vector and then sets the
   // internal data with the data in the Vector
-  static Vector data(13);
+  static Vector data(38);
   res += theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING FourNodeQuadUP::recvSelf() - failed to receive Vector\n";
@@ -1367,8 +1379,13 @@ int  BrickUP::recvSelf (int commitTag,
   perm[0] = data(10);
   perm[1] = data(11);
   perm[2] = data(12);
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    m_U0(i) = data(13 + i);
+  m_U0_initialized = data(37) > 0.0 ? true : false;
 
-  static ID idData(24);
+  static ID idData(25);
   // brickUP now receives the tags of its four external nodes
   res += theChannel.recvID(dataTag, commitTag, idData);
   if (res < 0) {
@@ -1384,6 +1401,8 @@ int  BrickUP::recvSelf (int commitTag,
   connectedExternalNodes(5) = idData(21);
   connectedExternalNodes(6) = idData(22);
   connectedExternalNodes(7) = idData(23);
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = idData(24) == 1 ? true : false;
 
 
   int i;
@@ -1760,4 +1779,31 @@ BrickUP::updateParameter(int parameterID, Information &info)
 		return -1;
   }
   return -1;
+}
+
+void
+BrickUP::captureInitialDisp(void)
+{
+  for (int i = 0; i < 8; i++) {
+    const Vector &iDisp = nodePointers[i]->getTrialDisp();
+    m_U0(3*i)     = iDisp(0);
+    m_U0(3*i + 1) = iDisp(1);
+    m_U0(3*i + 2) = iDisp(2);
+  }
+  m_U0_initialized = true;
+}
+
+void
+BrickUP::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+BrickUP::onDeactivate(void)
+{
 }

@@ -358,6 +358,11 @@ SSPbrick::setDomain(Domain *theDomain)
 	    GetStab();
 	}
 
+	// Capture the initial displacement offset (see m_U0). Not done again after a
+	// recvSelf, which brings m_U0 in already captured.
+	if (!m_U0_initialized)
+		this->captureInitialDisp();
+
 	// call the base-class method
 	this->DomainComponent::setDomain(theDomain);
 
@@ -438,6 +443,9 @@ SSPbrick::update(void)
 	u(21) = mDisp_8(0);
 	u(22) = mDisp_8(1);
 	u(23) = mDisp_8(2);
+
+	// subtract the initial displacement offset (see m_U0)
+	u.addVector(1.0, m_U0, -1.0);
 
 	// compute strain and send it to the material
 	Vector strain(6);
@@ -637,6 +645,9 @@ SSPbrick::getResistingForce(void)
 	d(22) = mDisp_8(1);
 	d(23) = mDisp_8(2);
 
+	// subtract the initial displacement offset (see m_U0)
+	d.addVector(1.0, m_U0, -1.0);
+
 	// add stabilization force to internal force vector
 	mInternalForces = Kstab*d;
 
@@ -757,7 +768,7 @@ SSPbrick::sendSelf(int commitTag, Channel &theChannel)
   
   // SSPbrick packs its data into a Vector and sends this to theChannel
   // along with its dbTag and the commitTag passed in the arguments
-  static Vector data(751);
+  static Vector data(777);
   data(0) = this->getTag();
   data(1) = b[0];
   data(2) = b[1];
@@ -800,6 +811,13 @@ SSPbrick::sendSelf(int commitTag, Channel &theChannel)
     cnt = cnt+24;
   }
   
+  // activation state: an element deactivated before the transfer must come back deactivated
+  data(751) = is_this_element_active ? 1.0 : 0.0;
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    data(752 + i) = m_U0(i);
+  data(776) = m_U0_initialized ? 1.0 : 0.0;
   res = theChannel.sendVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING SSPbrick::sendSelf() - " << this->getTag() << " failed to send Vector\n";
@@ -831,7 +849,7 @@ SSPbrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBrok
   
   // SSPbrick creates a Vector, receives the Vector and then sets the 
   // internal data with the data in the Vector
-  static Vector data(751);
+  static Vector data(777);
   res = theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr << "WARNING SSPbrick::recvSelf() - failed to receive Vector\n";
@@ -849,6 +867,13 @@ SSPbrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBrok
   betaK0 = data(9);
   betaKc = data(10);
  
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = data(751) > 0.0 ? true : false;
+  // initial displacement offset, so a restore does not re-capture it from the
+  // already displaced nodes
+  for (int i = 0; i < 24; i++)
+    m_U0(i) = data(752 + i);
+  m_U0_initialized = data(776) > 0.0 ? true : false;
   int cnt = 11;
   for (int i = 0; i < 20; i++) {
     J[i] = data(cnt+i);
@@ -1998,4 +2023,31 @@ SSPbrick::Transpose(int d1, int d2, const Matrix &M)
   	}
 
   	return Mtran;
+}
+
+void
+SSPbrick::captureInitialDisp(void)
+{
+  for (int i = 0; i < 8; i++) {
+    const Vector &iDisp = theNodes[i]->getTrialDisp();
+    m_U0(3*i)     = iDisp(0);
+    m_U0(3*i + 1) = iDisp(1);
+    m_U0(3*i + 2) = iDisp(2);
+  }
+  m_U0_initialized = true;
+}
+
+void
+SSPbrick::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+SSPbrick::onDeactivate(void)
+{
 }

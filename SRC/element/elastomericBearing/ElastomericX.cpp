@@ -428,6 +428,11 @@ void ElastomericX::setDomain(Domain *theDomain)
         return;
     }
     
+    // Capture the initial displacement offset (see m_U0). Not done again after a
+    // recvSelf, which brings m_U0 in already captured.
+    if (!m_U0_initialized)
+        this->captureInitialDisp();
+    
     // call the base class method
     this->DomainComponent::setDomain(theDomain);
     
@@ -535,9 +540,10 @@ int ElastomericX::update()
     const Vector &vel2 = theNodes[1]->getTrialVel();
     
     static Vector ug(12), ugdot(12), uldot(12);
+    // displacements offset by the initial (artefact) ones; velocities are not
     for (int i=0; i<6; i++)  {
-        ug(i)   = dsp1(i);  ugdot(i)   = vel1(i);
-        ug(i+6) = dsp2(i);  ugdot(i+6) = vel2(i);
+        ug(i)   = dsp1(i) - m_U0(i);       ugdot(i)   = vel1(i);
+        ug(i+6) = dsp2(i) - m_U0(i+6);  ugdot(i+6) = vel2(i);
     }
     
     // transform response from the global to the local system
@@ -882,7 +888,7 @@ const Vector& ElastomericX::getResistingForceIncInertia()
 int ElastomericX::sendSelf(int commitTag, Channel &sChannel)
 {
     // send element parameters
-    static Vector data(23);
+    static Vector data(37);
     data(0)  = this->getTag();
     data(1)  = qYield;
     data(2)  = alpha;
@@ -906,6 +912,14 @@ int ElastomericX::sendSelf(int commitTag, Channel &sChannel)
     data(20) = tag2;
     data(21) = tag3;
     data(22) = tag4;
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 12; iu++)
+        data(23 + iu) = m_U0(iu);
+    data(35) = m_U0_initialized ? 1.0 : 0.0;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    data(36) = is_this_element_active ? 1.0 : 0.0;
     
     sChannel.sendVector(0, commitTag, data);
     
@@ -926,7 +940,7 @@ int ElastomericX::recvSelf(int commitTag, Channel &rChannel,
     FEM_ObjectBroker &theBroker)
 {
     // receive element parameters
-    static Vector data(23);
+    static Vector data(37);
     rChannel.recvVector(0, commitTag, data);
     this->setTag((int)data(0));
     
@@ -950,6 +964,14 @@ int ElastomericX::recvSelf(int commitTag, Channel &rChannel,
     tag2 = (int)data(20);
     tag3 = (int)data(21);
     tag4 = (int)data(22);
+    // initial displacement offset, so a restore does not re-capture it from the
+    // already displaced nodes
+    for (int iu = 0; iu < 12; iu++)
+        m_U0(iu) = data(23 + iu);
+    m_U0_initialized = data(35) > 0.0 ? true : false;
+    // activation state: an element deactivated before the transfer must come back
+    // deactivated
+    is_this_element_active = data(36) > 0.0 ? true : false;
     
     // receive the two end nodes
     rChannel.recvID(0, commitTag, connectedExternalNodes);
@@ -1375,4 +1397,31 @@ double ElastomericX::sgn(double x)
         return -1.0;
     else
         return 0.0;
+}
+
+void ElastomericX::captureInitialDisp(void)
+{
+    const Vector &dsp1 = theNodes[0]->getTrialDisp();
+    const Vector &dsp2 = theNodes[1]->getTrialDisp();
+    for (int i=0; i<6; i++)  {
+        m_U0(i)   = dsp1(i);
+        m_U0(i+6) = dsp2(i);
+    }
+    m_U0_initialized = true;
+}
+
+
+void ElastomericX::onActivate(void)
+{
+    // Re-capture the offset at the current configuration, so a staged bearing is born
+    // unstressed. setDomain() is deliberately NOT re-run: setUp() would rebuild Tgl from
+    // x and y after having already overwritten y with z cross x, and everything it
+    // computes comes from the nodal coordinates, which have not moved.
+    this->captureInitialDisp();
+    this->update();
+}
+
+
+void ElastomericX::onDeactivate(void)
+{
 }

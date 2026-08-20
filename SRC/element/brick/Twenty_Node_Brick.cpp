@@ -253,6 +253,12 @@ void  Twenty_Node_Brick::setDomain( Domain *theDomain )
 			return;
 		}
 	}
+
+	// Capture the initial displacement offset (see m_U0). Not done again after a
+	// recvSelf, which brings m_U0 in already captured.
+	if (!m_U0_initialized)
+	  this->captureInitialDisp();
+
 	this->DomainComponent::setDomain(theDomain);
 }
 
@@ -432,6 +438,8 @@ Twenty_Node_Brick::update()
 	static Matrix B(6, 3);
 	double volume = 0.;
 
+	// NOTE: u[][] below is dead - the strain is built from ul3 further down, which is
+	// where the m_U0 offset is applied. Anything reviving this array must subtract it too.
 	for (i = 0; i < nenu; i++) {
 	     const Vector &disp = nodePointers[i]->getTrialDisp();
 	     u[0][i] = disp(0);
@@ -486,12 +494,12 @@ Twenty_Node_Brick::update()
 
 			//BJ = computeB( j, shp ) ;
 
-			//nodal displacements
+			//nodal displacements, offset by the initial (artefact) ones
 			const Vector &ul = nodePointers[j]->getTrialDisp( ) ;
 			Vector ul3(3);
-			ul3(0) = ul(0);
-			ul3(1) = ul(1);
-			ul3(2) = ul(2);
+			ul3(0) = ul(0) - m_U0(3*j);
+			ul3(1) = ul(1) - m_U0(3*j + 1);
+			ul3(2) = ul(2) - m_U0(3*j + 2);
 			//compute the strain
 			//strain += (BJ*ul) ;
 			eps.addMatrixVector(1.0,B,ul3,1.0 ) ;
@@ -1451,6 +1459,25 @@ int  Twenty_Node_Brick::sendSelf (int commitTag, Channel &theChannel)
 
 
 
+	// Initial displacement offset plus the activation state. This element sends no Vector
+	// of its own, so one new message carries both; its ID is packed solid 0..74 and is left
+	// alone. Sent BEFORE the ID so the order matches recvSelf on a stream channel as well.
+	Vector dData(62);
+	for (int iu = 0; iu < 60; iu++)
+		dData(iu) = m_U0(iu);
+	dData(60) = m_U0_initialized ? 1.0 : 0.0;
+	dData(61) = is_this_element_active ? 1.0 : 0.0;
+
+	res += theChannel.sendVector(dataTag, commitTag, dData);
+
+	if (res < 0) {
+
+		opserr << "WARNING Twenty_Node_Brick::sendSelf() - " << this->getTag() << " failed to send Vector\n";
+
+		return res;
+
+	}
+
 	// Now quad sends the ids of its materials
 
 	int matDbTag;
@@ -1554,6 +1581,25 @@ int  Twenty_Node_Brick::recvSelf (int commitTag,
 	int dataTag = this->getDbTag();
 
 
+
+	// Initial displacement offset plus the activation state, see the matching block in
+	// sendSelf. Received BEFORE the ID, in the same order it was sent.
+	Vector dData(62);
+
+	res += theChannel.recvVector(dataTag, commitTag, dData);
+
+	if (res < 0) {
+
+		opserr << "WARNING Twenty_Node_Brick::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
+
+		return res;
+
+	}
+
+	for (int iu = 0; iu < 60; iu++)
+		m_U0(iu) = dData(iu);
+	m_U0_initialized = dData(60) > 0.0 ? true : false;
+	is_this_element_active = dData(61) > 0.0 ? true : false;
 
 	static ID idData(75);
 
@@ -2098,3 +2144,31 @@ Twenty_Node_Brick::Jacobian3d(int gaussPoint, double& xsj, int mode)
 
 
 
+
+void
+Twenty_Node_Brick::captureInitialDisp(void)
+{
+  for (int i = 0; i < 20; i++) {
+    const Vector &iDisp = nodePointers[i]->getTrialDisp();
+    m_U0(3*i) = iDisp(0);
+    m_U0(3*i + 1) = iDisp(1);
+    m_U0(3*i + 2) = iDisp(2);
+  }
+  m_U0_initialized = true;
+}
+
+void
+Twenty_Node_Brick::onActivate(void)
+{
+  // Re-capture the offset at the current configuration, so a staged element is born
+  // strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+  // from the nodal coordinates, which have not moved, and re-running it would also
+  // re-initialize the damping.
+  this->captureInitialDisp();
+  this->update();
+}
+
+void
+Twenty_Node_Brick::onDeactivate(void)
+{
+}

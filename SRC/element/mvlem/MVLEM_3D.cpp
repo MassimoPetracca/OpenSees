@@ -731,6 +731,11 @@ void MVLEM_3D::setDomain(Domain *theDomain)
 	K21 = (Eave * (Tave * Tave * Tave) * Lw * (NUelastic - 1.0)) / (180.0 * h * ((NUelastic * NUelastic) - 1.0)) - (Eave * h * (Tave * Tave * Tave)) / (36.0 * Lw * ((NUelastic * NUelastic) - 1.0));
 	K22 = -(Eave * (Tave * Tave * Tave) * (5.0 * (h * h) - NUelastic * (Lw * Lw) + (Lw * Lw))) / (45.0 * h * Lw * ((NUelastic * NUelastic) - 1.0));
 
+	// Capture the initial displacement offset (see m_U0). Not done again after a
+	// recvSelf, which brings m_U0 in from the wire already captured.
+	if (!m_U0_initialized)
+		this->captureInitialDisp();
+
 	// Determine the transformation matrix
 	setTransformationMatrix();
 
@@ -840,12 +845,12 @@ double * MVLEM_3D::computeCurrentStrain(void)
 	Vector dispL(24); // local cs
 	Vector dispL_inPlan2N(6); // local displacement vector of original 2-node 6DOF MVLEM formulation
 
-	// store nodal displacemnts in global cs in one vector
+	// store nodal displacemnts in global cs in one vector, offset by m_U0
 	for (int i = 0; i < 6; i++) {
-		dispG(i) = disp1(i);
-		dispG(i + 6) = disp2(i);
-		dispG(i + 12) = disp3(i);
-		dispG(i + 18) = disp4(i);
+		dispG(i) = disp1(i) - m_U0(i);
+		dispG(i + 6) = disp2(i) - m_U0(i + 6);
+		dispG(i + 12) = disp3(i) - m_U0(i + 12);
+		dispG(i + 18) = disp4(i) - m_U0(i + 18);
 	}
 
 	// transform nodal displacements from global to local cs
@@ -2243,12 +2248,12 @@ const Vector & MVLEM_3D::getResistingForce()
 	Vector dispG(24); // global cs
 	Vector dispL(24); // local cs
 
-	// Assigning all displacements in global CS into one vector
+	// Assigning all displacements in global CS into one vector, offset by m_U0
 	for (int i = 0; i < 6; i++) {
-		dispG(i) = disp1(i);
-		dispG(i + 6) = disp2(i);
-		dispG(i + 12) = disp3(i);
-		dispG(i + 18) = disp4(i);
+		dispG(i) = disp1(i) - m_U0(i);
+		dispG(i + 6) = disp2(i) - m_U0(i + 6);
+		dispG(i + 12) = disp3(i) - m_U0(i + 12);
+		dispG(i + 18) = disp4(i) - m_U0(i + 18);
 	}
 
 	// Convert nodal displacements from global to local cs
@@ -2385,6 +2390,8 @@ int MVLEM_3D::sendSelf(int commitTag, Channel &theChannel)
 	idata(3) = externalNodes(2);
 	idata(4) = externalNodes(3);
 	idata(5) = m;
+	// activation state: an element deactivated before the transfer must come back deactivated
+	idata(6) = is_this_element_active ? 1 : 0;
 
 	res = theChannel.sendID(dataTag, commitTag, idata);
 	if (res < 0) {
@@ -2430,12 +2437,15 @@ int MVLEM_3D::sendSelf(int commitTag, Channel &theChannel)
 	}
 	
 
-	Vector data(4 + 3*m);
+	Vector data(4 + 3*m + 25);
 
 	data(3*m) = density;
 	data(3*m+1) = c;
 	data(3*m+2) = NUelastic;
 	data(3*m+3) = Tfactor;
+	for (int i = 0; i < 24; i++)
+	  data(3*m+4+i) = m_U0(i);
+	data(3*m+28) = m_U0_initialized ? 1.0 : 0.0;
 	for (int i = 0; i < m; i++) {
 	  data(i) = b[i];
 	  data(i+m) = t[i];
@@ -2494,6 +2504,8 @@ int MVLEM_3D::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &the
 	externalNodes(2) = idata(3);
 	externalNodes(3) = idata(4);		
 	m = idata(5);	
+	// activation state: an element deactivated before the transfer must come back deactivated
+	is_this_element_active = idata(6) == 1 ? true : false;
 
 	ID idData(2 + 4*m);
 	
@@ -2503,7 +2515,7 @@ int MVLEM_3D::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &the
 	  return -2;
 	}
 
-	Vector data(4 + 3*m);
+	Vector data(4 + 3*m + 25);
 
 	res += theChannel.recvVector(dataTag, commitTag, data);
 	if (res < 0) {
@@ -2515,6 +2527,9 @@ int MVLEM_3D::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &the
 	c = data(3*m+1);
 	NUelastic = data(3*m+2);
 	Tfactor = data(3*m+3);
+	for (int i = 0; i < 24; i++)
+	  m_U0(i) = data(3*m+4+i);
+	m_U0_initialized = data(3*m+28) > 0.0 ? true : false;
 	
 	if (theMaterialsConcrete == 0) {
 	  // Allocate new materials
@@ -3326,4 +3341,34 @@ void  MVLEM_3D::setTransformationMatrix(void) {
 		T(j + 2, j + 2) = Zez;
 	}
 
+}
+
+void MVLEM_3D::captureInitialDisp(void)
+{
+	const Vector &iDisp1 = theNodes[0]->getTrialDisp();
+	const Vector &iDisp2 = theNodes[1]->getTrialDisp();
+	const Vector &iDisp3 = theNodes[2]->getTrialDisp();
+	const Vector &iDisp4 = theNodes[3]->getTrialDisp();
+
+	for (int i = 0; i < 6; i++) {
+		m_U0(i) = iDisp1(i);
+		m_U0(i + 6) = iDisp2(i);
+		m_U0(i + 12) = iDisp3(i);
+		m_U0(i + 18) = iDisp4(i);
+	}
+
+	m_U0_initialized = true;
+}
+
+void MVLEM_3D::onActivate(void)
+{
+	// Re-capture the offset at the current configuration, so a staged element is born
+	// strain free. setDomain() is deliberately NOT re-run: everything it computes comes
+	// from the nodal coordinates, which have not moved.
+	this->captureInitialDisp();
+	this->update();
+}
+
+void MVLEM_3D::onDeactivate(void)
+{
 }

@@ -410,13 +410,12 @@ Truss::setDomain(Domain *theDomain)
     if (dimension == 1) {
       double dx = end2Crd(0)-end1Crd(0);
 
-      if (useInitialDisp && initialDisp == 0) {
+      if (useInitialDisp && (initialDisp == 0 || m_force_capture_initial_disp)) {
 	double iDisp = end2Disp(0)-end1Disp(0);
 
 	if (iDisp != 0) {
-	  initialDisp = new double[1];
+	  if (initialDisp == 0) initialDisp = new double[1];
 	  initialDisp[0] = iDisp;
-	  dx += iDisp;
 	}
       }
       L = sqrt(dx*dx);
@@ -432,15 +431,13 @@ Truss::setDomain(Domain *theDomain)
       double dx = end2Crd(0)-end1Crd(0);
       double dy = end2Crd(1)-end1Crd(1);	
     
-      if (useInitialDisp && initialDisp == 0) {
+      if (useInitialDisp && (initialDisp == 0 || m_force_capture_initial_disp)) {
 	double iDispX = end2Disp(0)-end1Disp(0);
 	double iDispY = end2Disp(1)-end1Disp(1);
 	if (iDispX != 0 || iDispY != 0) {
-	  initialDisp = new double[2];
+	  if (initialDisp == 0) initialDisp = new double[2];
 	  initialDisp[0] = iDispX;
 	  initialDisp[1] = iDispY;
-	  dx += iDispX;
-	  dy += iDispY;
 	}
       }
       
@@ -460,18 +457,15 @@ Truss::setDomain(Domain *theDomain)
       double dy = end2Crd(1)-end1Crd(1);	
       double dz = end2Crd(2)-end1Crd(2);		
 
-      if (useInitialDisp && initialDisp == 0) {
+      if (useInitialDisp && (initialDisp == 0 || m_force_capture_initial_disp)) {
 	double iDispX = end2Disp(0)-end1Disp(0);
 	double iDispY = end2Disp(1)-end1Disp(1);      
 	double iDispZ = end2Disp(2)-end1Disp(2);      
 	if (iDispX != 0 || iDispY != 0 || iDispZ != 0) {
-	  initialDisp = new double[3];
+	  if (initialDisp == 0) initialDisp = new double[3];
 	  initialDisp[0] = iDispX;
 	  initialDisp[1] = iDispY;
 	  initialDisp[2] = iDispZ;
-	  dx += iDispX;
-	  dy += iDispY;
-	  dz += iDispZ;
 	}
       }
       
@@ -877,7 +871,7 @@ Truss::sendSelf(int commitTag, Channel &theChannel)
   // truss packs it's data into a Vector and sends this to theChannel
   // along with it's dbTag and the commitTag passed in the arguments
 
-  static Vector data(13);
+  static Vector data(14);
   data(0) = this->getTag();
   data(1) = dimension;
   data(2) = numDOF;
@@ -890,6 +884,8 @@ Truss::sendSelf(int commitTag, Channel &theChannel)
   int matDbTag = theMaterial->getDbTag();
   
   data(12) = useInitialDisp ? 1.0 : -1.0;
+  // activation state: an element deactivated before the transfer must come back deactivated
+  data(13) = is_this_element_active ? 1.0 : 0.0;
   if (useInitialDisp && initialDisp != 0) {
     for (int i=0; i<dimension; i++) {
       data[9+i] = initialDisp[i];
@@ -937,7 +933,7 @@ Truss::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   // truss creates a Vector, receives the Vector and then sets the 
   // internal data with the data in the Vector
 
-  static Vector data(13);
+  static Vector data(14);
   res = theChannel.recvVector(dataTag, commitTag, data);
   if (res < 0) {
     opserr <<"WARNING Truss::recvSelf() - failed to receive Vector\n";
@@ -953,6 +949,8 @@ Truss::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &theBroker)
   cMass = (int)data(8);
 
   useInitialDisp = data(12) > 0.0 ? true : false;
+  // activation state: an element deactivated before the transfer must come back deactivated
+  is_this_element_active = data(13) > 0.0 ? true : false;
   if (initialDisp != 0)
     delete [] initialDisp;
   if (useInitialDisp) {
@@ -1670,3 +1668,23 @@ Truss::commitSensitivity(int gradNumber, int numGrads)
 }
 
 // AddingSensitivity:END /////////////////////////////////////////////
+
+void
+Truss::onActivate(void)
+{
+    // Re-capture the initial displacement offset at the current configuration, so a
+    // staged element is born strain free:
+    //     strain = ((u2 - u1) - initialDisp) . cosX / L
+    // L and cosX come from the nodal coordinates alone and are NOT touched here: the
+    // offset is an artefact of the mesh being modelled undeformed, it must not move
+    // the reference configuration of a linear-kinematics element.
+    m_force_capture_initial_disp = true;
+    this->setDomain(this->getDomain());
+    m_force_capture_initial_disp = false;
+    this->update();
+}
+
+void
+Truss::onDeactivate(void)
+{
+}

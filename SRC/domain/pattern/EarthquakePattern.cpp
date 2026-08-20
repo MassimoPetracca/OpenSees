@@ -97,10 +97,16 @@ EarthquakePattern::applyLoad(double time)
     theNode->addInertiaLoadToUnbalance(*uDotDotG, 1.0);
   
 
+  // the element load vector of a deactivated element never reaches the
+  // assembled residual anyway (FE_Element gates that on Element::isActive),
+  // so this is about not paying for its mass matrix, and about keeping the
+  // force the element itself reports free of a ground motion it does not
+  // take part in
   ElementIter &theElements = theDomain->getElements();
   Element *theElement;
   while ((theElement = theElements()) != 0) 
-    theElement->addInertiaLoadToUnbalance(*uDotDotG);
+    if (theElement->isActive())
+      theElement->addInertiaLoadToUnbalance(*uDotDotG);
 }
     
 void 
@@ -141,6 +147,7 @@ EarthquakePattern::applyLoadSensitivity(double time)
   ElementIter &theElements = theDomain->getElements();
   Element *theElement;
   while ((theElement = theElements()) != 0) 
+    if (theElement->isActive())
 	theElement->addInertiaLoadSensitivityToUnbalance(*uDotDotG,  somethingRandomInMotions);
 }
     
