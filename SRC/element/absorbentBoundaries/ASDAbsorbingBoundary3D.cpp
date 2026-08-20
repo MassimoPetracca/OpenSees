@@ -35,6 +35,7 @@
 #include <Renderer.h>
 #include <Parameter.h>
 #include <TimeSeries.h>
+#include <NDMaterial.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -479,7 +480,8 @@ OPS_ASDAbsorbingBoundary3D(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDAbsorbingBoundary3D $tag $n1 $n2 $n3 $n4 $n5 $n6 $n7 $n8 $G $v $rho $btype <-fx $tsxTag> <-fy $tsyTag> <-fz $tszTag>\n";
+    const char* descr = "Want: element ASDAbsorbingBoundary3D $tag $n1 $n2 $n3 $n4 $n5 $n6 $n7 $n8 $G $v $rho $btype"
+        " <-fx $tsxTag> <-fy $tsyTag> <-fz $tszTag> <-mat $matTag>\n";
 
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs < 13) {
@@ -522,97 +524,61 @@ OPS_ASDAbsorbingBoundary3D(void)
     TimeSeries* fx = nullptr;
     TimeSeries* fy = nullptr;
     TimeSeries* fz = nullptr;
-    // only on bottom boundaries
-    if (bflag & BND_BOTTOM) {
-        numData = 1;
-        int tsTag = 0;
-        // util: get x
-        auto get_fx = [&numData, &tsTag, &fx, descr]() -> bool {
-            if (OPS_GetInt(&numData, &tsTag) != 0) {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Invalid integer for -fx optional time series.\n" << descr;
-                return false;
+    // optional ND material
+    NDMaterial* the_mat = nullptr;
+    // util for time series
+    auto get_ts = [descr](const char* name) -> TimeSeries* {
+        if (OPS_GetNumRemainingInputArgs() == 0) {
+            opserr << "ASDAbsorbingBoundary3D ERROR: missing parameter for " << name << " optional time series.\n" << descr;
+            return nullptr;
+        }
+        int numData = 1;
+        int tsTag;
+        if (OPS_GetInt(&numData, &tsTag) != 0) {
+            opserr << "ASDAbsorbingBoundary3D ERROR: Invalid integer for " << name << " optional time series.\n" << descr;
+            return nullptr;
+        }
+        TimeSeries* ts = OPS_getTimeSeries(tsTag);
+        if (ts == nullptr) {
+            opserr << "ASDAbsorbingBoundary3D ERROR: Cannot find " << name << " time series with id = " << tsTag << ".\n" << descr;
+            return ts;
+        }
+        return ts;
+    };
+    // parse optional
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char* type = OPS_GetString();
+        // ts only on bottom boundaries
+        if (bflag & BND_BOTTOM) {
+            if (strcmp(type, "-fx") == 0) {
+                fx = get_ts(type);
+                if (fx == nullptr) return nullptr;
             }
-            fx = OPS_getTimeSeries(tsTag);
-            if (fx == nullptr) {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Cannot find -fx time series with id = " << tsTag << ".\n" << descr;
-                return false;
+            else if (strcmp(type, "-fy") == 0) {
+                fy = get_ts(type);
+                if (fy == nullptr) return nullptr;
             }
-            return true;
-        };
-        // util: get y
-        auto get_fy = [&numData, &tsTag, &fy, descr]() -> bool {
-            if (OPS_GetInt(&numData, &tsTag) != 0) {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Invalid integer for -fy optional time series.\n" << descr;
-                return false;
-            }
-            fy = OPS_getTimeSeries(tsTag);
-            if (fy == nullptr) {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Cannot find -fy time series with id = " << tsTag << ".\n" << descr;
-                return false;
-            }
-            return true;
-        };
-        // util: get z
-        auto get_fz = [&numData, &tsTag, &fz, descr]() -> bool {
-            if (OPS_GetInt(&numData, &tsTag) != 0) {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Invalid integer for -fz optional time series.\n" << descr;
-                return false;
-            }
-            fz = OPS_getTimeSeries(tsTag);
-            if (fz == nullptr) {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Cannot find -fz time series with id = " << tsTag << ".\n" << descr;
-                return false;
-            }
-            return true;
-        };
-        // parse first
-        numArgs = OPS_GetNumRemainingInputArgs();
-        if (numArgs > 1) {
-            const char* key = OPS_GetString();
-            if (strcmp(key, "-fx") == 0) {
-                if (!get_fx()) return 0;
-            }
-            else if (strcmp(key, "-fy") == 0) {
-                if (!get_fy()) return 0;
-            }
-            else if (strcmp(key, "-fz") == 0) {
-                if (!get_fz()) return 0;
-            }
-            else {
-                opserr << "ASDAbsorbingBoundary3D ERROR: Invalid optional flag \"" << key << "\".\n" << descr;
-                return 0;
+            else if (strcmp(type, "-fz") == 0) {
+                fz = get_ts(type);
+                if (fz == nullptr) return nullptr;
             }
         }
-        // parse second and third
-        for (int i = 0; i < 2; ++i) {
-            numArgs = OPS_GetNumRemainingInputArgs();
-            if (numArgs > 1) {
-                const char* key = OPS_GetString();
-                if (strcmp(key, "-fx") == 0) {
-                    if (fx) {
-                        opserr << "ASDAbsorbingBoundary3D ERROR: -fx flag specified twice!.\n" << descr;
-                        return 0;
-                    }
-                    if (!get_fx()) return 0;
-                }
-                else if (strcmp(key, "-fy") == 0) {
-                    if (fy) {
-                        opserr << "ASDAbsorbingBoundary3D ERROR: -fy flag specified twice!.\n" << descr;
-                        return 0;
-                    }
-                    if (!get_fy()) return 0;
-                }
-                else if (strcmp(key, "-fz") == 0) {
-                    if (fz) {
-                        opserr << "ASDAbsorbingBoundary3D ERROR: -fz flag specified twice!.\n" << descr;
-                        return 0;
-                    }
-                    if (!get_fz()) return 0;
-                }
-                else {
-                    opserr << "ASDAbsorbingBoundary3D ERROR: Invalid optional flag \"" << key << "\".\n" << descr;
-                    return 0;
-                }
+        // on all boundaries
+        if (strcmp(type, "-mat") == 0) {
+            if (OPS_GetNumRemainingInputArgs() == 0) {
+                opserr << "ASDAbsorbingBoundary3D ERROR: missing parameter for -mat optional material.\n" << descr;
+                return nullptr;
+            }
+            int numData = 1;
+            int matTag;
+            if (OPS_GetInt(&numData, &matTag) != 0) {
+                opserr << "ASDAbsorbingBoundary3D ERROR: Invalid integer for -mat optional NDMaterial.\n" << descr;
+                return nullptr;
+            }
+            the_mat = OPS_getNDMaterial(matTag);
+            if (the_mat == nullptr) {
+                opserr << "ASDAbsorbingBoundary3D ERROR: Cannot find NDMaterial with id = " << matTag << ".\n" << descr;
+                return nullptr;
             }
         }
     }
@@ -622,7 +588,7 @@ OPS_ASDAbsorbingBoundary3D(void)
         iData[0], 
         iData[1], iData[2], iData[3], iData[4], iData[5], iData[6], iData[7], iData[8],
         dData[0], dData[1], dData[2], 
-        bflag, fx, fy, fz);
+        bflag, fx, fy, fz, the_mat);
 }
 
 ASDAbsorbingBoundary3D::ASDAbsorbingBoundary3D()
@@ -646,7 +612,8 @@ ASDAbsorbingBoundary3D::ASDAbsorbingBoundary3D(
     int btype,
     TimeSeries* actionx,
     TimeSeries* actiony,
-    TimeSeries* actionz)
+    TimeSeries* actionz,
+    NDMaterial* theMaterial)
 	: Element(tag, ELE_TAG_ASDAbsorbingBoundary3D)
     , m_G(G)
     , m_v(v)
@@ -670,6 +637,26 @@ ASDAbsorbingBoundary3D::ASDAbsorbingBoundary3D(
         m_tsy = actiony->getCopy();
     if (actionz)
         m_tsz = actionz->getCopy();
+
+    // copy materials
+    if (theMaterial) {
+        m_materials.resize(H8_GW.size());
+        for (std::size_t i = 0; i < H8_GW.size(); ++i) {
+            m_materials[i] = theMaterial->getCopy("ThreeDimensional");
+            if (m_materials[i] == nullptr) {
+                opserr << "ASDAbsorbingBoundary3D Error: failed to get a 3D copy of the input material\n";
+                exit(-1);
+            }
+        }
+        // get initial G, v and rho from material model
+        const Matrix& C0 = m_materials[0]->getInitialTangent();
+        m_G = C0(3, 3);
+        double lam = C0(0, 1);
+        m_v = lam / (2.0 * (lam + m_G));
+        m_rho = m_materials[0]->getRho();
+    }
+    m_G0 = m_G;
+    m_v0 = m_v;
 }
 
 ASDAbsorbingBoundary3D::~ASDAbsorbingBoundary3D()
@@ -681,6 +668,10 @@ ASDAbsorbingBoundary3D::~ASDAbsorbingBoundary3D()
         delete m_tsy;
     if (m_tsz)
         delete m_tsz;
+    for (auto& imat : m_materials) {
+        if (imat)
+            delete imat;
+    }
 }
 
 const char* ASDAbsorbingBoundary3D::getClassType(void) const
@@ -820,6 +811,9 @@ void ASDAbsorbingBoundary3D::setDomain(Domain* theDomain)
             m_ly = std::abs(N4.y - N0.y);
         }
 
+        // compute penalty value only once
+        penaltyFactor();
+
         // allocate initial displacement vector and also the static constraints
         m_U0.resize(m_num_dofs);
         m_U0.Zero();
@@ -880,9 +874,99 @@ int ASDAbsorbingBoundary3D::getNumDOF()
     return m_num_dofs;
 }
 
+int ASDAbsorbingBoundary3D::commitState()
+{
+    int res = 0;
+    for (NDMaterial* mat : m_materials)
+        res += mat->commitState();
+    return res;
+}
+
 int ASDAbsorbingBoundary3D::revertToLastCommit()
 {
-    return 0;
+    int res = 0;
+    for (NDMaterial* mat : m_materials)
+        res += mat->revertToLastCommit();
+    return res;
+}
+
+int ASDAbsorbingBoundary3D::revertToStart()
+{
+    int res = 0;
+    for (NDMaterial* mat : m_materials)
+        res += mat->revertToStart();
+    return res;
+}
+
+int ASDAbsorbingBoundary3D::update()
+{
+    // compute strain in the free-field colum if custom material are provided
+    int result = 0;
+
+    // skip horizontal boundary
+    if (m_boundary & BND_BOTTOM)
+        return result;
+
+    // skip if no custom material
+    if (m_materials.size() == 0)
+        return result;
+
+    // transformation vector for static condensation
+    const ID& T = ffMapping();
+
+    // get displacement
+    const Vector& U = getDisplacement(false); // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+    // H8 node matrix
+    static Matrix P(3, 8);
+    H8_nodeMatrix(m_nodes, P);
+
+    // other data
+    static Matrix dN(8, 3);
+    static Matrix J(3, 3);
+    static Matrix invJ(3, 3);
+    double detJ = 0.0;
+    static Matrix dNdX(8, 3);
+    static Matrix B(6, 24);
+    static Matrix BB;
+    BB.resize(6, m_num_dofs);
+    static Vector strain(6);
+
+    // gauss integration
+    for (int gauss_id = 0; gauss_id < H8_GW.size(); ++gauss_id) {
+
+        // quadrature data
+        double gx = H8_GX[gauss_id];
+        double gy = H8_GY[gauss_id];
+        double gz = H8_GZ[gauss_id];
+        double gw = H8_GW[gauss_id];
+
+        // shape function derivatives
+        H8_dN(gx, gy, gz, dN);
+        J.addMatrixProduct(0.0, P, dN, 1.0);
+        detJ = H8_det3(J);
+        J.Invert(invJ);
+        dNdX.addMatrixProduct(0.0, dN, invJ, 1.0);
+
+        // b-matrix of the h8
+        H8_Bmatrix(dNdX, B);
+
+        // condensate to obtain the b-matrix of the 4-node free-field
+        BB.Zero();
+        for (int j = 0; j < 24; ++j) {
+            int jj = T(j);
+            for (int i = 0; i < 6; ++i) {
+                BB(i, jj) += B(i, j);
+            }
+        }
+
+        // strain vector
+        strain.addMatrixVector(0.0, BB, U, 1.0);
+        result += m_materials[gauss_id]->setTrialStrain(strain);
+    }
+
+    // done
+    return result;
 }
 
 const Matrix& ASDAbsorbingBoundary3D::getTangentStiff(void)
@@ -895,11 +979,13 @@ const Matrix& ASDAbsorbingBoundary3D::getTangentStiff(void)
     // fill K matrix
     if (m_stage == Stage_StaticConstraint) {
         addKPenaltyStage0(K);
+        addKff(K, false);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        addKffToSoil(K, false);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
     }
     else {
         addKPenaltyStage1(K);
-        addKff(K);
-        addKffToSoil(K);
+        addKff(K, false);
+        addKffToSoil(K, false);
     }
 
     // done
@@ -908,7 +994,25 @@ const Matrix& ASDAbsorbingBoundary3D::getTangentStiff(void)
 
 const Matrix& ASDAbsorbingBoundary3D::getInitialStiff(void)
 {
-    return getTangentStiff();
+    // initialize matrix
+    static Matrix K;
+    K.resize(m_num_dofs, m_num_dofs);
+    K.Zero();
+
+    // fill K matrix
+    if (m_stage == Stage_StaticConstraint) {
+        addKPenaltyStage0(K);
+        addKff(K, true);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        addKffToSoil(K, true);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    }
+    else {
+        addKPenaltyStage1(K);
+        addKff(K, true);
+        addKffToSoil(K, true);
+    }
+
+    // done
+    return K;
 }
 
 const Matrix& ASDAbsorbingBoundary3D::getDamp(void)
@@ -960,6 +1064,8 @@ const Vector& ASDAbsorbingBoundary3D::getResistingForce()
     // fill R vector
     if (m_stage == Stage_StaticConstraint) {
         addRPenaltyStage0(R);
+        addRff(R);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        addRffToSoil(R);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
     }
     else {
         addRPenaltyStage1(R);
@@ -983,6 +1089,8 @@ const Vector& ASDAbsorbingBoundary3D::getResistingForceIncInertia()
     // fill R vector
     if (m_stage == Stage_StaticConstraint) {
         addRPenaltyStage0(R);
+        addRff(R); // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        addRffToSoil(R);  // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
     }
     else {
         addRPenaltyStage1(R);
@@ -1093,7 +1201,7 @@ int ASDAbsorbingBoundary3D::sendSelf(int commitTag, Channel& theChannel)
     // initialization flag
     idData(pos++) = static_cast<int>(m_initialized);
     // double data size (not known at compile-time)
-    int dsize = 6 + 2 * m_num_dofs;
+    int dsize = 10 + 2 * m_num_dofs;
     idData(pos++) = dsize;
 
     res += theChannel.sendID(dataTag, commitTag, idData);
@@ -1108,8 +1216,12 @@ int ASDAbsorbingBoundary3D::sendSelf(int commitTag, Channel& theChannel)
 
     pos = 0;
     vectData(pos++) = m_G;
+    vectData(pos++) = m_G0;
     vectData(pos++) = m_v;
+    vectData(pos++) = m_v0;
     vectData(pos++) = m_rho;
+    vectData(pos++) = m_sp;
+    vectData(pos++) = m_mp;
     vectData(pos++) = m_lx;
     vectData(pos++) = m_ly;
     vectData(pos++) = m_lz;
@@ -1233,8 +1345,12 @@ int ASDAbsorbingBoundary3D::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
 
     pos = 0;
     m_G = vectData(pos++);
+    m_G0 = vectData(pos++);
     m_v = vectData(pos++);
+    m_v0 = vectData(pos++);
     m_rho = vectData(pos++);
+    m_sp = vectData(pos++);
+    m_mp = vectData(pos++);
     m_lx = vectData(pos++);
     m_ly = vectData(pos++);
     m_lz = vectData(pos++);
@@ -1310,8 +1426,16 @@ int ASDAbsorbingBoundary3D::setParameter(const char** argv, int argc, Parameter&
         return param.addObject(4, this);
     }
 
-    // no valid parameter
-    return -1;
+    // try for all materials
+    int res = -1;
+    if (m_materials.size() > 0) {
+        for (int i = 0; i < 8; i++) {
+            int matRes = m_materials[i]->setParameter(argv, argc, param);
+            if (matRes != -1)
+                res = matRes;
+        }
+    }
+    return res;
 }
 
 int ASDAbsorbingBoundary3D::updateParameter(int parameterID, Information& info)
@@ -1448,13 +1572,14 @@ void ASDAbsorbingBoundary3D::addDisplacement(Vector& U)
     }
 }
 
-const Vector& ASDAbsorbingBoundary3D::getDisplacement()
+const Vector& ASDAbsorbingBoundary3D::getDisplacement(bool absorbing_relative)
 {
     static Vector U;
     U.resize(m_num_dofs);
     U.Zero();
     addDisplacement(U);
-    U.addVector(1.0, m_U0, -1.0);
+    if(absorbing_relative)
+        U.addVector(1.0, m_U0, -1.0);
     return U;
 }
 
@@ -1498,37 +1623,33 @@ void ASDAbsorbingBoundary3D::updateStage()
     m_stage = Stage_Absorbing;
 }
 
-void ASDAbsorbingBoundary3D::penaltyFactor(double& sp, double& mp)
+void ASDAbsorbingBoundary3D::penaltyFactor()
 {
     // get characteristic length
     double lch = std::cbrt(m_lx * m_ly * m_lz);
     // order of magnitude of the (approximate) max stiffness value
     // of an equivalent 3D solid element with this G
-    int oom = static_cast<int>(std::round(std::log10(m_G * lch)));
+    int oom = static_cast<int>(std::round(std::log10(m_G0 * lch)));
     // ideal power = oom + 8 (8 being half the number of significant digits of a double floating number)
     int psp = oom + 8;
     int pmp = oom + 3;
     // compute the penalty factor
-    sp = std::pow(10.0, psp);
-    mp = std::pow(10.0, pmp);
+    m_sp = std::pow(10.0, psp);
+    m_mp = std::pow(10.0, pmp);
 }
 
 void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
 {
     // Enforce constraints in stage = 0.
 
-    // penalty factor
-    double sp, mp;
-    penaltyFactor(sp, mp);
-
     if (m_boundary == BND_BOTTOM) { // 1
         for (int i = 0; i < 4; ++i) {
             // fix Uz (interior and exterior)
-            cfix(N_TOP[i], UZ, K, sp, m_dof_map);
-            cfix(N_BOTTOM[i], UZ, K, sp, m_dof_map);
+            cfix(N_TOP[i], UZ, K, m_sp, m_dof_map);
+            cfix(N_BOTTOM[i], UZ, K, m_sp, m_dof_map);
             // edof Ux and Uy (exterior->interior)
-            cedof(N_BOTTOM[i], N_TOP[i], UX, K, mp, m_dof_map);
-            cedof(N_BOTTOM[i], N_TOP[i], UY, K, mp, m_dof_map);
+            cedof(N_BOTTOM[i], N_TOP[i], UX, K, m_mp, m_dof_map);
+            cedof(N_BOTTOM[i], N_TOP[i], UY, K, m_mp, m_dof_map);
         }
     }
     else if (
@@ -1536,11 +1657,11 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
         (m_boundary == BND_RIGHT)) { // 3
         for (int i = 0; i < 4; ++i) {
             // fix Ux (interior and exterior)
-            cfix(N_SS[i], UX, K, sp, m_dof_map);
-            cfix(N_FF[i], UX, K, sp, m_dof_map);
+            cfix(N_SS[i], UX, K, m_sp, m_dof_map);
+            cfix(N_FF[i], UX, K, m_sp, m_dof_map);
             // edof Uy and Uz (exterior->interior)
-            cedof(N_FF[i], N_SS[i], UY, K, mp, m_dof_map);
-            cedof(N_FF[i], N_SS[i], UZ, K, mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UY, K, m_mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UZ, K, m_mp, m_dof_map);
         }
     }
     else if (
@@ -1548,11 +1669,11 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
         (m_boundary == BND_BACK)) { // 5
         for (int i = 0; i < 4; ++i) {
             // fix Uy (interior and exterior)
-            cfix(N_SS[i], UY, K, sp, m_dof_map);
-            cfix(N_FF[i], UY, K, sp, m_dof_map);
+            cfix(N_SS[i], UY, K, m_sp, m_dof_map);
+            cfix(N_FF[i], UY, K, m_sp, m_dof_map);
             // edof Ux and Uz (exterior->interior)
-            cedof(N_FF[i], N_SS[i], UX, K, mp, m_dof_map);
-            cedof(N_FF[i], N_SS[i], UZ, K, mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UX, K, m_mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UZ, K, m_mp, m_dof_map);
         }
     }
     else if (
@@ -1562,14 +1683,14 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
         (m_boundary == (BND_RIGHT | BND_BACK))) { // 9
         for (int i = 0; i < 2; ++i) {
             // fix Ux and Uy (interior)
-            cfix(NVE_IN[i], UX, K, sp, m_dof_map);
-            cfix(NVE_IN[i], UY, K, sp, m_dof_map);
+            cfix(NVE_IN[i], UX, K, m_sp, m_dof_map);
+            cfix(NVE_IN[i], UY, K, m_sp, m_dof_map);
             for (int j = 0; j < 3; ++j) {
                 // fix Ux and Uy (exterior)
-                cfix(NVE_OUT[i][j], UX, K, sp, m_dof_map);
-                cfix(NVE_OUT[i][j], UY, K, sp, m_dof_map);
+                cfix(NVE_OUT[i][j], UX, K, m_sp, m_dof_map);
+                cfix(NVE_OUT[i][j], UY, K, m_sp, m_dof_map);
                 // edof Uz (exterior->interior)
-                cedof(NVE_OUT[i][j], NVE_IN[i], UZ, K, mp, m_dof_map);
+                cedof(NVE_OUT[i][j], NVE_IN[i], UZ, K, m_mp, m_dof_map);
             }
         }
     }
@@ -1578,14 +1699,14 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
         (m_boundary == (BND_BOTTOM | BND_RIGHT))) { // 11
         for (int i = 0; i < 2; ++i) {
             // fix Ux and Uz (interior)
-            cfix(NHE_IN[i], UX, K, sp, m_dof_map);
-            cfix(NHE_IN[i], UZ, K, sp, m_dof_map);
+            cfix(NHE_IN[i], UX, K, m_sp, m_dof_map);
+            cfix(NHE_IN[i], UZ, K, m_sp, m_dof_map);
             for (int j = 0; j < 3; ++j) {
                 // fix Ux and Uz (exterior)
-                cfix(NHE_OUT[i][j], UX, K, sp, m_dof_map);
-                cfix(NHE_OUT[i][j], UZ, K, sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UX, K, m_sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UZ, K, m_sp, m_dof_map);
                 // edof Uy (exterior->interior)
-                cedof(NHE_OUT[i][j], NHE_IN[i], UY, K, mp, m_dof_map);
+                cedof(NHE_OUT[i][j], NHE_IN[i], UY, K, m_mp, m_dof_map);
             }
         }
     }
@@ -1594,14 +1715,14 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
         (m_boundary == (BND_BOTTOM | BND_BACK))) { // 13
         for (int i = 0; i < 2; ++i) {
             // fix Uy and Uz (interior)
-            cfix(NHE_IN[i], UY, K, sp, m_dof_map);
-            cfix(NHE_IN[i], UZ, K, sp, m_dof_map);
+            cfix(NHE_IN[i], UY, K, m_sp, m_dof_map);
+            cfix(NHE_IN[i], UZ, K, m_sp, m_dof_map);
             for (int j = 0; j < 3; ++j) {
                 // fix Uy and Uz (exterior)
-                cfix(NHE_OUT[i][j], UY, K, sp, m_dof_map);
-                cfix(NHE_OUT[i][j], UZ, K, sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UY, K, m_sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UZ, K, m_sp, m_dof_map);
                 // edof Ux (exterior->interior)
-                cedof(NHE_OUT[i][j], NHE_IN[i], UX, K, mp, m_dof_map);
+                cedof(NHE_OUT[i][j], NHE_IN[i], UX, K, m_mp, m_dof_map);
             }
         }
     }
@@ -1612,9 +1733,9 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage0(Matrix& K)
         (m_boundary == (BND_BOTTOM | BND_RIGHT | BND_BACK))) { // 17
         for (int i = 0; i < 8; ++i) {
             // fix ALL
-            cfix(i, UX, K, sp, m_dof_map);
-            cfix(i, UY, K, sp, m_dof_map);
-            cfix(i, UZ, K, sp, m_dof_map);
+            cfix(i, UX, K, m_sp, m_dof_map);
+            cfix(i, UY, K, m_sp, m_dof_map);
+            cfix(i, UZ, K, m_sp, m_dof_map);
         }
     }
 }
@@ -1627,21 +1748,17 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
     if (m_is_computing_reactions)
         return;
 
-    // penalty factor
-    double sp, mp;
-    penaltyFactor(sp, mp);
-
     // get displacement vector
     const Vector& U = getDisplacement();
 
     if (m_boundary == BND_BOTTOM) { // 1
         for (int i = 0; i < 4; ++i) {
             // fix Uz (interior and exterior)
-            cfix(N_TOP[i], UZ, R, U, sp, m_dof_map);
-            cfix(N_BOTTOM[i], UZ, R, U, sp, m_dof_map);
+            cfix(N_TOP[i], UZ, R, U, m_sp, m_dof_map);
+            cfix(N_BOTTOM[i], UZ, R, U, m_sp, m_dof_map);
             // edof Ux and Uy (exterior->interior)
-            cedof(N_BOTTOM[i], N_TOP[i], UX, R, U, mp, m_dof_map);
-            cedof(N_BOTTOM[i], N_TOP[i], UY, R, U, mp, m_dof_map);
+            cedof(N_BOTTOM[i], N_TOP[i], UX, R, U, m_mp, m_dof_map);
+            cedof(N_BOTTOM[i], N_TOP[i], UY, R, U, m_mp, m_dof_map);
         }
     }
     else if (
@@ -1649,11 +1766,11 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
         (m_boundary == BND_RIGHT)) { // 3
         for (int i = 0; i < 4; ++i) {
             // fix Ux (interior and exterior)
-            cfix(N_SS[i], UX, R, U, sp, m_dof_map);
-            cfix(N_FF[i], UX, R, U, sp, m_dof_map);
+            cfix(N_SS[i], UX, R, U, m_sp, m_dof_map);
+            cfix(N_FF[i], UX, R, U, m_sp, m_dof_map);
             // edof Uy and Uz (exterior->interior)
-            cedof(N_FF[i], N_SS[i], UY, R, U, mp, m_dof_map);
-            cedof(N_FF[i], N_SS[i], UZ, R, U, mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UY, R, U, m_mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UZ, R, U, m_mp, m_dof_map);
         }
     }
     else if (
@@ -1661,11 +1778,11 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
         (m_boundary == BND_BACK)) { // 5
         for (int i = 0; i < 4; ++i) {
             // fix Uy (interior and exterior)
-            cfix(N_SS[i], UY, R, U, sp, m_dof_map);
-            cfix(N_FF[i], UY, R, U, sp, m_dof_map);
+            cfix(N_SS[i], UY, R, U, m_sp, m_dof_map);
+            cfix(N_FF[i], UY, R, U, m_sp, m_dof_map);
             // edof Ux and Uz (exterior->interior)
-            cedof(N_FF[i], N_SS[i], UX, R, U, mp, m_dof_map);
-            cedof(N_FF[i], N_SS[i], UZ, R, U, mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UX, R, U, m_mp, m_dof_map);
+            cedof(N_FF[i], N_SS[i], UZ, R, U, m_mp, m_dof_map);
         }
     }
     else if (
@@ -1675,14 +1792,14 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
         (m_boundary == (BND_RIGHT | BND_BACK))) { // 9
         for (int i = 0; i < 2; ++i) {
             // fix Ux and Uy (interior)
-            cfix(NVE_IN[i], UX, R, U, sp, m_dof_map);
-            cfix(NVE_IN[i], UY, R, U, sp, m_dof_map);
+            cfix(NVE_IN[i], UX, R, U, m_sp, m_dof_map);
+            cfix(NVE_IN[i], UY, R, U, m_sp, m_dof_map);
             for (int j = 0; j < 3; ++j) {
                 // fix Ux and Uy (exterior)
-                cfix(NVE_OUT[i][j], UX, R, U, sp, m_dof_map);
-                cfix(NVE_OUT[i][j], UY, R, U, sp, m_dof_map);
+                cfix(NVE_OUT[i][j], UX, R, U, m_sp, m_dof_map);
+                cfix(NVE_OUT[i][j], UY, R, U, m_sp, m_dof_map);
                 // edof Uz (exterior->interior)
-                cedof(NVE_OUT[i][j], NVE_IN[i], UZ, R, U, mp, m_dof_map);
+                cedof(NVE_OUT[i][j], NVE_IN[i], UZ, R, U, m_mp, m_dof_map);
             }
         }
     }
@@ -1691,14 +1808,14 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
         (m_boundary == (BND_BOTTOM | BND_RIGHT))) { // 11
         for (int i = 0; i < 2; ++i) {
             // fix Ux and Uz (interior)
-            cfix(NHE_IN[i], UX, R, U, sp, m_dof_map);
-            cfix(NHE_IN[i], UZ, R, U, sp, m_dof_map);
+            cfix(NHE_IN[i], UX, R, U, m_sp, m_dof_map);
+            cfix(NHE_IN[i], UZ, R, U, m_sp, m_dof_map);
             for (int j = 0; j < 3; ++j) {
                 // fix Ux and Uz (exterior)
-                cfix(NHE_OUT[i][j], UX, R, U, sp, m_dof_map);
-                cfix(NHE_OUT[i][j], UZ, R, U, sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UX, R, U, m_sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UZ, R, U, m_sp, m_dof_map);
                 // edof Uy (exterior->interior)
-                cedof(NHE_OUT[i][j], NHE_IN[i], UY, R, U, mp, m_dof_map);
+                cedof(NHE_OUT[i][j], NHE_IN[i], UY, R, U, m_mp, m_dof_map);
             }
         }
     }
@@ -1707,14 +1824,14 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
         (m_boundary == (BND_BOTTOM | BND_BACK))) { // 13
         for (int i = 0; i < 2; ++i) {
             // fix Uy and Uz (interior)
-            cfix(NHE_IN[i], UY, R, U, sp, m_dof_map);
-            cfix(NHE_IN[i], UZ, R, U, sp, m_dof_map);
+            cfix(NHE_IN[i], UY, R, U, m_sp, m_dof_map);
+            cfix(NHE_IN[i], UZ, R, U, m_sp, m_dof_map);
             for (int j = 0; j < 3; ++j) {
                 // fix Uy and Uz (exterior)
-                cfix(NHE_OUT[i][j], UY, R, U, sp, m_dof_map);
-                cfix(NHE_OUT[i][j], UZ, R, U, sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UY, R, U, m_sp, m_dof_map);
+                cfix(NHE_OUT[i][j], UZ, R, U, m_sp, m_dof_map);
                 // edof Ux (exterior->interior)
-                cedof(NHE_OUT[i][j], NHE_IN[i], UX, R, U, mp, m_dof_map);
+                cedof(NHE_OUT[i][j], NHE_IN[i], UX, R, U, m_mp, m_dof_map);
             }
         }
     }
@@ -1725,9 +1842,9 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage0(Vector& R)
         (m_boundary == (BND_BOTTOM | BND_RIGHT | BND_BACK))) { // 17
         for (int i = 0; i < 8; ++i) {
             // fix ALL
-            cfix(i, UX, R, U, sp, m_dof_map);
-            cfix(i, UY, R, U, sp, m_dof_map);
-            cfix(i, UZ, R, U, sp, m_dof_map);
+            cfix(i, UX, R, U, m_sp, m_dof_map);
+            cfix(i, UY, R, U, m_sp, m_dof_map);
+            cfix(i, UZ, R, U, m_sp, m_dof_map);
         }
     }
 }
@@ -1742,15 +1859,11 @@ void ASDAbsorbingBoundary3D::addKPenaltyStage1(Matrix& K)
     if (!(m_boundary & BND_BOTTOM))
         return;
 
-    // penalty factor
-    double sp, mp;
-    penaltyFactor(sp, mp);
-
     // Fix Ux, Uy and Uz for all nodes not in the soil domain
     for (int i = 0; i < 4; ++i) {
-        cfix(N_BOTTOM[i], UX, K, sp, m_dof_map);
-        cfix(N_BOTTOM[i], UY, K, sp, m_dof_map);
-        cfix(N_BOTTOM[i], UZ, K, sp, m_dof_map);
+        cfix(N_BOTTOM[i], UX, K, m_sp, m_dof_map);
+        cfix(N_BOTTOM[i], UY, K, m_sp, m_dof_map);
+        cfix(N_BOTTOM[i], UZ, K, m_sp, m_dof_map);
     }
 }
 
@@ -1768,18 +1881,14 @@ void ASDAbsorbingBoundary3D::addRPenaltyStage1(Vector& R)
     if (m_is_computing_reactions)
         return;
 
-    // penalty factor
-    double sp, mp;
-    penaltyFactor(sp, mp);
-
     // get displacement vector
     const Vector& U = getDisplacement();
 
     // Fix Ux, Uy and Uz for all nodes not in the soil domain
     for (int i = 0; i < 4; ++i) {
-        cfix(N_BOTTOM[i], UX, R, U, sp, m_dof_map);
-        cfix(N_BOTTOM[i], UY, R, U, sp, m_dof_map);
-        cfix(N_BOTTOM[i], UZ, R, U, sp, m_dof_map);
+        cfix(N_BOTTOM[i], UX, R, U, m_sp, m_dof_map);
+        cfix(N_BOTTOM[i], UY, R, U, m_sp, m_dof_map);
+        cfix(N_BOTTOM[i], UZ, R, U, m_sp, m_dof_map);
     }
 }
 
@@ -1945,7 +2054,7 @@ const ID& ASDAbsorbingBoundary3D::ffMapping()
     return m;
 }
 
-void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
+void ASDAbsorbingBoundary3D::addKff(Matrix& K, bool initial, double scale)
 {
     // Add the stiffness matrix of the free-field column.
     // Only on vertical boundaries.
@@ -1956,6 +2065,9 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
     if (m_boundary & BND_BOTTOM)
         return;
 
+    // use material or elastic matrix
+    bool use_elastic = initial || (m_materials.size() == 0);
+
     // transformation vector for static condensation
     const ID& T = ffMapping();
 
@@ -1964,8 +2076,8 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
-    double mu = m_G;
-    double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
+    double mu = m_G0;
+    double lam = 2.0 * mu * m_v0 / (1.0 - 2.0 * m_v0);
     static Matrix E(6, 6);
     H8_C0(lam, mu, E);
 
@@ -2009,7 +2121,8 @@ void ASDAbsorbingBoundary3D::addKff(Matrix& K, double scale)
 
         // integrate
         double dV = detJ * gw * scale;
-        K.addMatrixTripleProduct(1.0, BB, E, dV);
+        const Matrix& C = use_elastic ? E : m_materials[gauss_id]->getTangent();
+        K.addMatrixTripleProduct(1.0, BB, C, dV);
     }
 }
 
@@ -2021,19 +2134,22 @@ void ASDAbsorbingBoundary3D::addRff(Vector& R)
     if (m_boundary & BND_BOTTOM)
         return;
 
+    // use material or elastic matrix
+    bool use_elastic = (m_materials.size() == 0);
+
     // transformation vector for static condensation
     const ID& T = ffMapping();
 
     // get displacement
-    const Vector& U = getDisplacement();
+    const Vector& U = getDisplacement(false); // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     // H8 node matrix
     static Matrix P(3, 8);
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
-    double mu = m_G;
-    double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
+    double mu = m_G0;
+    double lam = 2.0 * mu * m_v0 / (1.0 - 2.0 * m_v0);
     static Matrix E(6, 6);
     H8_C0(lam, mu, E);
 
@@ -2077,15 +2193,18 @@ void ASDAbsorbingBoundary3D::addRff(Vector& R)
             }
         }
 
-        // strain vector
-        strain.addMatrixVector(0.0, BB, U, 1.0);
+        // strain and stress vector
+        if (use_elastic) {
+            strain.addMatrixVector(0.0, BB, U, 1.0);
+            stress.addMatrixVector(0.0, E, strain, 1.0);
+        }
 
-        // stress vector
-        stress.addMatrixVector(0.0, E, strain, 1.0);
+        // stress to use
+        const Vector& S = use_elastic ? stress : m_materials[gauss_id]->getStress();
 
         // integrate
         double dV = detJ * gw;
-        R.addMatrixTransposeVector(1.0, BB, stress, dV);
+        R.addMatrixTransposeVector(1.0, BB, S, dV);
     }
 }
 
@@ -2163,7 +2282,7 @@ const Matrix& ASDAbsorbingBoundary3D::computeNmatrix()
     return N;
 }
 
-void ASDAbsorbingBoundary3D::addKffToSoil(Matrix& K)
+void ASDAbsorbingBoundary3D::addKffToSoil(Matrix& K, bool initial)
 {
     // Add the stiffness matrix of the forces transferred from the
     // free-field column to the soil domain.
@@ -2173,6 +2292,9 @@ void ASDAbsorbingBoundary3D::addKffToSoil(Matrix& K)
     if (m_boundary & BND_BOTTOM)
         return;
 
+    // use material or elastic matrix
+    bool use_elastic = initial || (m_materials.size() == 0);
+
     // transformation vector for static condensation
     const ID& T = ffMapping();
 
@@ -2181,8 +2303,8 @@ void ASDAbsorbingBoundary3D::addKffToSoil(Matrix& K)
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
-    double mu = m_G;
-    double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
+    double mu = m_G0;
+    double lam = 2.0 * mu * m_v0 / (1.0 - 2.0 * m_v0);
     static Matrix E(6, 6);
     H8_C0(lam, mu, E);
 
@@ -2229,7 +2351,8 @@ void ASDAbsorbingBoundary3D::addKffToSoil(Matrix& K)
         }
 
         // K += N*E*BB
-        NE.addMatrixProduct(0.0, N, E, 1.0);
+        const Matrix& C = use_elastic ? E : m_materials[gauss_id]->getTangent();
+        NE.addMatrixProduct(0.0, N, C, 1.0);
         K.addMatrixProduct(1.0, NE, BB, 1.0);
     }
 }
@@ -2244,19 +2367,22 @@ void ASDAbsorbingBoundary3D::addRffToSoil(Vector& R)
     if (m_boundary & BND_BOTTOM)
         return;
 
+    // use material or elastic matrix
+    bool use_elastic = (m_materials.size() == 0);
+
     // transformation vector for static condensation
     const ID& T = ffMapping();
 
     // get displacement
-    const Vector& U = getDisplacement();
+    const Vector& U = getDisplacement(false); // $TOT <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     // H8 node matrix
     static Matrix P(3, 8);
     H8_nodeMatrix(m_nodes, P);
 
     // elasticity constants
-    double mu = m_G;
-    double lam = 2.0 * mu * m_v / (1.0 - 2.0 * m_v);
+    double mu = m_G0;
+    double lam = 2.0 * mu * m_v0 / (1.0 - 2.0 * m_v0);
     static Matrix E(6, 6);
     H8_C0(lam, mu, E);
 
@@ -2301,14 +2427,17 @@ void ASDAbsorbingBoundary3D::addRffToSoil(Vector& R)
             }
         }
 
-        // strain vector
-        strain.addMatrixVector(0.0, BB, U, 1.0);
+        // strain and stress vector
+        if (use_elastic) {
+            strain.addMatrixVector(0.0, BB, U, 1.0);
+            stress.addMatrixVector(0.0, E, strain, 1.0);
+        }
 
-        // stress vector
-        stress.addMatrixVector(0.0, E, strain, 1.0);
+        // stress to use
+        const Vector& S = use_elastic ? stress : m_materials[gauss_id]->getStress();
 
         // integrate
-        R.addMatrixVector(1.0, N, stress, 1.0);
+        R.addMatrixVector(1.0, N, S, 1.0);
     }
 }
 
@@ -2342,7 +2471,7 @@ void ASDAbsorbingBoundary3D::addCff(Matrix& C)
 
     // stiffness proportional term
     if (beta != 0.0) {
-        addKff(C, beta);
+        addKff(C, true, beta);
     }
 }
 
@@ -2372,7 +2501,7 @@ void ASDAbsorbingBoundary3D::addRCff(Vector& R)
 
     // stiffness proportional term
     if (beta != 0.0) {
-        addKff(C, beta);
+        addKff(C, true, beta);
     }
 
     // get velocity vector
