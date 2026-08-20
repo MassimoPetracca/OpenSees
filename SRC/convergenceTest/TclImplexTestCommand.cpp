@@ -56,10 +56,12 @@
 #include <classTags.h>
 
 #ifdef _PARALLEL_PROCESSING
-#include <Domain.h>
+#include <PartitionedDomain.h>
 #include <Subdomain.h>
 #include <SubdomainIter.h>
-extern Domain theDomain;
+// must match the definition in commands.cpp: under _PARALLEL_PROCESSING the
+// global domain is a PartitionedDomain, and getSubdomains() only exists there
+extern PartitionedDomain theDomain;
 #endif
 
 // the analysis state of commands.cpp. This command replaces the installed
