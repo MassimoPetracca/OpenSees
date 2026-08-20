@@ -19,6 +19,7 @@ target_sources(OPS_ConvergenceTest
     CTestRelativeTotalNormDispIncr.cpp
     NormDispAndUnbalance.cpp
     NormDispOrUnbalance.cpp
+    CTestImplexWrapper.cpp
   PUBLIC
     ConvergenceTest.h
     CTestNormUnbalance.h
@@ -31,6 +32,7 @@ target_sources(OPS_ConvergenceTest
     CTestRelativeTotalNormDispIncr.h
     NormDispAndUnbalance.h
     NormDispOrUnbalance.h
+    CTestImplexWrapper.h
 )
 
 target_sources(OPS_PFEM

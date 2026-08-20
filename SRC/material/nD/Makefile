@@ -101,7 +101,9 @@ OBJS       = NDMaterial.o \
 	ElasticOrthotropicPlaneStress.o \
 	VonPapaDamage.o \
 	ASDConcrete3DMaterial.o \
-	TIMSoilAbutment3D.o
+	TIMSoilAbutment3D.o \
+	ASDPlasticDamageConcrete3DMaterial.o \
+	ASDConcrete3DMaterial.o
 
 
 all: $(OBJS) 

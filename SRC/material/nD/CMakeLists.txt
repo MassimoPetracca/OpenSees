@@ -84,6 +84,7 @@ target_sources(OPS_Material
     VonPapaDamage.cpp
     ASDConcrete3DMaterial.cpp
     TIMSoilAbutment3D.cpp
+    ASDPlasticDamageConcrete3DMaterial.cpp
   PUBLIC
     NDMaterial.h
     BeamFiberMaterial.h
@@ -163,6 +164,7 @@ target_sources(OPS_Material
     VonPapaDamage.h
     ASDConcrete3DMaterial.h
     TIMSoilAbutment3D.h
+    ASDPlasticDamageConcrete3DMaterial.h
 )
 
 target_include_directories(OPS_Material PUBLIC ${CMAKE_CURRENT_LIST_DIR})

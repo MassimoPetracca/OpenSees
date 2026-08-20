@@ -31,6 +31,8 @@
 #define ASDConcrete1DMaterial_h
 
 #include <UniaxialMaterial.h>
+#include <ASDHardeningLaw.h>
+#include <IMPLEXManager.h>
 #include <Vector.h>
 #include <Matrix.h>
 #include <cmath>
@@ -38,132 +40,33 @@
 #include <vector>
 #include <map>
 
-class ASDConcrete1DMaterial : public UniaxialMaterial
+class ASDConcrete1DMaterial : public UniaxialMaterial, public IMPLEXObject
 {
 public:
 	// sub-classes
 
-	// A point in the hardening law
-	struct HardeningLawPoint {
-		double x = 0.0; // total strain
-		double y = 0.0; // final backbone stress (plasticity & damage)
-		double d = 0.0; // damage variable
-		double q = 0.0; // backbone stress in the effective-stress space (plasticity only)
-		HardeningLawPoint() = default;
-		HardeningLawPoint(double _x, double _y, double _d, double _q)
-			: x(_x), y(_y), d(_d), q(_q) {}
-		inline double totalStrain()const { return x; }
-		inline double plasticStrain(double E)const { return x - q / E; }
-		inline double stress()const { return y; }
-		inline double effectiveStress()const { return q; }
-		inline double elasticStress(double E) const { return E * x; }
-		inline double crackingDamage()const { return d; }
-	};
+	// The hardening law, its points and its enumerations are SHARED with the
+	// other ASD materials, see ASDHardeningLaw.h. These aliases keep the
+	// nested names this class has always exposed.
+	using HardeningLawPoint = ASDHardeningLawPoint;
+	using HardeningLawType = ASDHardeningLawType;
+	using HardeningLawPointComponent = ASDHardeningLawPointComponent;
+	using HardeningLaw = ASDHardeningLaw;
 
-	// The Hardening Law Type
-	enum class HardeningLawType {
-		Tension = 0,
-		Compression
-	};
-
-	// The Hardening Law Point Component (for output)
-	enum class HardeningLawPointComponent {
-		TotalStrain = 0,
-		EffectiveStress,
-		NominalStress
-	};
-
-	// The Hardening law
-	class HardeningLaw {
-	public:
-		// default constructor
-		HardeningLaw() = default;
-		// full constructor
-		HardeningLaw(
-			int tag, HardeningLawType type,
-			double E,
-			const std::vector<double>& x,
-			const std::vector<double>& y,
-			const std::vector<double>& d);
-
-		// regularizes the hardening curve according to the 'lch'
-		// characteristic length of the parent element, and the 'lch_ref'
-		// characteristic length of the input hardening curve
-		void regularize(double lch, double lch_ref);
-		// nullify previous regularization
-		void deRegularize();
-		// evaluate the hardening law at a certain strain
-		HardeningLawPoint evaluateAt(double x) const;
-		// get max stress value
-		double computeMaxStress() const;
-		// serialization
-		int serializationDataSize() const;
-		void serialize(Vector& data, int& pos);
-		void deserialize(Vector& data, int& pos);
-		// properties
-		inline bool isValid() const { return m_valid; }
-		inline int tag()const { return m_tag; }
-		inline HardeningLawType type()const { return m_type; }
-		inline const std::vector<HardeningLawPoint>& points()const { return m_points; }
-		inline double strainTolerance()const { return m_xtolerance; }
-		inline double stressTolerance()const { return m_ytolerance; }
-		inline bool hasStrainSoftening()const { return m_fracture_energy_is_bounded; }
-		inline double strainAtOnsetOfCrack()const {
-			if (m_fracture_energy_is_bounded && m_softening_begin < m_points.size())
-				return m_points[m_softening_begin].totalStrain();
-			return 0.0;
-		}
-
-	private:
-		// adjusts the points
-		void adjust();
-		// computes the fracture energy of the hardening curve
-		void computeFractureEnergy();
-
-	private:
-		// tag (same as the parent material's tag)
-		int m_tag = 0;
-		// type
-		HardeningLawType m_type = HardeningLawType::Tension;
-		// the hardening points of the backbone curve in total-strain
-		std::vector<HardeningLawPoint> m_points;
-		// the fracture energy (computed only if there is softening)
-		double m_fracture_energy = 0.0;
-		// true if there is softening, false otherwise
-		bool m_fracture_energy_is_bounded = false;
-		// the location of the point in m_points where the softening begins
-		std::size_t m_softening_begin = 0;
-		// the location of the point in m_points where the softening ends
-		std::size_t m_softening_end = 0;
-		// false if the initialization (in constructor) fails, true otherwise
-		bool m_valid = false;
-		// tolerances
-		double m_xtolerance = 1.0e-12;
-		double m_ytolerance = 1.0e-12;
-	};
-
-	// The Hardening Law Storage. A static storage for original hardening laws
-	class HardeningLawStorage {
-	public:
-		using PointerType = std::shared_ptr<HardeningLaw>;
-		using MapType = std::map<int, PointerType>;
-
-	public:
-		HardeningLawStorage() = default;
-		HardeningLawStorage(const HardeningLawStorage&) = delete;
-		HardeningLawStorage& operator = (const HardeningLawStorage&) = delete;
-
-	public:
-		// Access to this singleton
-		static HardeningLawStorage& instance();
-		// store
-		void store(const HardeningLaw& hl);
-		// recover
-		PointerType recover(int tag, HardeningLawType type);
-
-	private:
-		MapType m_tension;
-		MapType m_compression;
+	// Everything the implicit pass of compute() can write. Saved and restored
+	// around the non-destructive measurement of the IMPL-EX error, so that a
+	// step that is measured and then rejected is a step that never happened.
+	// It has to be COMPLETE: revertToLastCommit() does not restore PT_commit,
+	// which is a committed quantity that the implicit pass overwrites.
+	struct TrialState {
+		double xt = 0.0;
+		double xc = 0.0;
+		double stress = 0.0;
+		double stress_eff = 0.0;
+		double C = 0.0;
+		double dt_bar = 0.0;
+		double dc_bar = 0.0;
+		double PT_commit = 0.5;
 	};
 
 public:
@@ -174,6 +77,7 @@ public:
 		double _eta,
 		bool _implex,
 		bool _implex_control,
+		bool _implex_abort_on_error,
 		double _implex_error_tolerance,
 		double _implex_time_reduction_limit,
 		double _implex_alpha,
@@ -217,9 +121,35 @@ public:
 	int getResponse(int responseID, Information& matInformation);
 	double getEnergy(void);
 
+	// IMPL-EX error control
+	double computeImplexErrorMetric(void);
+	double implexTimeRatio(void) const;
+
 private:
 	// internal computation
 	int compute(bool do_implex, bool do_tangent);
+	// the IMPL-EX error metric: the gap between the stress the extrapolated
+	// step DELIVERS and the one the implicit solution would carry at the same
+	// strain, over the largest stress this material can reach.
+	//
+	// It is NOT a difference of damage, which is what this material used to
+	// measure. A damage metric is blind - exactly, not approximately - to any
+	// error that moves the stress at FIXED damage, and the frozen sign switch
+	// of the split is exactly such an error: at the worst step of a measured
+	// run the effective stress, the plastic strain, both strain measures and
+	// both damage values are identical between the two passes, so the damage
+	// metric reads 0.000e+00, while the delivered stress is wrong by 11.6 MPa
+	// out of a 30 MPa strength. The legacy quantity survives as implex_gap,
+	// not used by the model, to price the difference.
+	// 'delivered', not 'stress_implex': that is the name of the member now, and a
+	// parameter shadowing it would read as the member to anyone skimming
+	double implexStressGap(double delivered, double stress_implicit) const;
+	// the legacy metric, kept for output only
+	double implexDamageGap(double dt_implex, double dc_implex,
+		double dt_implicit, double dc_implicit) const;
+	// save/restore everything the implicit pass writes
+	void saveTrialState(TrialState& x) const;
+	void restoreTrialState(const TrialState& x);
 	Vector getHardeningLawVector(HardeningLawType ltype, HardeningLawPointComponent c) const;
 	const Vector& getStrainMeasure() const;
 	const Vector& getDamage() const;
@@ -227,6 +157,8 @@ private:
 	const Vector& getCrackWidth() const;
 	const Vector& getCrushWidth() const;
 	const Vector& getImplexError() const;
+	const Vector& getImplexStress() const;
+	const Vector& getImplexGap() const;
 	const Vector& getTimeIncrements() const;
 
  private:
@@ -236,8 +168,19 @@ private:
 	 double eta = 0.0;
 	 // True = use the IMPL-EX algorithm
 	 bool implex = false;
-	 // True = keep IMPL-EX error under control
+	 // True = measure the IMPL-EX error at every setTrialStrain and publish it.
+	 // This is the LEGACY path: it pays one implicit solve per Newton
+	 // iteration, at strains that are not equilibrated yet. The measurement
+	 // the error control actually runs on is the one the convergence test
+	 // wrapper asks for, once per step, through computeImplexErrorMetric()
 	 bool implex_control = false;
+	 // True = let this material fail the step on its own when the IMPL-EX
+	 // error is over tolerance. OFF by default, and it should stay off: a
+	 // material that aborts owns a policy it cannot see the analysis to
+	 // choose, and the code it returns reaches the element as a material
+	 // failure rather than as a controlled rejection. Kept for the inputs
+	 // that were written against the old behaviour
+	 bool implex_abort_on_error = false;
 	 // Maximum allowed IMPL-EX error (default = 5%)
 	 double implex_error_tolerance = 0.05;
 	 // Minimum allowed time step reduction factor under which IMPL-EX error is not controlled anymore (default = 1%)
@@ -270,12 +213,23 @@ private:
 	 bool dtime_is_user_defined = false;
 	 bool commit_done = false;
 	 double implex_error = 0.0;
+	 // the legacy damage-based metric. Computed for output, never used by the
+	 // model and never compared against a tolerance
+	 double implex_gap = 0.0;
 	 double PT_commit = 0.5;
 	 // strain, stress and tangent
 	 double strain = 0.0;
 	 double strain_commit = 0.0;
 	 double stress = 0.0;
 	 double stress_commit = 0.0;
+	 // WHAT THE STEP DELIVERED TO THE ELEMENT, kept because it is otherwise
+	 // unobservable: under IMPL-EX commitState re-solves implicitly and installs
+	 // that answer over `stress`, so from outside - a recorder, a test - the
+	 // extrapolated stress is gone by the time anyone can ask. It is what the
+	 // error metric measures the distance from, and it used to live as a local
+	 // in the two places that measure. On the implicit path there is no
+	 // extrapolation and it equals `stress`
+	 double stress_implex = 0.0;
 	 double stress_eff = 0.0;
 	 double stress_eff_commit = 0.0;
 	 double C = 0.0;

@@ -3,6 +3,7 @@ target_sources(OPS_INTERPRETER
   PRIVATE
     DL_Interpreter.cpp
     OpenSeesCommands.cpp
+    OpenSeesImplexTestCommand.cpp
     OpenSeesUniaxialMaterialCommands.cpp
     OpenSeesElementCommands.cpp
     OpenSeesTimeSeriesCommands.cpp

@@ -587,6 +587,11 @@ void* OPS_NewtonHallM();
 void* OPS_Broyden();
 void* OPS_BFGS();
 
+/* OpenSeesImplexTestCommand.cpp */
+int OPS_ImplexCTest();
+// the analysis state, for the command files that live outside OpenSeesCommands.cpp
+OpenSeesCommands* OPS_GetOpenSeesCommands();
+
 //////////////////////////////////////////////////////
 
 // commands that changed or added:

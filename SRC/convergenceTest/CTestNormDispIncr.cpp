@@ -95,7 +95,7 @@ CTestNormDispIncr::~CTestNormDispIncr()
 ConvergenceTest* CTestNormDispIncr::getCopy(int iterations)
 {
     CTestNormDispIncr *theCopy ;
-    theCopy = new CTestNormDispIncr(this->tol, iterations, 0, this->nType, this->maxTol) ;
+    theCopy = new CTestNormDispIncr(this->tol, iterations, this->printFlag, this->nType, this->maxTol) ;
     
     theCopy->theSOE = this->theSOE ;
     

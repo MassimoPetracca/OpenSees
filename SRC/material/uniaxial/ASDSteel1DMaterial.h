@@ -33,6 +33,7 @@
 #include <UniaxialMaterial.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include <IMPLEXManager.h>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -40,7 +41,10 @@
 
 class ASDSteel1DMaterialPIMPL;
 
-class ASDSteel1DMaterial : public UniaxialMaterial
+// This material runs an IMPL-EX scheme, so it takes part in the IMPL-EX error
+// control: it registers itself, says when it took part in a step, and measures
+// its own extrapolation error when asked. See IMPLEXManager.h
+class ASDSteel1DMaterial : public UniaxialMaterial, public IMPLEXObject
 {
 public:
 	class InputParameters {
@@ -59,6 +63,11 @@ public:
 		// misc
 		bool implex = false;
 		bool implex_control = false;
+		// LEGACY: let the material itself fail the step when its own error is
+		// out of tolerance. Off by default, and it should stay off: a material
+		// that aborts owns a policy it cannot see the analysis to choose. The
+		// rejection belongs to the convergence test wrapper - see IMPLEXManager.h
+		bool implex_abort_on_error = false;
 		double implex_error_tolerance = 0.0;
 		double implex_time_redution_limit = 0.0;
 		bool auto_regularization = true;
@@ -75,8 +84,10 @@ public:
 		double max_iter = 0.0;
 		double tolU = 0.0;
 		double tolR = 0.0;
-		// counter
-		static constexpr int NDATA = 19;
+		// counter: MUST match the number of fields sendSelf/recvSelf write and
+		// read here. It said 19 while 22 were being written, so the vector was
+		// undersized and the tail of the parameters was landing past its end
+		static constexpr int NDATA = 23;
 	};
 
 public:
@@ -121,8 +132,25 @@ public:
 	int getResponse(int responseID, Information& matInformation);
 	double getEnergy(void);
 
+	// IMPL-EX error control (see IMPLEXManager.h)
+	double computeImplexErrorMetric(void);
+	double implexTimeRatio(void) const;
+
 private:
+	// THE response, in one place: the explicit (extrapolated) answer when
+	// do_implex is true, the implicit one when it is false. setTrialStrain, the
+	// commit correction and the error peek all go through here, so the two
+	// passes cannot drift apart - which is how the same step used to be written
+	// four times over, once per branch of buckling x implex
+	int computeResponse(bool do_implex);
 	int homogenize(bool do_implex);
+	// the largest stress this material can carry, the denominator of the metric
+	double stressReference(void) const;
+	// THE metric: a normalized stress gap
+	double implexStressGap(double delivered, double stress_implicit) const;
+	// a DIAGNOSTIC, not the metric: how far apart the two passes leave the RVE
+	// deformed shape. See the note on it in the .cpp
+	double implexDisplacementGap(const Vector& delivered, const Vector& implicit_u, bool elastic_layout) const;
 	const Vector& getBucklingIndicator() const;
 	const Vector& getDamage() const;
 	const Vector& getEqPlStrain() const;
@@ -130,6 +158,8 @@ private:
 	const Vector& getSteelResponse() const;
 	const Vector& getTimeIncrements() const;
 	const Vector& getImplexError() const;
+	const Vector& getImplexErrorU() const;
+	const Vector& getImplexStress() const;
 
 
  private:	
@@ -142,11 +172,17 @@ private:
 	 bool dtime_is_user_defined = false;
 	 bool commit_done = false;
 	 double implex_error = 0.0;
+	 // a DIAGNOSTIC kept next to the metric and never mixed into it: see
+	 // implexDisplacementGap()
+	 double implex_error_u = 0.0;
 	 // strain, stress and tangent (homogenized)
 	 double strain = 0.0;
 	 double strain_commit = 0.0;
 	 double stress = 0.0;
 	 double stress_commit = 0.0;
+	 // what the step DELIVERED: the extrapolated stress, recorded before the
+	 // commit correction overwrites 'stress' with the implicit one
+	 double stress_implex = 0.0;
 	 double C = 0.0;
 	 double stress_rve = 0.0;
 	 double stress_rve_commit = 0.0;

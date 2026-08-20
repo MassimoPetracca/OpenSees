@@ -28,6 +28,7 @@
 //
 
 #include <ASDConcrete3DMaterial.h>
+#include <ASDSpectralSplit.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
 #include <OPS_Globals.h>
@@ -107,199 +108,33 @@ namespace {
 	inline double Macauley(double X) { return X > 0.0 ? X : 0.0; }
 
 	/*
-	Taken from Eigen3 in Matrix class. We need it because we have to access eigenvectors.
-	#TODO: Should we extend it in Matrix class?
+	The 3x3 symmetric eigen-decomposition and the vj x vj x vj x vj projector used
+	to live here, 193 lines of them, copied out of Matrix::Eigen3 to reach the
+	eigenvectors that Matrix does not return. ASDPlasticDamageConcrete3D needs the
+	same two things, and a second copy is one too many: they now live once, in
+	ASDSpectralSplit.h. Read that file for the conventions (eigenvalues
+	DESCENDING, the Voigt order, what the shear columns of pjj carry).
+
+	normalize=false IS THE POINT OF THIS FORWARDER. The shared routine can
+	normalize its input, which fixes a real defect - the sweep threshold
+	`sm > 1.0e-8` is ABSOLUTE, so on a tensor smaller than that the loop never
+	runs and the bare diagonal comes back with V = I. This material has always run
+	without it and passing false keeps it bit-identical: measured on 48000 tensors
+	over six scales from 1e+6 down to 1e-12, random and near-degenerate,
+	eigenvalues eigenvectors and projectors all agree to 0.000e+00, every case.
+
+	Turning it on here would NOT be free, and not only near zero: normalizing also
+	makes that threshold relative, which at stress scale is LOOSER than the
+	absolute one it replaces. Same measurement, normalize=true: the eigenvalues
+	still agree to ~1e-15 relative but the eigenvectors move by up to 5e-8 at
+	scale 1e+6 and 30. So it is a separate decision with its own verification.
 	*/
-	int Eigen3(Vector& d, Matrix& v) {
-		if (v.noRows() != 3 || v.noCols() != 3 || d.Size() != 3)
-			return -1;
-
-		int     rot, its, i, j, k;
-		double  g, h, aij, sm, thresh, t, c, s, tau;
-
-		static Vector  a(3);
-		static Vector  b(3);
-		static Vector  z(3);
-
-		static const double tol = 1.0e-08;
-
-		//.... move array into one-d arrays
-		a(0) = v(0, 1);
-		a(1) = v(1, 2);
-		a(2) = v(2, 0);
-
-		for (i = 0; i < 3; i++) {
-			d(i) = v(i, i);
-			b(i) = v(i, i);
-			z(i) = 0.0;
-
-			for (j = 0; j < 3; j++)
-				v(i, j) = 0.0;
-
-			v(i, i) = 1.0;
-
-		} //end for i
-
-		rot = 0;
-		its = 0;
-
-		sm = fabs(a(0)) + fabs(a(1)) + fabs(a(2));
-
-		while (sm > tol) {
-			//.... set convergence test and threshold
-			if (its < 3)
-				thresh = 0.011 * sm;
-			else
-				thresh = 0.0;
-
-			//.... perform sweeps for rotations
-			for (i = 0; i < 3; i++) {
-
-				j = (i + 1) % 3;
-				k = (j + 1) % 3;
-
-				aij = a(i);
-
-				g = 100.0 * fabs(aij);
-
-				if (fabs(d(i)) + g != fabs(d(i)) ||
-					fabs(d(j)) + g != fabs(d(j))) {
-
-					if (fabs(aij) > thresh) {
-
-						a(i) = 0.0;
-						h = d(j) - d(i);
-
-						if (fabs(h) + g == fabs(h))
-							t = aij / h;
-						else {
-							//t = 2.0 * sign(h/aij) / ( fabs(h/aij) + sqrt(4.0+(h*h/aij/aij)));
-							double hDIVaij = h / aij;
-							if (hDIVaij > 0.0)
-								t = 2.0 / (hDIVaij + sqrt(4.0 + (hDIVaij * hDIVaij)));
-							else
-								t = -2.0 / (-hDIVaij + sqrt(4.0 + (hDIVaij * hDIVaij)));
-						}
-
-						//.... set rotation parameters
-
-						c = 1.0 / sqrt(1.0 + t * t);
-						s = t * c;
-						tau = s / (1.0 + c);
-
-						//.... rotate diagonal terms
-
-						h = t * aij;
-						z(i) = z(i) - h;
-						z(j) = z(j) + h;
-						d(i) = d(i) - h;
-						d(j) = d(j) + h;
-
-						//.... rotate off-diagonal terms
-
-						h = a(j);
-						g = a[k];
-						a(j) = h + s * (g - h * tau);
-						a(k) = g - s * (h + g * tau);
-
-						//.... rotate eigenvectors
-
-						for (k = 0; k < 3; k++) {
-							g = v(k, i);
-							h = v(k, j);
-							v(k, i) = g - s * (h + g * tau);
-							v(k, j) = h + s * (g - h * tau);
-						} // end for k
-
-						rot = rot + 1;
-
-					} // end if fabs > thresh 
-				} //else
-				else
-					a(i) = 0.0;
-
-			}  // end for i
-
-			//.... update the diagonal terms
-			for (i = 0; i < 3; i++) {
-				b(i) = b(i) + z(i);
-				d(i) = b(i);
-				z(i) = 0.0;
-			} // end for i
-
-			its += 1;
-
-			sm = fabs(a(0)) + fabs(a(1)) + fabs(a(2));
-
-		} //end while sm
-		
-		// sort in descending order (unrolled bubble sort)
-		auto sortij = [&d, &v](int i, int j) {
-			if (d(i) < d(j)) {
-				std::swap(d(i), d(j));
-				for (int k = 0; k < 3; ++k)
-					std::swap(v(k, i), v(k, j));
-			}
-		};
-		sortij(0, 1);
-		sortij(1, 2);
-		sortij(0, 1);
-
-		// done
-		return 0;
+	inline int Eigen3(Vector& d, Matrix& v)
+	{
+		return ASDSpectralSplit::eigen3(d, v, false);
 	}
 
-	/*
-	computes the vj x vj x vj x vj tensor in voigt notation
-	*/
-	void computePjj(const Matrix& V, int j, Matrix& pjj) {
-		double A1 = V(2, j) * V(2, j);
-		double A2 = V(1, j) * V(1, j);
-		double A3 = V(0, j) * V(0, j);
-		double A4 = V(2, j);
-		double A5 = V(0, j);
-		double A6 = V(1, j);
-		double A7 = 2.0 * A1 * A5 * A6;
-		double A8 = 2.0 * A3 * A4 * A6;
-		double A9 = 2.0 * A2 * A4 * A5;
-		double A10 = A1 * A2;
-		pjj(0, 0) = A3 * A3;
-		pjj(0, 1) = A2 * A3;
-		pjj(0, 2) = A1 * A3;
-		pjj(0, 3) = 2.0 * A3 * A5 * A6;
-		pjj(0, 4) = A8;
-		pjj(0, 5) = 2.0 * A3 * A4 * A5;
-		pjj(1, 0) = A2 * A3;
-		pjj(1, 1) = A2 * A2;
-		pjj(1, 2) = A10;
-		pjj(1, 3) = 2.0 * A2 * A5 * A6;
-		pjj(1, 4) = 2.0 * A2 * A4 * A6;
-		pjj(1, 5) = A9;
-		pjj(2, 0) = A1 * A3;
-		pjj(2, 1) = A10;
-		pjj(2, 2) = A1 * A1;
-		pjj(2, 3) = A7;
-		pjj(2, 4) = 2.0 * A1 * A4 * A6;
-		pjj(2, 5) = 2.0 * A1 * A4 * A5;
-		pjj(3, 0) = A3 * A5 * A6;
-		pjj(3, 1) = A2 * A5 * A6;
-		pjj(3, 2) = A1 * A5 * A6;
-		pjj(3, 3) = 2.0 * A2 * A3;
-		pjj(3, 4) = A9;
-		pjj(3, 5) = A8;
-		pjj(4, 0) = A3 * A4 * A6;
-		pjj(4, 1) = A2 * A4 * A6;
-		pjj(4, 2) = A1 * A4 * A6;
-		pjj(4, 3) = A9;
-		pjj(4, 4) = 2.0 * A1 * A2;
-		pjj(4, 5) = A7;
-		pjj(5, 0) = A3 * A4 * A5;
-		pjj(5, 1) = A2 * A4 * A5;
-		pjj(5, 2) = A1 * A4 * A5;
-		pjj(5, 3) = A8;
-		pjj(5, 4) = A7;
-		pjj(5, 5) = 2.0 * A1 * A3;
-	}
+	using ASDSpectralSplit::computePjj;
 
 	/**
 	global parameters storage
@@ -384,7 +219,7 @@ void *OPS_ASDConcrete3DMaterial(void)
 			"nDMaterial ASDConcrete3D $tag $E $v "
 			"-Te $Te -Ts $Ts <-Td $Td> -Ce $Ce -Cs $Cs <-Cd $Cd> "
 			"<-rho $rho> <-Kc $Kc>"
-			"<-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> <-implexAlpha $alpha>"
+			"<-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> <-implexAbort> <-implexAlpha $alpha>"
 			"<-cdf $cdf>"
 			"<-crackPlanes $nct $ncc $smoothingAngle>"
 			"<-eta $eta> <-tangent> <-autoRegularization $lch_ref>\n";
@@ -401,6 +236,7 @@ void *OPS_ASDConcrete3DMaterial(void)
 	double rho = 0.0;
 	bool implex = false;
 	bool implex_control = false;
+	bool implex_abort_on_error = false;
 	double implex_error_tolerance = 0.05;
 	double implex_time_redution_limit = 0.01;
 	double implex_alpha = 1.0;
@@ -532,6 +368,11 @@ void *OPS_ASDConcrete3DMaterial(void)
 				return nullptr;
 			if (!lam_optional_double("implexTimeReductionLimit", implex_time_redution_limit))
 				return nullptr;
+		}
+		else if (strcmp(value, "-implexAbort") == 0) {
+			// legacy: let the material fail the step by itself. See the note
+			// on implex_abort_on_error in the header
+			implex_abort_on_error = true;
 		}
 		else if (strcmp(value, "-implexAlpha") == 0) {
 			if (!lam_optional_double("alpha", implex_alpha))
@@ -767,7 +608,7 @@ void *OPS_ASDConcrete3DMaterial(void)
 	NDMaterial* instance = new ASDConcrete3DMaterial(
 		tag, 
 		E, v, rho, eta, Kc,
-		implex, implex_control, implex_error_tolerance, implex_time_redution_limit, implex_alpha,
+		implex, implex_control, implex_abort_on_error, implex_error_tolerance, implex_time_redution_limit, implex_alpha,
 		tangent, auto_regularization, lch_ref,
 		HT, HC,
 		cdf, nct, ncc, smoothing_angle);
@@ -864,429 +705,6 @@ void ASDConcrete3DMaterial::StressDecomposition::recompose(const Vector& S, Vect
 void ASDConcrete3DMaterial::StressDecomposition::recompose(Vector& Sv) const
 {
 	recompose(Si, Sv);
-}
-
-ASDConcrete3DMaterial::HardeningLaw::HardeningLaw(
-	int tag, HardeningLawType type,
-	double E,
-	const std::vector<double>& x, const std::vector<double>& y, const std::vector<double>& d)
-	: m_tag(tag)
-	, m_type(type)
-{
-	// initial checks
-	if (!(x.size() > 0 && x.size() == y.size() && x.size() == d.size())) {
-		opserr << "ASDConcrete3D Fatal Error: HardeningLaw::c-tor - found incompatible sizes.\n";
-		return;
-	}
-	// fill it
-	m_points.resize(x.size());
-	// make sure they are positive values
-	double xmax = 0.0;
-	double ymax = 0.0;
-	for (std::size_t i = 0; i < x.size(); ++i) {
-		auto& pi = m_points[i];
-		pi.x = std::abs(x[i]);
-		pi.y = std::abs(y[i]);
-		pi.d = std::min(1.0, std::max(0.0, d[i]));
-		xmax = std::max(xmax, pi.x);
-		ymax = std::max(ymax, pi.y);
-	}
-	if (xmax == 0.0) {
-		opserr << "ASDConcrete3D Fatal Error: HardeningLaw::c-tor - max(X) == 0 " << xmax << "\n";
-		return;
-	}
-	if (ymax == 0.0) {
-		opserr << "ASDConcrete3D Fatal Error: HardeningLaw::c-tor - max(Y) == 0 " << ymax << "\n";
-		return;
-	}
-	// check first values and, if needed, append (0,0,0)
-	if (m_points[0].x > 0.0) {
-		if (m_points[0].y == 0.0) {
-			// first x is > 0, y cannot be 0, so we set it to E*x
-			m_points[0].y = E * m_points[0].x;
-		}
-		else {
-			// ok, the user did not define the first point at (0,0), we make it
-			m_points.insert(m_points.begin(), HardeningLawPoint());
-		}
-	}
-	else {
-		// first x is 0, set y to zero as well
-		m_points[0].y = 0.0;
-	}
-	// make sure the first damage is 0!
-	m_points[0].d = 0.0;
-	// make sure the slope of the first 2 points is E (note p1 is now 0,0)
-	m_points[1].y = E * m_points[1].x;
-	// define tolerances: find the min(dx or dy) > 0
-	double dxmin = xmax;
-	double dymin = ymax;
-	for (std::size_t i = 1; i < m_points.size(); ++i) {
-		const auto& pi = m_points[i];
-		const auto& pold = m_points[i - 1];
-		double dx = std::abs(pi.x - pold.x);
-		double dy = std::abs(pi.y - pold.y);
-		if (dx > 0.0)
-			dxmin = std::min(dx, dxmin);
-		if (dy > 0.0)
-			dymin = std::min(dy, dymin);
-	}
-	m_xtolerance = 1.0e-6 * dxmin;
-	m_ytolerance = 1.0e-6 * dymin;
-	// make valid
-	m_valid = true;
-	// make a first adjustment
-	adjust();
-	// compute fracture energy. If the user selects the auto-regularization,
-	// this will store the real (non-regularized) fracture energy
-	computeFractureEnergy();
-	// store it
-	HardeningLawStorage::instance().store(*this);
-}
-
-void ASDConcrete3DMaterial::HardeningLaw::regularize(double lch, double lch_ref)
-{
-	// quick return if not valid
-	if (!m_valid)
-		return;
-	// quick return if un-bounded (inf fracture energy), or invalid lch
-	double lch_scale = lch > 0.0 ? lch_ref / lch : 0.0;
-	if (!m_fracture_energy_is_bounded || lch_scale <= 0.0 || lch_scale == 1.0)
-		return;
-	// back to original
-	deRegularize();
-	// the initial fracture energy has been computed in the full constructor, and we
-	// are back to it after deRegularize...
-	// compute the required specific fracture energy
-	double gnew = m_fracture_energy * lch_scale;
-	// compute the minimum fracture energy (in case lch is too large)
-	const auto& peak = m_points[m_softening_begin];
-	double gmin = (peak.y * peak.x / 2.0) * 1.01; // make it 1% larger to ensure a monotonically increasing abscissa
-	gnew = std::max(gnew, gmin);
-	// iteratively scale the curve until the gnew
-	double tol = 1.0e-3 * gnew;
-	double dscale = gnew / m_fracture_energy;
-	double E = m_points[1].y / m_points[1].x;
-	double x0 = peak.x;
-	double scale = dscale;
-	static constexpr int max_iter = 10;
-	for (int iter = 0; iter < max_iter; ++iter) {
-		// scale points after the peak
-		for (std::size_t i = m_softening_begin + 1; i < m_points.size(); ++i) {
-			auto& pi = m_points[i];
-			// save the plastic-to-inelastic ratio before
-			double xi_inel = std::max(pi.x - pi.y / E, 0.0);
-			double xi_pl = pi.x - pi.q / E;
-			double xi_ratio = xi_inel > 0.0 ? xi_pl / xi_inel : 0.0;
-			// update the total strain
-			pi.x = x0 + (pi.x - x0) * dscale;
-			// update damage to keep the same ratio
-			xi_inel = std::max(pi.x - pi.y / E, 0.0);
-			xi_pl = xi_inel * xi_ratio;
-			pi.q = E * (pi.x - xi_pl);
-			if(pi.q > 0)
-				pi.d = 1.0 - pi.y / pi.q;
-		}
-		// update g and check
-		adjust();
-		computeFractureEnergy();
-		if (std::abs(m_fracture_energy - gnew) < tol)
-			break;
-		// update scale
-		dscale = gnew / m_fracture_energy;
-		scale *= dscale;
-	}
-	// re-adjust.
-	adjust();
-}
-
-void ASDConcrete3DMaterial::HardeningLaw::deRegularize()
-{
-	auto source = HardeningLawStorage::instance().recover(m_tag, m_type);
-	if (source)
-		*this = *source;
-}
-
-ASDConcrete3DMaterial::HardeningLawPoint ASDConcrete3DMaterial::HardeningLaw::evaluateAt(double x) const
-{
-	// quick return
-	if (!m_valid)
-		return HardeningLawPoint();
-	// search for x
-	double x1, x2, y1, y2, q1, q2;
-	bool found = false;
-	for (std::size_t i = 1; i < m_points.size(); ++i) {
-		const auto& p1 = m_points[i - 1];
-		const auto& p2 = m_points[i];
-		if (x <= p2.x + m_xtolerance) {
-			x1 = p1.x;
-			x2 = p2.x;
-			y1 = p1.y;
-			y2 = p2.y;
-			q1 = p1.q;
-			q2 = p2.q;
-			found = true;
-			break;
-		}
-	}
-	if (!found) {
-		// we're beyond last point
-		x1 = m_points.back().x;
-		x2 = x;
-		double span = x - x1;
-		// interpolate last tangent if positive, otherwise keep constant
-		y1 = m_points.back().y;
-		double tangent = (y1 - m_points[m_points.size() - 2].y) / (x1 - m_points[m_points.size() - 2].x);
-		y2 = tangent > 0.0 ? y1 + span * tangent : y1;
-		// interpolate last tangent if positive, otherwise keep constant
-		q1 = m_points.back().q;
-		tangent = (q1 - m_points[m_points.size() - 2].q) / (x1 - m_points[m_points.size() - 2].x);
-		q2 = tangent > 0.0 ? q1 + span * tangent : q1;
-	}
-	// interpolate
-	double xspan = x2 - x1;
-	double xratio = xspan > 0.0 ? (x - x1) / xspan : 0.0;
-	double y = std::max(m_ytolerance, y1 + (y2 - y1) * xratio);
-	double q = std::max(m_ytolerance, q1 + (q2 - q1) * xratio);
-	double d = 1.0 - y / q;
-	// done
-	return HardeningLawPoint(x, y, d, q);
-}
-
-double ASDConcrete3DMaterial::HardeningLaw::computeMaxStress() const
-{
-	double smax = 0.0;
-	for (const auto& p : m_points) {
-		smax = std::max(smax, p.y);
-	}
-	return smax;
-}
-
-int ASDConcrete3DMaterial::HardeningLaw::serializationDataSize() const
-{
-	// number of points (variable, 4 components each)
-	int np = static_cast<int>(m_points.size());
-	// number of fixed data
-	int nn = 10;
-	// we need to save 2 copies
-	return (nn + np * 4) * 2;
-}
-
-void ASDConcrete3DMaterial::HardeningLaw::serialize(Vector& data, int& pos)
-{
-	// internal
-	auto lam = [&data, &pos] (HardeningLaw & x) {
-		data(pos++) = static_cast<double>(x.m_tag);
-		data(pos++) = static_cast<double>(static_cast<int>(x.m_type));
-		data(pos++) = static_cast<double>(x.m_points.size());
-		data(pos++) = x.m_fracture_energy;
-		data(pos++) = static_cast<double>(x.m_fracture_energy_is_bounded);
-		data(pos++) = static_cast<double>(x.m_softening_begin);
-		data(pos++) = static_cast<double>(x.m_softening_end);
-		data(pos++) = static_cast<double>(x.m_valid);
-		data(pos++) = x.m_xtolerance;
-		data(pos++) = x.m_ytolerance;
-		for (const auto& p : x.m_points) {
-			data(pos++) = p.x;
-			data(pos++) = p.y;
-			data(pos++) = p.d;
-			data(pos++) = p.q;
-		}
-	};
-	// save the current
-	lam(*this);
-	// save the original
-	HardeningLaw original(*this);
-	original.deRegularize();
-	lam(original);
-}
-
-void ASDConcrete3DMaterial::HardeningLaw::deserialize(Vector& data, int& pos)
-{
-	// internal
-	auto lam = [&data, &pos](HardeningLaw& x) {
-		x.m_tag = static_cast<int>(data(pos++));
-		x.m_type = static_cast<HardeningLawType>(static_cast<int>(data(pos++)));
-		x.m_points.resize(static_cast<std::size_t>(data(pos++)));
-		x.m_fracture_energy = data(pos++);
-		x.m_fracture_energy_is_bounded = static_cast<bool>(data(pos++));
-		x.m_softening_begin = static_cast<std::size_t>(data(pos++));
-		x.m_softening_end = static_cast<std::size_t>(data(pos++));
-		x.m_valid = static_cast<bool>(data(pos++));
-		x.m_xtolerance = data(pos++);
-		x.m_ytolerance = data(pos++);
-		for (auto& p : x.m_points) {
-			p.x = data(pos++);
-			p.y = data(pos++);
-			p.d = data(pos++);
-			p.q = data(pos++);
-		}
-	};
-	// recover the current
-	lam(*this);
-	// recover the original
-	HardeningLaw original;
-	lam(original);
-	// store if necessary
-	HardeningLawStorage::instance().store(original);
-}
-
-void ASDConcrete3DMaterial::HardeningLaw::adjust()
-{
-	// quick return
-	if (!m_valid)
-		return;
-	// get initial tangent
-	double E = m_points[1].y / m_points[1].x;
-	// check all points
-	for (std::size_t i = 1; i < m_points.size(); ++i) {
-		const auto& pold = m_points[i - 1];
-		auto& pi = m_points[i];
-		double xi = pi.x;
-		double xold = pold.x;
-		double yi = pi.y;
-		double yold = pold.y;
-		double di = pi.d;
-		double dold = pold.d;
-		// check: strictly monotonic x
-		if (xi <= xold)
-			xi += m_xtolerance;
-		// check yi is not exactly 0.0
-		if (yi < m_ytolerance)
-			yi = m_ytolerance;
-		// check tangent stifness is not higher than the initial
-		double Ei = (yi - yold) / (xi - xold); // denom > 0 < --strictly monotonic x
-		if (Ei > E)
-			yi = yold + (xi - xold) * E;
-		// check damage
-		// current plastic strain cannot be lower then the old one
-		double eepd_old = dold < 1.0 ? xold - yold / ((1.0 - dold) * E) : xold;
-		double eepd = di < 1.0 ? xi - yi / ((1.0 - di) * E) : -1.0;
-		if (eepd < eepd_old)
-			di = std::min(1.0, std::max(0.0, 1.0 - yi / E / (xi - eepd_old)));
-		// damage cannot decrease
-		if (di < dold)
-			di = dold;
-		// last check: make sure (1-d)*E is not < tangent (Ei)
-		Ei = (yi - yold) / (xi - xold);
-		double Ed = (1.0 - di) * E;
-		if (Ei > Ed)
-			yi = Ed * (xi - eepd_old);
-		// update
-		pi.x = xi;
-		pi.y = yi;
-		pi.d = di;
-		pi.q = yi / (1.0 - di);
-	}
-}
-
-void ASDConcrete3DMaterial::HardeningLaw::computeFractureEnergy()
-{
-	// initialize as un-bounded
-	m_fracture_energy = 0.0;
-	m_fracture_energy_is_bounded = false;
-	m_softening_begin = 0;
-	m_softening_end = 0;
-	// quick return
-	if (!m_valid)
-		return;
-	// find the first point where the slope is negative
-	std::size_t pos1 = 0;
-	bool pos1_found = false;
-	for (std::size_t i = 1; i < m_points.size(); ++i) {
-		const auto& p1 = m_points[i - 1];
-		const auto& p2 = m_points[i];
-		double k = (p2.y - p1.y) / (p2.x - p1.x);
-		if (k < 0.0) {
-			pos1 = i - 1;
-			pos1_found = true;
-			break;
-		}
-	}
-	// exit if not found -> infinite energy
-	if (!pos1_found)
-		return;
-	// find the last point where the slope is negative
-	std::size_t pos2 = 0;
-	bool pos2_found = false;
-	for (std::size_t i = pos1 + 1; i < m_points.size(); ++i) {
-		const auto& p1 = m_points[i - 1];
-		const auto& p2 = m_points[i];
-		double k = (p2.y - p1.y) / (p2.x - p1.x);
-		if (k >= 0.0) {
-			pos2 = i - 1;
-			pos2_found = true;
-			break;
-		}
-	}
-	// if the last point is not found, it means
-	// that we need to extend the last portion
-	double g_add = 0.0;
-	if (!pos2_found) {
-		const auto& p2 = m_points.back();
-		if (p2.y > 0.0) {
-			const auto& p1 = m_points[m_points.size() - 2];
-			double k = (p2.y - p1.y) / (p2.x - p1.x);
-			double x3 = p2.x - p2.y / k;
-			g_add = p2.y * (x3 - p2.x) / 2.0;
-		}
-		pos2 = m_points.size() - 1;
-	}
-	// now compute g
-	double g = 0.0;
-	// first add the initial triangle based on the unloading
-	// stiffness at the pos1 point
-	double E = m_points[1].y / m_points[1].x;
-	double Ed = (1.0 - m_points[pos1].d) * E;
-	g += (std::pow(m_points[pos1].y, 2) / Ed / 2.0);
-	// then add other components
-	for (std::size_t i = pos1 + 1; i <= pos2; ++i) {
-		const auto& p1 = m_points[i - 1];
-		const auto& p2 = m_points[i];
-		g += (p2.x - p1.x) * (p1.y + p2.y) / 2.0;
-	}
-	// finally add the final one
-	g += g_add;
-	// done. store values now
-	m_fracture_energy = g;
-	m_fracture_energy_is_bounded = true;
-	m_softening_begin = pos1;
-	m_softening_end = pos2;
-}
-
-ASDConcrete3DMaterial::HardeningLawStorage& ASDConcrete3DMaterial::HardeningLawStorage::instance()
-{
-	static HardeningLawStorage _instance;
-	return _instance;
-}
-
-void ASDConcrete3DMaterial::HardeningLawStorage::store(const HardeningLaw& hl)
-{
-	if (hl.type() == HardeningLawType::Tension) {
-		auto& item = m_tension[hl.tag()];
-		if (item == nullptr)
-			item = std::make_shared<HardeningLaw>(hl);
-	}
-	else {
-		auto& item = m_compression[hl.tag()];
-		if (item == nullptr)
-			item = std::make_shared<HardeningLaw>(hl);
-	}
-}
-
-ASDConcrete3DMaterial::HardeningLawStorage::PointerType ASDConcrete3DMaterial::HardeningLawStorage::recover(int tag, HardeningLawType type)
-{
-	if (type == HardeningLawType::Tension) {
-		auto it = m_tension.find(tag);
-		if (it != m_tension.end())
-			return it->second;
-	}
-	else {
-		auto it = m_compression.find(tag);
-		if (it != m_compression.end())
-			return it->second;
-	}
-	return nullptr;
 }
 
 ASDConcrete3DMaterial::CrackPlanesStorage& ASDConcrete3DMaterial::CrackPlanesStorage::instance()
@@ -1533,6 +951,7 @@ ASDConcrete3DMaterial::ASDConcrete3DMaterial(
 	double _Kc,
 	bool _implex,
 	bool _implex_control,
+	bool _implex_abort_on_error,
 	double _implex_error_tolerance,
 	double _implex_time_reduction_limit,
 	double _implex_alpha,
@@ -1553,6 +972,7 @@ ASDConcrete3DMaterial::ASDConcrete3DMaterial(
 	, Kc(_Kc)
 	, implex(_implex)
 	, implex_control(_implex_control)
+	, implex_abort_on_error(_implex_abort_on_error)
 	, implex_error_tolerance(_implex_error_tolerance)
 	, implex_time_redution_limit(_implex_time_reduction_limit)
 	, implex_alpha(_implex_alpha)
@@ -1609,6 +1029,10 @@ int ASDConcrete3DMaterial::setTrialStrain(const Vector& v)
 	// return value
 	int retval = 0;
 
+	// this material point takes part in the current step, so it takes part in
+	// the IMPL-EX error aggregate (see IMPLEXManager.h)
+	implexTouch();
+
 	// get characteristic length and perform regularization
 	if (!regularization_done) {
 		if (ops_TheActiveElement)
@@ -1660,23 +1084,35 @@ int ASDConcrete3DMaterial::setTrialStrain(const Vector& v)
 		strain = v;
 		if (implex) {
 			if (implex_control) {
-				// implicit solution
+				// LEGACY in-material measurement: an implicit solution first,
+				// to have something to compare against, then the extrapolated
+				// one, which is the answer that must reach the element.
+				// The error control does not need this: the convergence test
+				// wrapper measures once per step, through
+				// computeImplexErrorMetric(), instead of once per iteration
 				static Matrix aux = Matrix(6, 6);
+				static Vector stress_implicit(6);
 				aux = PT_commit;
 				double R_aux = R_commit;
 				retval = compute(false, false);
 				if (retval < 0) return retval;
+				stress_implicit = stress;
 				double dt_implicit = dt_bar;
 				double dc_implicit = dc_bar;
+				// the implicit pass has overwritten the frozen split: put it
+				// back before extrapolating, or the extrapolation is not the
+				// one this step would have taken. Nothing else needs restoring
+				// here, because compute() always restarts from the committed
+				// state
 				PT_commit = aux;
 				R_commit = R_aux;
 				// standard call 
 				retval = compute(true, true);
 				if (retval < 0) return retval;
-				double dt = dt_bar;
-				double dc = dc_bar;
-				implex_error = std::max(std::abs(dt - dt_implicit), std::abs(dc - dc_implicit));
-				if (implex_error > implex_error_tolerance) {
+				implex_error = implexStressGap(stress, stress_implicit);
+				implex_gap = implexDamageGap(dt_bar, dc_bar, dt_implicit, dc_implicit);
+				// and only if the user asked for the old behaviour, fail here
+				if (implex_abort_on_error && implex_error > implex_error_tolerance) {
 					if (dtime_n >= implex_time_redution_limit * dtime_0) {
 						retval = EC_IMPLEX_Error_Control;
 					}
@@ -1688,10 +1124,18 @@ int ASDConcrete3DMaterial::setTrialStrain(const Vector& v)
 			}
 		}
 		else {
-			// standard call 
+			// standard call
 			retval = compute(true, true);
 		}
 	}
+
+	// RECORD WHAT THIS STEP DELIVERS, in ONE place covering all four branches
+	// above and not once per branch: `stress` is what getStress() is about to
+	// hand the element on every path, extrapolated or implicit, and commitState()
+	// is about to overwrite it with the implicit re-solve. Writing this per
+	// branch is how the same member came to be missed in the numeric-tangent
+	// branch of ASDHysteretic1D - the one branch that is easy to forget
+	stress_implex = stress;
 
 	// done
 	return retval;
@@ -1748,15 +1192,18 @@ int ASDConcrete3DMaterial::commitState(void)
 {
 	// implicit stage
 	if (implex) {
-		// compute implex error here always
+		// what the extrapolated step delivered is already in stress_implex,
+		// recorded by setTrialStrain, and it is now also readable from outside as
+		// the 'implexStress' response
 		double dt = dt_bar;
 		double dc = dc_bar;
-		// implicit solution
+		// implicit solution. Note that this is not a second answer that gets
+		// thrown away: the implicit one IS what gets committed, so this same
+		// call measures the error and does the first half of the commit
 		compute(false, false);
 		// compute implex error here always
-		double dt_implicit = dt_bar;
-		double dc_implicit = dc_bar;
-		implex_error = std::max(std::abs(dt - dt_implicit), std::abs(dc - dc_implicit));
+		implex_error = implexStressGap(stress_implex, stress);
+		implex_gap = implexDamageGap(dt, dc, dt_bar, dc_bar);
 		GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
 		GlobalParameters::instance().accumulateAverageError(implex_error);
 	}
@@ -1813,11 +1260,13 @@ int ASDConcrete3DMaterial::revertToStart(void)
 
 	// IMPL-EX error
 	implex_error = 0.0;
+	implex_gap = 0.0;
 
 	// Strain, Stress and Tangent
 	strain.Zero();
 	strain_commit.Zero();
 	stress.Zero();
+	stress_implex.Zero();
 	stress_eff.Zero();
 	stress_eff_commit.Zero();
 	C = getInitialTangent();
@@ -1873,8 +1322,9 @@ int ASDConcrete3DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	// aux
 	int counter;
 
-	// variable DBL data size
-	int nv_dbl = 131 +
+	// variable DBL data size (138: the six components of stress_implex were
+	// added to the state)
+	int nv_dbl = 138 +
 		ht.serializationDataSize() +
 		hc.serializationDataSize() +
 		svt.serializationDataSize() +
@@ -1885,11 +1335,12 @@ int ASDConcrete3DMaterial::sendSelf(int commitTag, Channel &theChannel)
 		svc_commit_old.serializationDataSize();
 
 	// send INT data
-	static ID idata(11);
+	static ID idata(12);
 	counter = 0;
 	idata(counter++) = getTag();
 	idata(counter++) = static_cast<int>(implex);
 	idata(counter++) = static_cast<int>(implex_control);
+	idata(counter++) = static_cast<int>(implex_abort_on_error);
 	idata(counter++) = static_cast<int>(tangent);
 	idata(counter++) = static_cast<int>(auto_regularize);
 	idata(counter++) = static_cast<int>(regularization_done);
@@ -1921,6 +1372,7 @@ int ASDConcrete3DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	ddata(counter++) = dtime_n_commit;
 	ddata(counter++) = dtime_0;
 	ddata(counter++) = implex_error;
+	ddata(counter++) = implex_gap;
 	for (int i = 0; i < 6; ++i)
 		for (int j = 0; j < 6; ++j)
 			ddata(counter++) = PT_commit(i, j);
@@ -1929,6 +1381,7 @@ int ASDConcrete3DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	for (int i = 0; i < 6; ++i) ddata(counter++) = strain(i);
 	for (int i = 0; i < 6; ++i) ddata(counter++) = strain_commit(i);
 	for (int i = 0; i < 6; ++i) ddata(counter++) = stress(i);
+	for (int i = 0; i < 6; ++i) ddata(counter++) = stress_implex(i);
 	for (int i = 0; i < 6; ++i) ddata(counter++) = stress_eff(i);
 	for (int i = 0; i < 6; ++i) ddata(counter++) = stress_eff_commit(i);
 	for (int i = 0; i < 6; ++i)
@@ -1965,7 +1418,7 @@ int ASDConcrete3DMaterial::recvSelf(int commitTag, Channel & theChannel, FEM_Obj
 	int counter;
 
 	// recv INT data
-	static ID idata(11);
+	static ID idata(12);
 	if (theChannel.recvID(getDbTag(), commitTag, idata) < 0) {
 		opserr << "ASDConcrete3DMaterial::recvSelf() - failed to receive INT data\n";
 		return -1;
@@ -1974,6 +1427,7 @@ int ASDConcrete3DMaterial::recvSelf(int commitTag, Channel & theChannel, FEM_Obj
 	setTag(idata(counter++));
 	implex = static_cast<bool>(idata(counter++));
 	implex_control = static_cast<bool>(idata(counter++));
+	implex_abort_on_error = static_cast<bool>(idata(counter++));
 	tangent = static_cast<bool>(idata(counter++));
 	auto_regularize = static_cast<bool>(idata(counter++));
 	regularization_done = static_cast<bool>(idata(counter++));
@@ -2005,6 +1459,7 @@ int ASDConcrete3DMaterial::recvSelf(int commitTag, Channel & theChannel, FEM_Obj
 	dtime_n_commit = ddata(counter++);
 	dtime_0 = ddata(counter++);
 	implex_error = ddata(counter++);
+	implex_gap = ddata(counter++);
 	for (int i = 0; i < 6; ++i)
 		for (int j = 0; j < 6; ++j)
 			PT_commit(i, j) = ddata(counter++);
@@ -2013,6 +1468,7 @@ int ASDConcrete3DMaterial::recvSelf(int commitTag, Channel & theChannel, FEM_Obj
 	for (int i = 0; i < 6; ++i) strain(i) = ddata(counter++);
 	for (int i = 0; i < 6; ++i) strain_commit(i) = ddata(counter++);
 	for (int i = 0; i < 6; ++i) stress(i) = ddata(counter++);
+	for (int i = 0; i < 6; ++i) stress_implex(i) = ddata(counter++);
 	for (int i = 0; i < 6; ++i) stress_eff(i) = ddata(counter++);
 	for (int i = 0; i < 6; ++i) stress_eff_commit(i) = ddata(counter++);
 	for (int i = 0; i < 6; ++i)
@@ -2147,6 +1603,9 @@ Response* ASDConcrete3DMaterial::setResponse(const char** argv, int argc, OPS_St
 	static std::vector<std::string> lb_cw = { "cw" };
 	static std::vector<std::string> lb_crackpattern = { "C1x", "C1y", "C1z",   "C2x", "C2y", "C2z",   "C3x", "C3y", "C3z" };
 	static std::vector<std::string> lb_implex_error = { "Error" };
+	// same six labels as the rest of the family, see ASDPlasticDamageConcrete3D
+	static std::vector<std::string> lb_tensor = { "11", "22", "33", "12", "23", "13" };
+	static std::vector<std::string> lb_implex_gap = { "Gap" };
 	static std::vector<std::string> lb_time = { "dTime", "dTimeCommit", "dTimeInitial" };
 	static std::vector<std::string> lb_crack_strain = { "CS+", "LchRef" };
 	static std::vector<std::string> lb_crush_strain = { "CS-", "LchRef" };
@@ -2249,6 +1708,17 @@ Response* ASDConcrete3DMaterial::setResponse(const char** argv, int argc, OPS_St
 		if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
 			return make_resp(3000, getImplexError(), &lb_implex_error);
 		}
+		// 3001 - implex legacy damage gap (output only, the model does not
+		// steer on it: see implexDamageGap)
+		if (strcmp(argv[0], "implexGap") == 0 || strcmp(argv[0], "ImplexGap") == 0) {
+			return make_resp(3001, getImplexGap(), &lb_implex_gap);
+		}
+		// 3003 - THE STRESS THIS STEP DELIVERED, which under IMPL-EX is not the
+		// one 'stress' reports afterwards: commitState installs the implicit
+		// solution over it. Same id and same name in every material of the family
+		if (strcmp(argv[0], "implexStress") == 0 || strcmp(argv[0], "ImplexStress") == 0) {
+			return make_resp(3003, getImplexStress(), &lb_tensor);
+		}
 		// 4000 - internal time
 		if (strcmp(argv[0], "time") == 0 || strcmp(argv[0], "Time") == 0) {
 			return make_resp(4000, getTimeIncrements(), &lb_time);
@@ -2311,6 +1781,10 @@ int ASDConcrete3DMaterial::getResponse(int responseID, Information& matInformati
 		break;
 		// 3000 - implex error
 	case 3000: return matInformation.setVector(getImplexError());
+		// 3001 - implex legacy damage gap
+	case 3001: return matInformation.setVector(getImplexGap());
+		// 3003 - the stress this step delivered
+	case 3003: return matInformation.setVector(getImplexStress());
 		// 4000 - internal time
 	case 4000: return matInformation.setVector(getTimeIncrements());
 	default:
@@ -2730,6 +2204,111 @@ const Vector& ASDConcrete3DMaterial::getImplexError() const
 	static Vector d(1);
 	d(0) = implex_error;
 	return d;
+}
+
+const Vector& ASDConcrete3DMaterial::getImplexStress() const
+{
+	return stress_implex;
+}
+
+const Vector& ASDConcrete3DMaterial::getImplexGap() const
+{
+	static Vector d(1);
+	d(0) = implex_gap;
+	return d;
+}
+
+double ASDConcrete3DMaterial::computeImplexErrorMetric(void)
+{
+	// no extrapolation, no error. This is what makes it safe for the
+	// aggregation to call it on everything it has
+	if (!implex)
+		return 0.0;
+	// the current state holds the EXPLICIT answer: the stress this step
+	// delivered to the element, and the state the recorders must keep seeing
+	static TrialState delivered;
+	saveTrialState(delivered);
+	// stress_implex already holds it - setTrialStrain records it - and compute()
+	// below does not write that member, so it survives the throw-away solve.
+	// READ here, never written: measuring is not allowed to move the state
+	// the implicit answer, at the same trial strain
+	if (compute(false, false) < 0) {
+		restoreTrialState(delivered);
+		// no metric is not a small metric: whoever reads this must not accept
+		// the step
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	double err = implexStressGap(stress_implex, stress);
+	implex_gap = implexDamageGap(delivered.dt_bar, delivered.dc_bar, dt_bar, dc_bar);
+	// undo. Measuring is not allowed to move the state: the step may still be
+	// rejected, and revertToLastCommit() would not put PT_commit and R_commit
+	// back
+	restoreTrialState(delivered);
+	implex_error = err;
+	return err;
+}
+
+double ASDConcrete3DMaterial::implexTimeRatio(void) const
+{
+	return dtime_0 > 0.0 ? dtime_n / dtime_0 : 1.0;
+}
+
+double ASDConcrete3DMaterial::implexStressGap(const Vector& delivered, const Vector& stress_implicit) const
+{
+	// the NORM is the largest Voigt component - the 1D twin takes an absolute
+	// value - but the DENOMINATOR is the same in both, the largest stress the
+	// material can carry, or the same tolerance would mean different things in
+	// 1D and in 3D and a stepper would be comparing numbers that are not
+	// comparable
+	double gap = 0.0;
+	for (int i = 0; i < 6; ++i)
+		gap = std::max(gap, std::abs(delivered(i) - stress_implicit(i)));
+	double ref = std::max(ht.computeMaxStress(), hc.computeMaxStress());
+	if (ref <= 0.0)
+		ref = 1.0;
+	return gap / ref;
+}
+
+double ASDConcrete3DMaterial::implexDamageGap(double dt_implex, double dc_implex,
+	double dt_implicit, double dc_implicit) const
+{
+	// LEGACY, for output only: see the note in the header on why the model
+	// does not steer on this
+	return std::max(std::abs(dt_implex - dt_implicit), std::abs(dc_implex - dc_implicit));
+}
+
+void ASDConcrete3DMaterial::saveTrialState(TrialState& x) const
+{
+	x.svt = svt;
+	x.svc = svc;
+	x.stress = stress;
+	x.stress_eff = stress_eff;
+	x.C = C;
+	x.dt_bar = dt_bar;
+	x.dc_bar = dc_bar;
+	x.iso_crack_normal = iso_crack_normal;
+	x.iso_crush_normal = iso_crush_normal;
+	x.xt_max = xt_max;
+	x.xc_max = xc_max;
+	x.PT_commit = PT_commit;
+	x.R_commit = R_commit;
+}
+
+void ASDConcrete3DMaterial::restoreTrialState(const TrialState& x)
+{
+	svt = x.svt;
+	svc = x.svc;
+	stress = x.stress;
+	stress_eff = x.stress_eff;
+	C = x.C;
+	dt_bar = x.dt_bar;
+	dc_bar = x.dc_bar;
+	iso_crack_normal = x.iso_crack_normal;
+	iso_crush_normal = x.iso_crush_normal;
+	xt_max = x.xt_max;
+	xc_max = x.xc_max;
+	PT_commit = x.PT_commit;
+	R_commit = x.R_commit;
 }
 
 const Vector& ASDConcrete3DMaterial::getTimeIncrements() const

@@ -67,6 +67,17 @@ Element::Element(int tag, int cTag)
 
 Element::~Element() 
 {
+  // THE GLOBAL MUST NOT OUTLIVE THE ELEMENT. It is set here in the constructor
+  // and again by Domain::addElement and Domain::update, and until now nothing
+  // ever cleared it, so after a wipe() it pointed at freed memory. Every ASDEA
+  // material reads it to ask for its characteristic length - ASDConcrete3D,
+  // ASDConcrete1D, ASDHysteretic1D, ASDSteel1D, ASDPlasticDamageConcrete3D -
+  // and each of them guards with 'if (ops_TheActiveElement)', which a dangling
+  // pointer passes. Reproduced as a hard crash: an analysis with elements, a
+  // wipe, then a material used without one.
+  if (ops_TheActiveElement == this)
+    ops_TheActiveElement = 0;
+
   if (Kc != 0)
     delete Kc;
 

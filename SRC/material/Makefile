@@ -1,6 +1,6 @@
 include ../../Makefile.def
 
-OBJS       = Material.o
+OBJS       = Material.o ASDHardeningLaw.o IMPLEXManager.o
 
 all:         $(OBJS)
 	@$(CD) $(FE)/material/uniaxial; $(MAKE);
