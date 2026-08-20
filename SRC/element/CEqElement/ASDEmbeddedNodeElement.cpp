@@ -1228,12 +1228,10 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
         }
     }
 
-    // compute initial displacement vector
-    if (!m_U0_computed) {
-        m_U0.resize(m_num_dofs);
-        m_U0 = getGlobalDisplacements();
-        m_U0_computed = true;
-    }
+    // compute initial displacement vector. Not done again after a recvSelf,
+    // which brings m_U0 in already captured.
+    if (!m_U0_computed)
+        captureInitialDisp();
 
     // -corotational + -shearDeformable: per-retained-node quaternion state.
     // Allocate to identity only when the size is wrong, so that a state
@@ -1302,6 +1300,64 @@ ASDEmbeddedNodeElement::getNodePtrs(void)
 int ASDEmbeddedNodeElement::getNumDOF()
 {
     return m_num_dofs;
+}
+
+void ASDEmbeddedNodeElement::captureInitialDisp()
+{
+    // getGlobalDisplacements() subtracts m_U0 as soon as m_U0_computed is set,
+    // so the flag has to be cleared for it to return the RAW nodal
+    // displacements. That is also the only reason setDomain() can do this
+    // capture in a single line while the flag is still false.
+    m_U0_computed = false;
+    m_U0.resize(m_num_dofs);
+    m_U0 = getGlobalDisplacements();
+    m_U0_computed = true;
+}
+
+void ASDEmbeddedNodeElement::onActivate()
+{
+    // Re-capture the offset at the current configuration, so a staged element
+    // is born with no constraint force. setDomain() is deliberately NOT
+    // re-run: everything else it computes (dof mapping, node pointers, the
+    // slip triad) comes from the topology, which has not changed.
+    captureInitialDisp();
+    // -corotational: the reference data (shape functions, center gradients,
+    // penalty length) is defined ON the activation configuration, so it must
+    // be recomputed lazily on the new X + U0; the rotation bookkeeping
+    // restarts from identity there (R0 = I by construction).
+    m_corot_init = false;
+    m_qs[0] = 1.0; m_qs[1] = m_qs[2] = m_qs[3] = 0.0;
+    m_rv[0] = m_rv[1] = m_rv[2] = 0.0;
+    for (int i = 0; i < 4; ++i) m_qs_conv[i] = m_qs[i];
+    for (int i = 0; i < 3; ++i) m_rv_conv[i] = m_rv[i];
+    for (std::size_t a = 0; 4 * a < m_qa.size(); ++a) {
+        m_qa[4 * a] = 1.0;
+        m_qa[4 * a + 1] = m_qa[4 * a + 2] = m_qa[4 * a + 3] = 0.0;
+    }
+    std::fill(m_rva.begin(), m_rva.end(), 0.0);
+    m_qa_conv = m_qa;
+    m_rva_conv = m_rva;
+    m_qr[0] = 1.0; m_qr[1] = m_qr[2] = m_qr[3] = 0.0;
+    m_rvr[0] = m_rvr[1] = m_rvr[2] = 0.0;
+    for (int i = 0; i < 4; ++i) m_qr_conv[i] = m_qr[i];
+    for (int i = 0; i < 3; ++i) m_rvr_conv[i] = m_rvr[i];
+    // -slip: the U0 re-capture zeroes the gap, so the material must restart
+    // consistent with it: a rebar activated at this stage is a NEW bar, born
+    // virgin (keeping the old committed state would read the zeroed gap as a
+    // full strain reversal).
+    if (m_slip_mat) {
+        m_slip_mat->revertToStart();
+        m_slip_g.Zero();
+        for (int i = 0; i < 3; ++i)
+            m_slip_axis(i) = m_slip_x0(i);
+    }
+}
+
+void ASDEmbeddedNodeElement::onDeactivate()
+{
+    // nothing to do: while the element is off, Domain::update skips it (the
+    // material state is frozen) and FE_Element gates its contributions on
+    // isActive(); everything restarts from onActivate().
 }
 
 int ASDEmbeddedNodeElement::update()
@@ -2230,7 +2286,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     int NU0 = m_U0_computed ? m_U0.Size() : 0;
 
     // INT data 1: header with every size needed to read the rest
-    static ID idData1(21);
+    static ID idData1(22);
     idData1(0) = getTag();
     idData1(1) = NN;
     idData1(2) = NMAP;
@@ -2268,6 +2324,9 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
         idData1(19) = m_slip_mat->getClassTag();
         idData1(20) = matDbTag;
     }
+    // activation state: an element deactivated before the transfer must come
+    // back deactivated
+    idData1(21) = is_this_element_active ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send ID 1\n";
@@ -2348,7 +2407,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int dataTag = this->getDbTag();
 
     // INT data 1: header
-    static ID idData1(21);
+    static ID idData1(22);
     res = theChannel.recvID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive ID 1\n";
@@ -2388,6 +2447,9 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
         }
         m_slip_mat->setDbTag(idData1(20));
     }
+    // activation state: an element deactivated before the transfer must come
+    // back deactivated
+    is_this_element_active = idData1(21) == 1;
     int NRET = NN - 1 - (m_slip ? 1 : 0);
 
     // INT data 2: node ids and dof mapping
