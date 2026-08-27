@@ -224,6 +224,9 @@ StaticAnalysis::analyze(int numSteps, bool flush)
 
     if (AnalysisCommitFilter::instance().isActive()) {
         result = AnalysisCommitFilter::instance().test();
+        // the filter evaluates a Tcl expression, so its verdict is rank-local by
+        // nature - the one phase here whose failure nothing else can reduce
+        result = this->worstStepResult(result, "commitFilter()");
         if (result < 0) {
             opserr << "StaticAnalysis::analyze() - the commit filter failed";
             opserr << " at time " << the_Domain->getCurrentTime() << endln;

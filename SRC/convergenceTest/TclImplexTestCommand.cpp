@@ -26,8 +26,14 @@
 //     test NormDispIncr 1.0e-6 10 0
 //     implexTest -tol 0.05
 //
-//     implexTest <-tol $tol> <-maxReduction $f> <-onFloor fail|accept>
-//                <-print $flag>
+//     implexTest <-tol $tol> <-maxFraction $q> <-maxReduction $f>
+//                <-onFloor fail|accept> <-print $flag>
+//
+// -maxFraction is how many of the model's points may be over -tol before the
+// step is rejected, as a fraction of the points that took part. It defaults to
+// zero, which is 'none of them' - the criterion this command has always
+// applied. Raise it and one gauss point out of millions stops driving the step
+// size of the whole model by itself.
 //
 // WHY A COMMAND OF ITS OWN, and not another type of 'test'. 'test' is
 // positional after the type name and builds one object out of its own
@@ -90,6 +96,7 @@ TclImplexTestCommand(ClientData clientData, Tcl_Interp *interp, int argc,
   }
 
   double implexTol = 0.05;
+  double maxFraction = 0.0;
   double maxReduction = 0.0;
   int floorPolicy = CTestImplexWrapper::Floor_Fail;
   int printImplex = 0;
@@ -107,6 +114,21 @@ TclImplexTestCommand(ClientData clientData, Tcl_Interp *interp, int argc,
       if (implexTol <= 0.0) {
 	opserr << "WARNING implexTest - -tol must be positive, got "
 	       << implexTol << "\n";
+	return TCL_ERROR;
+      }
+      ++i;
+
+    } else if (strcmp(argv[i],"-maxFraction") == 0) {
+      if (i + 1 >= argc) {
+	opserr << "WARNING implexTest - -maxFraction needs a value\n";
+	return TCL_ERROR;
+      }
+      if (Tcl_GetDouble(interp, argv[++i], &maxFraction) != TCL_OK)
+	return TCL_ERROR;
+      if (maxFraction < 0.0 || maxFraction >= 1.0) {
+	opserr << "WARNING implexTest - -maxFraction is the fraction of the "
+	       << "model's points that may be over -tol and must be in [0,1), "
+	       << "got " << maxFraction << "\n";
 	return TCL_ERROR;
       }
       ++i;
@@ -167,8 +189,9 @@ TclImplexTestCommand(ClientData clientData, Tcl_Interp *interp, int argc,
     return TCL_ERROR;
   }
 
-  theTest = new CTestImplexWrapper(theInnerTest, implexTol, maxReduction,
-      static_cast<CTestImplexWrapper::FloorPolicy>(floorPolicy), printImplex);
+  theTest = new CTestImplexWrapper(theInnerTest, implexTol, maxFraction,
+      maxReduction, static_cast<CTestImplexWrapper::FloorPolicy>(floorPolicy),
+      printImplex);
 
   // from here on this is the install of specifyCTest, verbatim. Note what it
   // does NOT do: when no analysis exists yet the test being replaced is not

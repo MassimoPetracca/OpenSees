@@ -11,6 +11,7 @@ target_sources(OPS_Analysis
       DomainDecompositionAnalysis.cpp
       DomainUser.cpp 
       EigenAnalysis.cpp
+      ParallelAgreement.cpp
       ResponseSpectrumAnalysis.cpp
       SDFAnalysis.cpp
       StaticAnalysis.cpp 
@@ -25,6 +26,7 @@ target_sources(OPS_Analysis
       DomainDecompositionAnalysis.h
       DomainUser.h 
       EigenAnalysis.h
+      ParallelAgreement.h
       ResponseSpectrumAnalysis.h
       StaticAnalysis.h 
       StaticDomainDecompositionAnalysis.h 

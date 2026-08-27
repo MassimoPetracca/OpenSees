@@ -48,6 +48,7 @@ UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 #include <SectionForceDeformation.h>
 #include <SectionRepres.h>
 #include <TimeSeries.h>
+#include <ContinuationLambda.h>
 #include <CrdTransf.h>
 #include <Damping.h>
 #include <BeamIntegration.h>
@@ -1018,6 +1019,14 @@ OpenSeesCommands::wipe()
 
     // wipe time series
     OPS_clearAllTimeSeries();
+
+    // wipe the load factors of the continuation methods. The lambda channels
+    // are a PER-PROCESS store (see ContinuationLambda.h), so without this a new
+    // model built in the same process inherits the previous one's lambda and its
+    // reference load starts applied. Deliberately NOT in wipeAnalysis(), which
+    // runs between the steps of ONE analysis, where a finished stage's lambda
+    // must stay: that persistence is the feature.
+    OPS_ContinuationLambda::invalidateAll();
 
     // wipe GeomTransf
     OPS_clearAllCrdTransf();

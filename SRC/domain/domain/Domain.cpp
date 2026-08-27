@@ -2456,9 +2456,11 @@ int
 Domain::update(double newTime, double dT)
 {
   this->applyLoad(newTime);
-  this->update();
 
-  return 0;
+  // the result was dropped here, so an element that failed its own integration
+  // reported it to nobody on this path - Subdomain::update(double, double) and
+  // ActorSubdomain::updateTimeDt() have no other way to hear about it
+  return this->update();
 }
 
 

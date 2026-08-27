@@ -28,6 +28,11 @@
 // - once written, the value PERSISTS after the stage ends. This is deliberate:
 //   it is the propagation behaviour of a load applied by a previous stage,
 //   the analogue of PathSeries' -useLast. It is not a stale-value bug.
+// - it does NOT survive `wipe`, which calls invalidateAll() (the Tcl wipeModel
+//   and OpenSeesCommands::wipe): a second model built in the same process must
+//   not inherit the first one's lambda, or its reference load starts applied.
+//   `wipeAnalysis` deliberately invalidates nothing -- it runs between the steps
+//   of ONE analysis, where the previous stage's lambda must stay.
 //
 // CAVEATS
 // -------
@@ -56,7 +61,8 @@ class OPS_ContinuationLambda
     // false until some continuation integrator has written this channel
     static bool isValid(int channel);
 
-    // drop a channel back to the never-written state
+    // drop a channel back to the never-written state. invalidateAll() is what
+    // `wipe` calls; a running analysis has no reason to touch either.
     static void invalidate(int channel);
     static void invalidateAll(void);
 

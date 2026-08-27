@@ -465,6 +465,7 @@
 #include "shell/ASDShellQ4.h" // Massimo Petracca
 #include "ASDhexa/ASDHex.h"      // ASDEA
 #include "ASDtetra/ASDTet.h"     // ASDEA
+#include "ASDhinge/ASDHinge.h"   // ASDEA
 #include "shell/ASDShellT3.h" // Massimo Petracca
 #include "ASDTimoshenkoBeam/ASDTimoshenkoBeam2d.h" // ASDEA
 #include "ASDTimoshenkoBeam/ASDTimoshenkoBeam3d.h" // ASDEA
@@ -1141,6 +1142,9 @@ FEM_ObjectBrokerAllClasses::getNewElement(int classTag)
 
     case ELE_TAG_ASDTet:   // ASDEA
       return new ASDTet();
+
+    case ELE_TAG_ASDHinge:   // ASDEA
+      return new ASDHinge();
     
     case ELE_TAG_ASDShellT3:   // Massimo Petracca
       return new ASDShellT3(); // Massimo Petracca

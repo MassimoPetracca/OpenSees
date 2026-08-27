@@ -2025,6 +2025,11 @@ int ASDHysteretic1DMaterial::compute(bool do_implex, bool do_tangent)
 
 	int side;
 	double eps_leg;
+	// set when THIS call pushes the envelope forward on the active side. That
+	// is the one state in which the branch is the ELASTIC unloading line from
+	// the current envelope point, so its slope is E while the delivered stress
+	// walks the envelope. See the tangent block at the end of compute()
+	bool on_env = false;
 
 	if (implex && do_implex) {
 		// EXTRAPOLATED equivalent strain measures (explicit), FROZEN on/off
@@ -2165,8 +2170,10 @@ int ASDHysteretic1DMaterial::compute(bool do_implex, bool do_tangent)
 					reloadShape(+1, bt_p_l).hasTip() &&
 					eps <= reloadEnd(+1, bt_p_l, pp_x_l, pp_y_l, xb_p_l, xc_l);
 				xt_l = rate_coeff_1 * xt_l + rate_coeff_2 * eps;
-				if (!in_tip)
+				if (!in_tip) {
 					bt_p_l = BranchType::UnloadEnv;
+					on_env = true;
+				}
 			}
 			else if (eps > xt_l && xt_l < x1t) {
 				// elastic zone
@@ -2180,8 +2187,10 @@ int ASDHysteretic1DMaterial::compute(bool do_implex, bool do_tangent)
 					reloadShape(-1, bt_n_l).hasTip() &&
 					-eps <= reloadEnd(-1, bt_n_l, pn_x_l, pn_y_l, xt_l, xb_n_l);
 				xc_l = rate_coeff_1 * xc_l + rate_coeff_2 * (-eps);
-				if (!in_tip)
+				if (!in_tip) {
 					bt_n_l = BranchType::UnloadEnv;
+					on_env = true;
+				}
 			}
 			else if (-eps > xc_l && xc_l < x1c) {
 				// elastic zone
@@ -2287,8 +2296,51 @@ int ASDHysteretic1DMaterial::compute(bool do_implex, bool do_tangent)
 	stress = sigma;
 	// with no damage the nominal and the effective stress coincide
 	stress_eff = sigma;
-	if (do_tangent)
+	if (do_tangent) {
 		C = k;
+		/*
+		THE ENVELOPE TANGENT.
+
+		When this call pushed the envelope forward, the branch is the ELASTIC
+		unloading line from the current envelope point, so `k` is E. The stress
+		it gives is exact, because that line starts ON the envelope - but its
+		start MOVES with eps, so E is not the derivative of the delivered
+		stress. Measured
+		on a bilinear backbone E = 100 with a hardening branch of 5: the true
+		derivative is 5 and the returned tangent was 100, which degrades Newton
+		to linear convergence with ratio 1 - k/E.
+
+		The derivative, with the peak measure updated as
+		xt = rate_coeff_1*xt + rate_coeff_2*eps and the plastic strain
+		following it as c = xt - envelope(xt)/E:
+
+		    dsigma/deps = E*(1 - rate_coeff_2) + k_env*rate_coeff_2
+
+		a convex blend of the elastic stiffness and the envelope slope. With
+		eta = 0 (rate_coeff_2 = 1) it is the envelope slope; the more viscous
+		the measure, the less it follows the strain and the more elastic the
+		response, which is what the blend says. Verified against a finite
+		difference taken INSIDE the step at eta = 0, 0.5 and 2.0: exact on all
+		three (5, 36.667, 68.333).
+
+		NOT under IMPL-EX, and the gate is !(implex && do_implex), not
+		!do_implex: do_implex is true on the ordinary implicit path too. Under
+		IMPL-EX eps_leg is frozen at strain_commit, so the whole branch
+		geometry is independent of eps and sigma is exactly linear in it -
+		there `C = k` IS the consistent tangent, and it is the constant,
+		one-iteration tangent that IMPL-EX exists for. Measured: under -implex
+		the derivative is E at every probe, loading and unloading alike.
+
+		Unloading is untouched either way: it does not push the envelope, so
+		on_env stays false and its slope, E, is already the right one. So is
+		the pre-yield zone, where the envelope slope IS E.
+		*/
+		if (on_env && !(implex && do_implex)) {
+			const HardeningLaw& env = (side > 0) ? ht : hc;
+			double k_env = env.slopeAt((side > 0) ? xt_l : xc_l);
+			C = E * (1.0 - rate_coeff_2) + k_env * rate_coeff_2;
+		}
+	}
 
 	// stiffness reduction of the two current legs (output only)
 	double sigma_aux, k_p, k_n;

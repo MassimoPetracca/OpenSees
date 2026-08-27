@@ -226,6 +226,34 @@ ASDHardeningLawPoint ASDHardeningLaw::evaluateAt(double x) const
 	return ASDHardeningLawPoint(x, y, d, q);
 }
 
+double ASDHardeningLaw::slopeAt(double x) const
+{
+	// the segment search of evaluateAt(), with the slope instead of the
+	// interpolated value. Kept here rather than differenced by the caller so
+	// that the two can never disagree about which segment x falls on
+	if (!m_valid)
+		return 0.0;
+	for (std::size_t i = 1; i < m_points.size(); ++i) {
+		const auto& p1 = m_points[i - 1];
+		const auto& p2 = m_points[i];
+		if (x <= p2.x + m_xtolerance) {
+			double xspan = p2.x - p1.x;
+			return xspan > 0.0 ? (p2.y - p1.y) / xspan : 0.0;
+		}
+	}
+	// beyond the last point: same rule as evaluateAt, the last tangent if it
+	// is positive, otherwise perfectly plastic
+	if (m_points.size() < 2)
+		return 0.0;
+	const auto& pl = m_points.back();
+	const auto& pp = m_points[m_points.size() - 2];
+	double xspan = pl.x - pp.x;
+	if (xspan <= 0.0)
+		return 0.0;
+	double tangent = (pl.y - pp.y) / xspan;
+	return tangent > 0.0 ? tangent : 0.0;
+}
+
 double ASDHardeningLaw::computeMaxStress() const
 {
 	double smax = 0.0;

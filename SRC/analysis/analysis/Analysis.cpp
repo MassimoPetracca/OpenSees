@@ -38,6 +38,7 @@
 #include <Analysis.h>
 #include <Domain.h>
 #include <elementAPI.h>
+#include <ParallelAgreement.h>
 
 int OPS_SetAnalysisCommitFilter()
 {
@@ -102,79 +103,28 @@ Analysis::~Analysis()
 
 }
 
-// for parallel
-#ifdef _PARALLEL_INTERPRETERS
-#include <mpi.h>
-#include <OPS_Globals.h>
-#endif // _PARALLEL_INTERPRETERS
-
 int
 Analysis::worstStepResult(int resultHere, const char *phase)
 {
     failInfo[0] = '\0';
 
-#ifdef _PARALLEL_INTERPRETERS
-    int np = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &np);
-    if (np > 1) {
+    // the agreement, the attribution and the lockstep check are all in
+    // OPS_agreeWorstWho() - see ParallelAgreement.h. All this adds is the wording,
+    // and the out parameters keep their values when the run is not coupled.
+    int worstRank = 0, numFailed = 0, np = 1;
+    int worst = OPS_agreeWorstWho(resultHere, worstRank, numFailed, np);
 
-      int here = 0;
-      MPI_Comm_rank(MPI_COMM_WORLD, &here);
+    if (worst < 0 && np > 1)
+      sprintf(failInfo, " [%.24s returned %d on process %d of %d; %d process(es) failed]",
+	      (phase != 0) ? phase : "the phase", worst, worstRank, np, numFailed);
 
-      // MINLOC over the pair (code, process) gets the worst code AND its owner out
-      // of the one reduce that the agreement needs anyway. Where several processes
-      // report the same worst code MPI_MINLOC returns the lowest-numbered of them,
-      // so every process names the same process and the diagnostic is the same on
-      // every run - unlike whichever stderr line happens to arrive first.
-      int in[2], out[2];
-      in[0] = resultHere;  in[1] = here;
-      out[0] = resultHere; out[1] = here;
-
-      if (MPI_Allreduce(in, out, 1, MPI_2INT, MPI_MINLOC, MPI_COMM_WORLD) != MPI_SUCCESS) {
-	opserr << "Analysis::worstStepResult - MPI_Allreduce failed\n";
-	return resultHere;
-      }
-
-      if (out[0] < 0) {
-
-	// Whether one process failed or all of them separates a local problem -
-	// one partition's element or material - from a global one, typically the
-	// solver. It costs a second reduce, on the failure path only, where the
-	// analysis is about to stop or sub-step anyway.
-	//
-	// Guarding a collective on the reduced value is safe, and only on the
-	// REDUCED value: out[0] is identical on every process, so this branch is
-	// taken by all of them or by none. Guarding on resultHere would not be.
-	int failedHere = (resultHere < 0) ? 1 : 0;
-	int numFailed = failedHere;
-	if (MPI_Allreduce(&failedHere, &numFailed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD) != MPI_SUCCESS)
-	  numFailed = 0;
-
-	sprintf(failInfo, " [%.24s returned %d on process %d of %d; %d process(es) failed]",
-		(phase != 0) ? phase : "the phase", out[0], out[1], np, numFailed);
-      }
-
-      return out[0];
-    }
-#endif // _PARALLEL_INTERPRETERS
-
-    return resultHere;
+    return worst;
 }
 
 bool
 Analysis::reportHere(void) const
 {
-#ifdef _PARALLEL_INTERPRETERS
-    int np = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &np);
-    if (np > 1) {
-      int here = 0;
-      MPI_Comm_rank(MPI_COMM_WORLD, &here);
-      return (here == 0);
-    }
-#endif // _PARALLEL_INTERPRETERS
-
-    return true;
+    return (OPS_agreementRank() == 0);
 }
 
 const char *
@@ -186,21 +136,7 @@ Analysis::whoFailed(void) const
 bool
 Analysis::anyDomainChange(bool domainChangedHere)
 {
-#ifdef _PARALLEL_INTERPRETERS
-    int np = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &np);
-    if (np > 1) {
-      int here = domainChangedHere ? 1 : 0;
-      int anywhere = here;
-      if (MPI_Allreduce(&here, &anywhere, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD) != MPI_SUCCESS) {
-	opserr << "Analysis::anyDomainChange - MPI_Allreduce failed\n";
-	return domainChangedHere;
-      }
-      return (anywhere != 0);
-    }
-#endif // _PARALLEL_INTERPRETERS
-
-    return domainChangedHere;
+    return OPS_agreeAny(domainChangedHere);
 }
 
 Domain *

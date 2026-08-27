@@ -52,6 +52,7 @@
 
 
 #include <MapOfTaggedObjects.h>
+#include <ParallelAgreement.h>
 
 #define START_EQN_NUM 0
 #define START_VERTEX_NUM 0
@@ -581,9 +582,34 @@ AnalysisModel::updateDomain(void)
     // invoke the method
     int res = myDomain->update();
     if (res == 0)
-      return myHandler->update();
+      res = myHandler->update();
 
-    return res;
+    // THE PROCESSES MUST AGREE HERE, not at the next phase boundary.
+    //
+    // Domain::update() walks the elements of THIS partition, so it is the only
+    // rank-local failure inside the iteration loop of an equilibrium algorithm: an
+    // element that has to iterate or invert - a force-based beam column, a solid
+    // whose material fails its own integration - reports it on the one process that
+    // owns it. Everything else in that loop is already agreed by construction:
+    // formTangent() and formUnbalance() only fail on null pointers or mismatched
+    // sizes, MUMPS decides from its replicated INFOG, and the convergence test
+    // measures a B that MumpsParallelSOE has already reduced.
+    //
+    // Without this, the process that fails leaves the algorithm - NewtonRaphson
+    // returns -4 the moment update() is negative - while the others carry on into
+    // getB() and the next solve(), which are collectives. The phase-boundary
+    // agreement in Analysis::worstStepResult() cannot help: the two are then in
+    // DIFFERENT collectives on the same communicator, which is undefined behaviour
+    // and shows up as an abort naming an innocent call, or as a mute deadlock, or -
+    // once the counts have drifted - as processes answering each other's questions
+    // several steps later.
+    //
+    // The sibling updateDomain(newTime, dT) needs nothing: there it is the last act
+    // of the integrator's newStep(), so a process that fails and one that succeeds
+    // both reach the phase boundary with no collective in between.
+    //
+    // Cost: one int Allreduce per iteration, against a parallel factorisation.
+    return OPS_agreeWorst(res);
 }
 
 

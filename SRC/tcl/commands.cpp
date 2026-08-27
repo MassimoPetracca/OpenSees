@@ -118,6 +118,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <NodeIter.h>
 #include <LoadPattern.h>
 #include <LoadPatternIter.h>
+#include <ContinuationLambda.h>
 #include <NodalLoad.h>
 #include <NodalLoadIter.h>
 #include <ElementalLoad.h>
@@ -630,6 +631,9 @@ setPrecision(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **arg
 int
 setArcLength(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
+int
+getLambda(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
+
 int 
 logFile(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv);
 
@@ -873,6 +877,8 @@ int OpenSeesAppInit(Tcl_Interp *interp) {
     Tcl_CreateCommand(interp, "setTime", &setTime,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "setArcLength", &setArcLength,
+		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
+    Tcl_CreateCommand(interp, "getLambda", &getLambda,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
     Tcl_CreateCommand(interp, "getTime", &getTime,
 		      (ClientData)NULL, (Tcl_CmdDeleteProc *)NULL);
@@ -1486,6 +1492,14 @@ wipeModel(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   OPS_clearAllStrengthDegradation();
   OPS_clearAllUnloadingRule();
 
+  // wipe the load factors of the continuation methods. The lambda channels are
+  // a PER-PROCESS store (see ContinuationLambda.h), so without this a new model
+  // built in the same process inherits the previous one's lambda and its
+  // reference load starts applied. Deliberately NOT in wipeAnalysis(), which
+  // runs between the steps of ONE analysis, where a finished stage's lambda
+  // must stay: that persistence is the feature.
+  OPS_ContinuationLambda::invalidateAll();
+
   ops_Dt = 0.0;
 
 
@@ -1809,6 +1823,46 @@ int getCommittedTime(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Ch
     //  sprintf(interp->result,format,time);
     Tcl_SetResult(interp, format, TCL_VOLATILE);
     return TCL_OK;
+}
+
+// getLambda ?channel? ?format?
+//
+// The load factor of a continuation method (DisplacementControl, ArcLength,
+// ...) running in continuation-time mode: see ContinuationLambda.h. In that
+// mode lambda is NOT the pseudo-time any more, so getTime does not report it
+// and there was no way to read it at all.
+//
+// Returns 0.0 for a channel no continuation integrator has ever written -- the
+// same answer ContinuationTimeSeries::getFactor gives, and quiet on purpose:
+// a monitor asks this once per step, so a repeated warning would be noise.
+// An out-of-range channel is an error, not a zero.
+//
+// This is the RAW lambda, i.e. the multiplier of the reference load
+// CONFIGURATION. For the factor actually applied to one pattern -- lambda
+// times that pattern's own -factor -- use getLoadFactor $patternTag, which
+// works in both modes.
+int
+getLambda(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
+{
+  int channel = 0;
+  if (argc > 1 && Tcl_GetInt(interp, argv[1], &channel) != TCL_OK) {
+    opserr << "ERROR reading lambda channel -- getLambda ?channel? ?format?\n";
+    return TCL_ERROR;
+  }
+
+  if (!OPS_ContinuationLambda::inRange(channel)) {
+    opserr << "ERROR lambda channel " << channel << " out of range -- getLambda\n";
+    return TCL_ERROR;
+  }
+
+  double lambda = OPS_ContinuationLambda::get(channel);
+
+  const char *fmt = (argc > 2) ? argv[2] : "%f";
+  char buffer[80];
+  snprintf(buffer, sizeof(buffer), fmt, lambda);
+  Tcl_SetResult(interp, buffer, TCL_VOLATILE);
+
+  return TCL_OK;
 }
 
 int 

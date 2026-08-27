@@ -61,6 +61,20 @@ loads hdf5 shared library at runtime. if uncommented, hdf5 will be linked static
 /*
 enables SWMR (Single Writer - Multiple Readers) to allow reading this database from multiple processes
 while opensees is writing data. Warning: this is a new feature in hdf5 version 1.10.0.
+
+Two things are needed for a reader to open the file while this process is still writing it:
+the library version bounds on the file access property list, so the superblock version is
+>= 3, and H5Fstart_swmr_write(), which stamps the SWMR flag into that superblock. Both are
+done in initialize(). Dropping either one makes STKO unable to open the .mpco until the
+analysis has finished, because MpcOdb always opens with H5F_ACC_SWMR_READ.
+
+Known wart: HDF5 forbids creating new objects once a file is in SWMR write mode, while this
+recorder creates a group and datasets at every time step. So the per-step H5Fflush() in
+record() fails for the whole run. It is not fatal - the step data is written before the
+flush, and readers still see it through SWMR's own metadata ordering - so it is reported
+once and ignored. Fixing it properly means restructuring the .mpco layout to use chunked
+extendible datasets created up front (the way VTKHDF_Recorder does), which is a format
+change, not a bug fix.
 */
 #define MPCO_USE_SWMR
 
@@ -106,6 +120,7 @@ while opensees is writing data. Warning: this is a new feature in hdf5 version 1
 #endif // MPCO_HDF5_LOADED_AT_RUNTIME
 // std
 #include <iostream>
+#include <cstdio> // for stderr, used to dump the HDF5 error stack
 #include <vector>
 #include <list>
 #include <map>
@@ -178,12 +193,14 @@ typedef int H5F_scope_t; // enum (int) in hdf5
 HDF5 version info
 */
 
+/* Keep these in sync with the hdf5 shared library that gets deployed: H5check_version
+   aborts the process when the loaded library does not match. */
 #define H5_VERS_MAJOR	1	/* For major interface/format changes  	     */
-#define H5_VERS_MINOR	12	/* For minor interface/format changes  	     */
-#define H5_VERS_RELEASE	2	/* For tweaks, bug-fixes, or development     */
+#define H5_VERS_MINOR	14	/* For minor interface/format changes  	     */
+#define H5_VERS_RELEASE	6	/* For tweaks, bug-fixes, or development     */
 #define H5_VERS_SUBRELEASE ""	/* For pre-releases like snap0       */
                               /* Empty string for real releases.           */
-#define H5_VERS_INFO    "HDF5 library version: 1.12.2"      /* Full version string */
+#define H5_VERS_INFO    "HDF5 library version: 1.14.6"      /* Full version string */
 
 /*
 cout wrapper for library loader verbosity
@@ -390,6 +407,7 @@ private:
 		MPCO_LIBLOADER_LOAD_SYM(H5Fcreate);
 		MPCO_LIBLOADER_LOAD_SYM(H5Fflush);
 		MPCO_LIBLOADER_LOAD_SYM(H5Fclose);
+		MPCO_LIBLOADER_LOAD_SYM(H5Eprint2);
 #ifdef MPCO_USE_SWMR
 		MPCO_LIBLOADER_LOAD_SYM(H5Fstart_swmr_write);
 #endif // MPCO_USE_SWMR
@@ -448,6 +466,7 @@ public:
 	hid_t  (*ptr_H5Fcreate)(const char *filename, unsigned flags, hid_t create_plist, hid_t access_plist);
 	herr_t (*ptr_H5Fflush)(hid_t object_id, H5F_scope_t scope);
 	herr_t (*ptr_H5Fclose)(hid_t file_id);
+	herr_t (*ptr_H5Eprint2)(hid_t err_stack, FILE *stream);
 #ifdef MPCO_USE_SWMR
 	herr_t (*ptr_H5Fstart_swmr_write)(hid_t file_id);
 #endif // MPCO_USE_SWMR
@@ -503,6 +522,10 @@ macros for loaded HDF5 functions
 #define H5Fcreate (*LibraryLoader::instance().ptr_H5Fcreate)
 #define H5Fflush (*LibraryLoader::instance().ptr_H5Fflush)
 #define H5Fclose (*LibraryLoader::instance().ptr_H5Fclose)
+
+#define H5Eprint2 (*LibraryLoader::instance().ptr_H5Eprint2)
+#define H5Eprint H5Eprint2
+
 #ifdef MPCO_USE_SWMR
 #define H5Fstart_swmr_write (*LibraryLoader::instance().ptr_H5Fstart_swmr_write)
 #endif // MPCO_USE_SWMR
@@ -541,8 +564,11 @@ some other useful things defined in HDF5 headers
 #define H5P_CRT_ORDER_TRACKED           0x0001
 #define H5P_CRT_ORDER_INDEXED           0x0002
 
-// this is an enum in hdf5: H5F_libver_t
-#define H5F_LIBVER_LATEST 1
+// this is an enum in hdf5: H5F_libver_t.
+// Note: do NOT define H5F_LIBVER_LATEST here. Its value is a moving target across hdf5
+// generations (V110 = 2 on 1.10, V112 = 3 on 1.12, V114 = 4 on 1.14, V200 = 5 on 2.x),
+// so a hardcoded value is wrong by construction. Name the wanted format explicitly.
+#define H5F_LIBVER_V112 3
 
 // this is an enum in hdf5: H5T_str_t
 #define H5T_STR_NULLTERM 0
@@ -550,7 +576,25 @@ some other useful things defined in HDF5 headers
 // this is an enum in hdf5: H5F_scope_t
 #define H5F_SCOPE_LOCAL 0
 
+// this is the default error stack, defined in H5Epublic.h
+#define H5E_DEFAULT (hid_t)0
+
 #endif // MPCO_HDF5_LOADED_AT_RUNTIME
+
+/*
+The on-disk format the recorder writes. Pinned rather than left at H5F_LIBVER_LATEST so
+that bumping the hdf5 library does not silently produce files that already deployed STKO
+builds cannot open. H5F_LIBVER_V112 does not exist before hdf5 1.12, hence the guard.
+*/
+#if defined(MPCO_HDF5_LOADED_AT_RUNTIME)
+// H5_VERSION_GE comes from H5public.h, which is not included in this branch. The version
+// we bind to is the one hardcoded above, and it is always >= 1.12.
+#define MPCO_H5_LIBVER_TARGET H5F_LIBVER_V112
+#elif H5_VERSION_GE(1, 12, 0)
+#define MPCO_H5_LIBVER_TARGET H5F_LIBVER_V112
+#else
+#define MPCO_H5_LIBVER_TARGET H5F_LIBVER_V110
+#endif
 
 #define HID_INVALID -1
 
@@ -1204,6 +1248,11 @@ namespace h5 {
 			return H5Fstart_swmr_write(file_id);
 		}
 #endif // MPCO_USE_SWMR
+		// dumps the HDF5 error stack. HDF5 clears the stack on every successful API call,
+		// so this is only meaningful right after a failing one.
+		void printErrorStack() {
+			H5Eprint(H5E_DEFAULT, stderr);
+		}
 	}
 
 	namespace plist {
@@ -1235,8 +1284,8 @@ namespace h5 {
 		herr_t setLinkCreationOrder(hid_t plist_id, unsigned int crt_order_flags) {
 			return H5Pset_link_creation_order(plist_id, crt_order_flags);
 		}
-		herr_t setLibVerBounds(hid_t plist_id, unsigned int minor, unsigned int major) {
-			return H5Pset_libver_bounds(plist_id, (H5F_libver_t)minor, (H5F_libver_t)major);
+		herr_t setLibVerBounds(hid_t plist_id, unsigned int low, unsigned int high) {
+			return H5Pset_libver_bounds(plist_id, (H5F_libver_t)low, (H5F_libver_t)high);
 		}
 	}
 
@@ -1451,6 +1500,7 @@ namespace mpco {
 			, record_eigen_on_this_step(false)
 			, eigen_last_time_set(0.0)
 			, eigen_last_values()
+			, flush_error_reported(false)
 		{}
 	public:
 		// domain and model information
@@ -1472,6 +1522,9 @@ namespace mpco {
 		bool record_eigen_on_this_step;
 		double eigen_last_time_set;
 		Vector eigen_last_values;
+		// the per-step H5Fflush is expected to fail under SWMR write mode: report it once
+		// instead of at every single step
+		bool flush_error_reported;
 	};
 
 }
@@ -3874,6 +3927,7 @@ namespace mpco {
 					elem_class_tag == ELE_TAG_ZeroLengthContact3D ||
 					elem_class_tag == ELE_TAG_ZeroLengthContactASDimplex ||
 					elem_class_tag == ELE_Tag_ZeroLengthImpact3D ||
+					elem_class_tag == ELE_TAG_ASDHinge || // ASDEA
 					// ./twoNodeLink
 					elem_class_tag == ELE_TAG_TwoNodeLinkSection ||
 					// ./elasticBeamColumn
@@ -4650,9 +4704,18 @@ int MPCORecorder::record(int commitTag, double timeStamp)
 	*/ 
 	status = h5::file::flush(m_data->info.h_file_id);
 	if (status < 0) {
-		opserr << "MPCORecorder Error: cannot flush file on record()\n";
-		retval = -1;
-		return retval;
+		// Not fatal, and deliberately not an early return: everything this step had to
+		// write has already been written above, the flush is only about pushing it out.
+		// Under SWMR write mode HDF5 refuses this call because the recorder keeps creating
+		// new objects (a group and datasets per step), which SWMR does not allow. The data
+		// still reaches readers through SWMR's own metadata ordering, so the only real
+		// problem was that this used to be printed at every single step.
+		if (!m_data->info.flush_error_reported) {
+			m_data->info.flush_error_reported = true;
+			opserr << "MPCORecorder Warning: cannot flush file on record(). "
+				"This is reported only once. The HDF5 error stack follows.\n";
+			h5::file::printErrorStack();
+		}
 	}
 	return retval;
 }
@@ -4912,9 +4975,31 @@ int MPCORecorder::initialize()
 	}
 #ifdef MPCO_USE_SWMR
 	m_data->info.h_file_acc_proplist = h5::plist::crate(h5::plist::FileAccess);
-	status = h5::plist::setLibVerBounds(m_data->info.h_file_acc_proplist, H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);
+	// pin the on-disk format instead of asking for H5F_LIBVER_LATEST: LATEST is a moving
+	// target (V110 on hdf5 1.10, V112 on 1.12, V114 on 1.14, V200 on 2.x), and letting it
+	// float would silently make new files unreadable by already deployed STKO builds.
+	// V112 is what has always been written on win64/linux64, and it is >= the superblock
+	// version 3 that a reader opening with H5F_ACC_SWMR_READ needs.
+	status = h5::plist::setLibVerBounds(m_data->info.h_file_acc_proplist, MPCO_H5_LIBVER_TARGET, MPCO_H5_LIBVER_TARGET);
+	if (status < 0) {
+		opserr << "MPCORecorder Error: cannot set the library version bounds\n";
+		h5::file::printErrorStack();
+		exit(-1);
+	}
 	m_data->info.h_file_id = h5::file::create(the_filename.c_str(), m_data->info.h_file_proplist, m_data->info.h_file_acc_proplist);
+	// Put the file in SWMR write mode. This is what stamps the SWMR flag in the superblock,
+	// and it is load-bearing: without it a reader cannot open the file with
+	// H5F_ACC_SWMR_READ while this process still holds it open, so monitoring the results of
+	// a running analysis stops working (STKO's MpcOdb always opens that way).
+	// Note that HDF5 does not allow creating new objects once in SWMR write mode, while this
+	// recorder creates a group and datasets at every step. That is why the per-step
+	// H5Fflush() below reports a failure; it is tolerated on purpose, see record().
 	status = h5::file::startSWMR(m_data->info.h_file_id);
+	if (status < 0) {
+		opserr << "MPCORecorder Warning: cannot enable SWMR write mode. Results of this "
+			"analysis will not be readable until the file is closed.\n";
+		h5::file::printErrorStack();
+	}
 #else
 	m_data->info.h_file_id = h5::file::create(the_filename.c_str(), m_data->info.h_file_proplist, H5P_DEFAULT);
 #endif // MPCO_USE_SWMR
@@ -6302,6 +6387,15 @@ int MPCORecorder::initElementRecorders()
 		for (mpco::element::ElementCollection::submap_type::iterator it1 = m_data->elements.items.begin();
 			it1 != m_data->elements.items.end(); ++it1) {
 			mpco::element::ElementWithSameClassTagCollection &elem_by_tag = it1->second;
+			/*
+			ASDHinge answers the classic beam names too (localForce), but its place in STKO
+			is the Hinge.* results: recording its localForce would inject zero-length items
+			into the beams' "localForce (Lines)" result and pollute every beam diagram plot.
+			Skip it here only: text recorders on the element are unaffected.
+			*/
+			if (it1->first == ELE_TAG_ASDHinge && request.size() > 0 &&
+				(request[0] == "localForce" || request[0] == "localForces"))
+				continue;
 			mpco::element::OutputWithSameClassTagCollection &eo_by_tag = recorder.response_map[it1->first];
 			/**
 			$WO:SHELL_SEC_KEYWORD

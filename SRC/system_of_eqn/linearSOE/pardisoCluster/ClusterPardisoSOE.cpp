@@ -14,6 +14,7 @@
 #include <ID.h>
 #include <classTags.h>
 #include <OPS_Globals.h>
+#include <ParallelAgreement.h>
 #include <algorithm>
 #include <array>
 #include <stdlib.h>
@@ -27,6 +28,11 @@ ClusterPardisoSOE::ClusterPardisoSOE(ClusterPardisoSolver &theSolvr)
   theSolvr.setLinearSOE(*this);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &np);
+
+  // this object only exists in a run whose equations are numbered globally, so its
+  // existence is what tells the agreement primitives that collectives are owed -
+  // see ParallelAgreement.h
+  OPS_setCoupledParallelRun();
 }
 
 ClusterPardisoSOE::~ClusterPardisoSOE()

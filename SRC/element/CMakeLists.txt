@@ -35,6 +35,7 @@ add_subdirectory(triangle)
 add_subdirectory(shell)
 add_subdirectory(ASDhexa)
 add_subdirectory(ASDtetra)
+add_subdirectory(ASDhinge)
 add_subdirectory(ASDTimoshenkoBeam)
 add_subdirectory(brick)
 

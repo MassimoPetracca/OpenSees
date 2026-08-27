@@ -27,8 +27,12 @@
 //     ops.test('NormDispIncr', 1.0e-6, 10, 0)
 //     ops.implexTest('-tol', 0.05)
 //
-//     implexTest <-tol tol> <-maxReduction f> <-onFloor 'fail'|'accept'>
-//                <-print flag>
+//     implexTest <-tol tol> <-maxFraction q> <-maxReduction f>
+//                <-onFloor 'fail'|'accept'> <-print flag>
+//
+// -maxFraction is how many of the model's points may be over -tol before the
+// step is rejected, as a fraction of the points that took part. Zero, the
+// default, is 'none of them' - the criterion this command has always applied.
 //
 // See TclImplexTestCommand.cpp for why this is a command of its own and why it
 // copies the test it wraps. One difference from the Tcl side, and it is in this
@@ -68,6 +72,7 @@ int OPS_ImplexCTest()
     }
 
     double implexTol = 0.05;
+    double maxFraction = 0.0;
     double maxReduction = 0.0;
     int floorPolicy = CTestImplexWrapper::Floor_Fail;
     int printImplex = 0;
@@ -89,6 +94,22 @@ int OPS_ImplexCTest()
 	    if (implexTol <= 0.0) {
 		opserr << "WARNING implexTest - -tol must be positive, got "
 		       << implexTol << "\n";
+		return -1;
+	    }
+
+	} else if (strcmp(opt, "-maxFraction") == 0) {
+	    if (OPS_GetNumRemainingInputArgs() < 1) {
+		opserr << "WARNING implexTest - -maxFraction needs a value\n";
+		return -1;
+	    }
+	    if (OPS_GetDoubleInput(&numData, &maxFraction) < 0) {
+		opserr << "WARNING implexTest - failed to read -maxFraction\n";
+		return -1;
+	    }
+	    if (maxFraction < 0.0 || maxFraction >= 1.0) {
+		opserr << "WARNING implexTest - -maxFraction is the fraction of "
+		       << "the model's points that may be over -tol and must be "
+		       << "in [0,1), got " << maxFraction << "\n";
 		return -1;
 	    }
 
@@ -150,8 +171,9 @@ int OPS_ImplexCTest()
 	return -1;
     }
 
-    cmds->setCTest(new CTestImplexWrapper(theInnerTest, implexTol, maxReduction,
-	static_cast<CTestImplexWrapper::FloorPolicy>(floorPolicy), printImplex));
+    cmds->setCTest(new CTestImplexWrapper(theInnerTest, implexTol, maxFraction,
+	maxReduction, static_cast<CTestImplexWrapper::FloorPolicy>(floorPolicy),
+	printImplex));
 
     return 0;
 }

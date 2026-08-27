@@ -114,14 +114,28 @@ public:
 	these to use, against which tolerance, and what to do at the floor.
 	*/
 	struct Aggregate {
-		// the largest error over the objects that took part. THE criterion:
-		// the metric is bimodal - exactly zero on the elastic steps, O(tol)
-		// on the few that carry plastic flow - so an average over material
-		// points is diluted by the elastic ones and never fires
+		// the largest error over the objects that took part
 		double max = 0.0;
-		// sum and count, for an average as a DIAGNOSTIC only. Note that the
-		// iteration order of the registry is not stable, so a sum is not
-		// bit-reproducible; a maximum is
+		// HOW MANY of them are strictly over the threshold the CONSUMER handed
+		// to aggregate(). The registry does not interpret that number and owns
+		// no policy: it counts.
+		//
+		// This is the other half of the criterion, and a COUNT rather than a
+		// mean on purpose. The metric is bimodal - exactly zero on the elastic
+		// steps, O(tol) on the few points that carry plastic flow - so a mean
+		// over material points is diluted by the elastic ones AND depends on
+		// the mesh: with N points and k active it is (k/N) times the mean over
+		// the active ones, so the same physics read on a finer mesh gives a
+		// smaller number and a tolerance means something different on every
+		// model. count_over/count is a fraction: dimensionless, independent of
+		// the model's size, and zero exactly when the maximum is within
+		// tolerance - which is how the plain 'reject if the worst point is
+		// over' criterion is the fraction criterion at threshold zero.
+		std::size_t count_over = 0;
+		// sum and count. count is also the denominator of the fraction above;
+		// sum is for an average as a DIAGNOSTIC only. Note that the iteration
+		// order of the registry is not stable, so a sum is not bit-reproducible;
+		// a maximum and a count are
 		double sum = 0.0;
 		std::size_t count = 0;
 		// a metric that is not a number is never 'within tolerance'
@@ -147,13 +161,21 @@ public:
 	Measure the objects that took part SINCE THE LAST CALL, accumulate, and
 	forget them.
 
+	`overThreshold` is counted against, not interpreted: count_over ends up
+	holding how many of the measured objects came out strictly above it. Pass
+	the tolerance to get the fraction the convergence test needs; pass zero to
+	get how many are active at all.
+
 	Measuring only the newly touched ones is what makes a second call in the
 	same step free: an algorithm that asks twice without any new
-	setTrialStrain in between (Broyden has two test() call sites in one
-	solveCurrentStep) gets the same numbers back without a single extra
-	constitutive pass.
+	setTrialStrain in between gets the same numbers back without a single
+	extra constitutive pass. Broyden, BFGS and NewtonLineSearch are the ones
+	that ask twice, and not from two call sites of their own - they build a
+	SECOND convergence test with getCopy(), which for a CTestImplexWrapper is
+	a second wrapper sharing this one registry. In the Broyden/BFGS chain the
+	second ask is free because nothing updates the domain between the two.
 	*/
-	const Aggregate& aggregate();
+	const Aggregate& aggregate(double overThreshold);
 
 	/**
 	The last aggregate, without measuring anything.

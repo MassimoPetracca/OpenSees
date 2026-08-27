@@ -82,7 +82,7 @@ void IMPLEXManager::clearTouched()
 	m_aggregate = Aggregate();
 }
 
-const IMPLEXManager::Aggregate& IMPLEXManager::aggregate()
+const IMPLEXManager::Aggregate& IMPLEXManager::aggregate(double overThreshold)
 {
 	for (IMPLEXObject* obj : m_objects) {
 		if (!obj->m_implex_touched)
@@ -96,6 +96,12 @@ const IMPLEXManager::Aggregate& IMPLEXManager::aggregate()
 		m_aggregate.max = std::max(m_aggregate.max, e);
 		m_aggregate.sum += e;
 		++m_aggregate.count;
+		// strictly over, so that a threshold of zero counts the active ones and
+		// a threshold equal to the tolerance counts the violations - a point
+		// exactly AT tolerance is within it, which is what the maximum-only
+		// criterion has always said
+		if (e > overThreshold)
+			++m_aggregate.count_over;
 		m_aggregate.min_time_ratio = std::min(m_aggregate.min_time_ratio, obj->implexTimeRatio());
 	}
 	return m_aggregate;

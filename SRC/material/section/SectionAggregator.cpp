@@ -958,6 +958,20 @@ SectionAggregator::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
   return res;
 }
 
+// true for the output requests that only a fiber section can answer, and that
+// therefore must be forwarded to the aggregated section as they are
+static bool
+isFiberRequest(const char *arg)
+{
+  return
+    strcmp(arg,"fiber") == 0 ||
+    strcmp(arg,"fiberIndex") == 0 ||
+    strcmp(arg,"fiberData") == 0 ||
+    strcmp(arg,"fiberData2") == 0 ||
+    strcmp(arg,"numFailedFiber") == 0 ||
+    strcmp(arg,"numFiberFailed") == 0;
+}
+
 Response*
 SectionAggregator::setResponse(const char **argv, int argc, OPS_Stream &output)
 {
@@ -1003,6 +1017,24 @@ SectionAggregator::setResponse(const char **argv, int argc, OPS_Stream &output)
   // For backward compatibility
   if (argc > 1 && strcmp(argv[0],"section") == 0 && theSection != 0)
     theResponse = theSection->setResponse(&argv[1], argc-1, output);
+
+  // Fiber level requests belong to the aggregated section: the aggregator has
+  // nothing of its own to say about a fiber, and the section carrying the P-M (2d)
+  // or P-M-M (3d) part is typically a FiberSection. They are forwarded HERE, before
+  // the default method, rather than through the generic pass-along at the end of
+  // this function, because SectionForceDeformation::setResponse opens a
+  // "SectionOutput" tag unconditionally and then returns 0 without filling it when
+  // it does not know the keyword. A fiber section opens "FiberOutput" directly, so
+  // going through the default method first leaves the recorder with a "SectionOutput"
+  // and a "FiberOutput" as siblings under the same integration point: recorders that
+  // build their metadata from the tag stream require the responses at one level to be
+  // of a single type, and drop the whole result when they are not.
+  //
+  // Until the setResponse reordering of 30/07/2022 the pass-along ran before the
+  // default method, so "fiber ..." reached the fiber section; since then it only got
+  // there when the request carried a redundant extra "section" keyword.
+  if (theResponse == 0 && argc > 1 && theSection != 0 && isFiberRequest(argv[0]))
+    return theSection->setResponse(argv, argc, output);
 
   // Call default method
   if (theResponse == 0)

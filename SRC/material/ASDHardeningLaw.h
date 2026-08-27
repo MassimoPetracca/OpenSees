@@ -113,6 +113,12 @@ public:
 	void deRegularize();
 	// evaluate the hardening law at a certain strain
 	ASDHardeningLawPoint evaluateAt(double x) const;
+	// d(stress)/d(strain) of the backbone at a certain strain: the slope of
+	// the segment evaluateAt() would interpolate on, with the same rule past
+	// the last point (extrapolate the last tangent if positive, otherwise
+	// perfectly plastic). Used by ASDHysteretic1DMaterial to hand the element
+	// the tangent of the envelope it is riding, instead of the elastic one
+	double slopeAt(double x) const;
 	// get max stress value
 	double computeMaxStress() const;
 	// serialization

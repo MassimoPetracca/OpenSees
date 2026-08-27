@@ -38,15 +38,21 @@ Petracca, M., Candeloro, F., & Camata, G. (2017). \"STKO user manual\". ASDEA So
 
 The MPCORecorder writes data to an HDF5 database.
 
-MPCORecorder uses the HDF5 library version 1.12.0 from the HDF Group:
+MPCORecorder uses the HDF5 library version 1.14.6 from the HDF Group:
 The HDF Group, "Hierarchical Data Format, version 5," 1997-2017. [Online]. http://www.hdfgroup.org/HDF5/.
 
 This specific version can be downloaded from this link:
-https://portal.hdfgroup.org/display/support/HDF5+1.12.0
+https://support.hdfgroup.org/releases/hdf5/v1_14/v1_14_6/downloads/
 
 if the _HDF5 macro is not defined,
 the HDF5 shared library will be loaded at run-time and should be available on your machine if you use this
-recorder.
+recorder. In that case the version hardcoded at the top of MPCORecorder.cpp must match the
+deployed shared library, because H5check_version aborts the process on a mismatch.
+
+Note on the on-disk format: the file is written with the library version bounds pinned to
+V112, not to H5F_LIBVER_LATEST. LATEST changes meaning with every HDF5 generation, and
+letting it float would make newly written .mpco files unreadable by already deployed
+readers.
 
 For more information about HDF5 library, licensing terms and download:
 http://www.hdfgroup.org

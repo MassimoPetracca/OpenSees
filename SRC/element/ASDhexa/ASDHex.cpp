@@ -45,6 +45,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <cmath>
+#include <cstdint>
+
+// ASDHEX_EAS_IMPERF is declared in ASDHex.h -- it gates class members, so it has
+// to be visible before the header is parsed. See the block there for what it is
+// for and why it is not shipped enabled.
 
 #include <ASDEICR3.h>
 
@@ -63,7 +69,7 @@ OPS_ASDSolidHex(void)
         // NOTE: the keyword registered in Tcl/Python is "ASDHex", and the only
         // option actually accepted by the loop below is -corotational.
         opserr << "Want: element ASDHex $tag $Node1 $Node2 $Node3 $Node4 $Node5 $Node6 $Node7 $Node8 $matTag "
-            "<-corotational> <-damp $dampingTag> <-b $bx $by $bz>\n";
+            "<-corotational> <-damp $dampingTag> <-b $bx $by $bz> <-easStab $s> <-easPenalty $p> <-noEasAuto>\n";
         return 0;
     }
 
@@ -87,6 +93,12 @@ OPS_ASDSolidHex(void)
 
     bool m_use_corotational = false;
     Damping* damping = nullptr;
+    double eas_stab = 0.0;
+    double eas_penalty = 0.0;
+    bool eas_auto = true;
+#ifdef ASDHEX_EAS_IMPERF
+    double imperfection = 0.0;
+#endif
     double body[3] = { 0.0, 0.0, 0.0 };
     while (OPS_GetNumRemainingInputArgs() > 0) {
         const char* type = OPS_GetString();
@@ -123,6 +135,80 @@ OPS_ASDSolidHex(void)
                 return 0;
             }
         }
+#ifdef ASDHEX_EAS_IMPERF
+        else if (strcmp(type, "-imperfection") == 0) {
+            // EXPERIMENT: see the ASDHEX_EAS_IMPERF block at the top of this file
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "Error: element ASDHex: -imperfection needs 1 value\n";
+                return 0;
+            }
+            int nd = 1;
+            if (OPS_GetDoubleInput(&nd, &imperfection) < 0) {
+                opserr << "Error: element ASDHex: invalid -imperfection value\n";
+                return 0;
+            }
+            if (imperfection < 0.0 || imperfection >= 1.0) {
+                opserr << "Error: element ASDHex: -imperfection must be in [0, 1), got "
+                    << imperfection << "\n";
+                return 0;
+            }
+        }
+#endif // ASDHEX_EAS_IMPERF
+        else if (strcmp(type, "-noEasAuto") == 0) {
+            // disable the AUTOMATIC A-op arming, leaving only whatever -easStab
+            // and -easPenalty ask for explicitly. This is how the two
+            // stabilizations are told apart: with the automatic path on, A-op has
+            // already rescued a softening element before the penalty can act.
+            eas_auto = false;
+        }
+        else if (strcmp(type, "-easPenalty") == 0) {
+            // TRUE penalty on the enhanced modes. Unlike -easStab this one enters
+            // the RESIDUAL, so it CHANGES THE CONVERGED ANSWER: it trades bending
+            // accuracy for an energetic barrier against the enhanced modes
+            // localizing. See ASDSolidHex::m_eas_penalty.
+            //
+            // The patch test is exact at any value; bending is what pays.
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "Error: element ASDHex: -easPenalty needs 1 value\n";
+                return 0;
+            }
+            int nd = 1;
+            if (OPS_GetDoubleInput(&nd, &eas_penalty) < 0) {
+                opserr << "Error: element ASDHex: invalid -easPenalty value\n";
+                return 0;
+            }
+            if (eas_penalty < 0.0) {
+                opserr << "Error: element ASDHex: -easPenalty must be non-negative, got "
+                    << eas_penalty << "\n";
+                return 0;
+            }
+        }
+        else if (strcmp(type, "-easStab") == 0) {
+            // floor on the regularization of the enhanced (EAS) block. See
+            // ASDSolidHex::m_eas_stab: the gate in calculateAll raises the factor
+            // on its own whenever the block is not positive definite, so this is
+            // only needed to force a minimum amount of it.
+            //
+            // Because ONLY the operator is regularized -- the enhanced residual
+            // stays exact, so at convergence h = 0 and the term it feeds into the
+            // condensed residual vanishes -- the converged response does NOT depend
+            // on this value. It trades global iterations for robustness, never
+            // accuracy.
+            if (OPS_GetNumRemainingInputArgs() < 1) {
+                opserr << "Error: element ASDHex: -easStab needs 1 value\n";
+                return 0;
+            }
+            int nd = 1;
+            if (OPS_GetDoubleInput(&nd, &eas_stab) < 0) {
+                opserr << "Error: element ASDHex: invalid -easStab value\n";
+                return 0;
+            }
+            if (eas_stab < 0.0) {
+                opserr << "Error: element ASDHex: -easStab must be non-negative, got "
+                    << eas_stab << "\n";
+                return 0;
+            }
+        }
         else {
             opserr << "Error: element ASDHex: unknown option '" << type << "'\n";
             return 0;
@@ -131,7 +217,10 @@ OPS_ASDSolidHex(void)
 
     return new ASDSolidHex(iData[0], //tag
         iData[1], iData[2], iData[3], iData[4], iData[5], iData[6], iData[7], iData[8], //8 nodes
-        mat, m_use_corotational, damping, body
+        mat, m_use_corotational, damping, body, eas_stab, eas_penalty, eas_auto
+#ifdef ASDHEX_EAS_IMPERF
+        , imperfection
+#endif
     );
 }
 
@@ -151,6 +240,55 @@ namespace
     constexpr int OPT_RHS = (1 << 2);
     constexpr int OPT_LHS_IS_INITIAL = (1 << 3);
 
+    // ------------------------------------------------------------------
+    // A-op: regularization of the enhanced (EAS) block.
+    //
+    // The amount of regularization is decided POINTWISE ON THE MATERIAL TANGENT,
+    // never on the assembled enhanced block.
+    //
+    // That distinction was learned the hard way. sym(k_qq) is NOT positive
+    // definite even for a purely elastic element -- k_qq = int(G_test^T C G_trial)
+    // pairs two DIFFERENT interpolations, so its symmetric part carries no
+    // definiteness property at all, while the operator itself stays perfectly
+    // well conditioned (measured: min pivot 0 at rcond 0.5 on P2's elastic
+    // bending patch). Gating on it inflated s to O(500) on healthy elements,
+    // degenerated them to displacement elements and brought the parasitic shear
+    // back. The material tangent, by contrast, is symmetric and its loss of
+    // definiteness IS the softening the regularization exists for.
+    //
+    // Requiring C + s*C0 to be positive definite at every gauss point is the
+    // strongest guarantee available cheaply, and it implies the assembled block is
+    // the Petrov block of a definite material tangent.
+    //
+    // The margin is relative to the ELASTIC tangent's scale, which does not shrink
+    // as the material damages, and is deliberately small: a healthy point sits at
+    // O(0.1-1), a softening one goes straight through zero, so nothing in between
+    // needs to be caught.
+    constexpr double EAS_MAT_PD_TOL = 1.0e-6;
+
+    // ...but CAPPED, and the cap is the honest part of this scheme.
+    //
+    // Measured on a single element in uniaxial tension with a brittle softening
+    // ASDConcrete3D and the material's CONSISTENT tangent (-tangent): the worst
+    // gauss point sits at a min pivot of -431 times the elastic diagonal, so
+    // making C + s*C0 definite there needs s of order 650. At that value the
+    // enhanced modes are suppressed by 99.8% -- the element has become a plain
+    // displacement element, which is not a stabilized EAS element, it is a
+    // different (and much worse) element. And it still did not converge.
+    //
+    // So s is bounded. Past the bound the operator may stay indefinite; it only
+    // has to stay INVERTIBLE, which is all the condensation and the lagged alpha
+    // step actually require, and the trust region in updatePG_EAS is what keeps
+    // that step from running away.
+    //
+    // The real fix at that point is not more s. It is to stop handing the element
+    // an indefinite tangent: ASDConcrete3D's DEFAULT tangent is the secant W:C0,
+    // positive semi-definite whatever the backbone does, and -implex makes the
+    // material exactly affine over the step with C = W:C0 as its EXACT derivative.
+    // Both were measured to run the same softening branch to completion with the
+    // 8 gauss points on one path; only -tangent breaks.
+    constexpr double EAS_STAB_MAX = 1.0;
+
 
     // 2x2x2 gauss quadrature data, 8 gauss point (2 values for xi,2 for eta, 2 for zeta)
     // INTERNAL ordering is "corner" order, i.e. the same sequence as the element's
@@ -165,13 +303,12 @@ namespace
 
     // Gauss point index mapping: REPORTING order -> INTERNAL quadrature order.
     //
-    // Recorders reach this element through MPCO's Hexahedron_GaussLegendre_2
-    // integration rule (see MPCORecorder::getGeometryAndIntRuleByClassTag), whose
-    // convention -- shared with Brick and BbarBrick, the elements that rule was
-    // written for -- is LEXICOGRAPHIC in (xi,eta,zeta) with xi outermost:
+    // Results are reported in the LEXICOGRAPHIC (xi,eta,zeta) order, xi outermost,
+    // i.e. the order produced by the i-j-k loop of Brick, BbarBrick and BrickUP:
     //   0:(-,-,-) 1:(-,-,+) 2:(-,+,-) 3:(-,+,+) 4:(+,-,-) 5:(+,-,+) 6:(+,+,-) 7:(+,+,+)
-    // That differs from the internal corner order in 6 of the 8 indices, so gauss
-    // point results used to land on the wrong corners in the post-processor.
+    // This is deliberate: it makes the gauss point output of this element
+    // interchangeable with that of the other 8-node bricks, so anything already
+    // able to read Brick reads this element too.
     //
     // The INTERNAL order is deliberately left alone: metric_basis::orthogonalize()
     // performs a Gram-Schmidt process over the gauss points (condition C3 of the
@@ -184,6 +321,127 @@ namespace
     //
     // GP_REPORT_TO_INTERNAL[j] = internal index of the j-th reported gauss point.
     constexpr std::array<int, NumGP> GP_REPORT_TO_INTERNAL = { 0, 4, 3, 7, 1, 5, 2, 6 };
+
+    // true only if every entry of m is a finite number. Used to reject an
+    // inverse that LAPACK reported as successful but filled with inf/nan.
+    inline bool isFinite(const Matrix& m)
+    {
+        for (int i = 0; i < m.noRows(); ++i)
+            for (int j = 0; j < m.noCols(); ++j)
+                if (!std::isfinite(m(i, j)))
+                    return false;
+        return true;
+    }
+
+    inline bool isFinite(const Vector& v)
+    {
+        for (int i = 0; i < v.Size(); ++i)
+            if (!std::isfinite(v(i)))
+                return false;
+        return true;
+    }
+
+    // infinity norm (largest absolute row sum). Matrix offers no norms at all --
+    // only Solve, Invert and a 3x3 Eigen3 -- so the two measures the enhanced
+    // solve is judged by are hand rolled here.
+    inline double normInf(const Matrix& m)
+    {
+        double n = 0.0;
+        for (int i = 0; i < m.noRows(); ++i) {
+            double rowsum = 0.0;
+            for (int j = 0; j < m.noCols(); ++j)
+                rowsum += std::abs(m(i, j));
+            if (rowsum > n)
+                n = rowsum;
+        }
+        return n;
+    }
+
+    // smallest pivot of the LDL^T factorization of the SYMMETRIC PART of m.
+    // The SIGN of the result is a definiteness test: a non-positive minimum pivot
+    // means sym(m) is not positive definite.
+    //
+    // m itself is NOT required to be symmetric, and the Petrov-Galerkin blocks of
+    // this element never are: B_test != B_trial and G_test != G_trial. What decides
+    // whether the enhanced solve is well posed is the definiteness of the symmetric
+    // part, so that is what is factorized -- sym(m)(i,j) = (m(i,j) + m(j,i))/2,
+    // whose diagonal is just m(i,i).
+    //
+    // No square roots and no pivoting, ~n^3/6 flops: this is called on every
+    // evaluation, both as a diagnostic and as the gate of the adaptive enhanced
+    // block regularization, so it has to be cheap. Without pivoting a matrix that
+    // IS positive definite always survives (Cholesky-like stability), and one that
+    // is not gets caught by the non-positive pivot, which is the only verdict asked
+    // of it.
+    inline double ldltMinPivot(const Matrix& m)
+    {
+        constexpr int MaxN = 12;
+        const int n = m.noRows();
+        if (n < 1 || n > MaxN || m.noCols() != n)
+            return 0.0;
+        double L[MaxN][MaxN] = { {0.0} };  // unit lower triangular
+        double d[MaxN] = { 0.0 };          // the pivots
+        double dmin = 0.0;
+        for (int j = 0; j < n; ++j) {
+            double dj = m(j, j);
+            for (int k = 0; k < j; ++k)
+                dj -= L[j][k] * L[j][k] * d[k];
+            d[j] = dj;
+            if (j == 0 || dj < dmin)
+                dmin = dj;
+            // a non-positive pivot has already answered the question, and the
+            // elimination below would divide by it: stop and report it
+            if (!(dj > 0.0))
+                return dmin;
+            for (int i = j + 1; i < n; ++i) {
+                double lij = 0.5 * (m(i, j) + m(j, i));
+                for (int k = 0; k < j; ++k)
+                    lij -= L[i][k] * L[j][k] * d[k];
+                L[i][j] = lij / dj;
+            }
+        }
+        return dmin;
+    }
+
+#ifdef ASDHEX_EAS_IMPERF
+    // splitmix64 on (element tag, internal gauss point index), mapped to [-1, 1).
+    //
+    // Deterministic on every platform, every partition count and every rerun:
+    // uint64_t multiplication wraps in a way the standard defines. Deliberately
+    // NOT std::hash (implementation defined) and NOT size_t arithmetic (32 vs 64
+    // bit divergence), and obviously not rand() or anything seeded from a clock --
+    // an MP run must produce bit-identical results to a serial one.
+    //
+    // The gauss point index is the INTERNAL one, never the reported one: the
+    // Gram-Schmidt in orthogonalize() is order dependent, so the internal order is
+    // the only one the compute path may use.
+    inline double imperfectionUnit(int tag, int gp)
+    {
+        std::uint64_t z =
+            (0x9E3779B97F4A7C15ULL * static_cast<std::uint64_t>(static_cast<std::int64_t>(tag)))
+            ^ (0xBF58476D1CE4E5B9ULL * static_cast<std::uint64_t>(gp + 1));
+        z += 0x9E3779B97F4A7C15ULL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        z = z ^ (z >> 31);
+        // top 53 bits -> [0, 1) exactly representable, then to [-1, 1)
+        return 2.0 * (static_cast<double>(z >> 11) / 9007199254740992.0) - 1.0;
+    }
+#endif // ASDHEX_EAS_IMPERF
+
+    // mean diagonal of m, the intrinsic scale the minimum pivot is normalized by.
+    // trace/n rather than ||m|| because a pivot is a diagonal quantity, so the
+    // ratio is dimensionless and mesh-size independent.
+    inline double meanDiagonal(const Matrix& m)
+    {
+        const int n = m.noRows() < m.noCols() ? m.noRows() : m.noCols();
+        if (n < 1)
+            return 0.0;
+        double t = 0.0;
+        for (int i = 0; i < n; ++i)
+            t += m(i, i);
+        return t / static_cast<double>(n);
+    }
 
     // weights
     constexpr std::array<double, NumGP> WTS = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
@@ -1209,13 +1467,22 @@ namespace
 
         // material data and state variables (in Voigt form)
         Matrix C = Matrix(nvoigt, nvoigt); // 3D elastic tangent matrix
+        Matrix C0 = Matrix(nvoigt, nvoigt); // initial (undamaged) tangent at GP
         Vector eps = Vector(nvoigt);         // strain at GP
         Vector sig = Vector(nvoigt);         // stress at GP
 
         // Petrov blocks (non-symmetric)
         Matrix k_uu = Matrix(ndofe, ndofe); // int b_v^T C b_u
         Matrix k_qq = Matrix(nq, nq);       // int bq_test^T C bq_trial
-        Matrix k_qq_inv = Matrix(nq, nq);     // inv(k_qq) 
+        Matrix k_qq_inv = Matrix(nq, nq);     // inv(k_qq)
+
+        // the A-op regularizer: the same Petrov block built on the INITIAL material
+        // tangent, and k_qq + s*k_qq0, the operator actually inverted. Scratch, like
+        // everything else here: accumulated and consumed within one calculateAll.
+        Matrix k_qq0 = Matrix(nq, nq);      // int bq_test^T C0 bq_trial  (A-op)
+        Matrix k_qq0_sym = Matrix(nq, nq);  // int bq_trial^T C0 bq_trial (A-pen)
+        Matrix k_qq_stab = Matrix(nq, nq);  // k_qq + s*k_qq0 + p*k_qq0_sym
+        Matrix C0tBq = Matrix(nvoigt, nq);  // C0 G_trial, shared by both
 
         // global element LHS/RHS matrices and vectors
         Matrix LHS = Matrix(ndofe, ndofe); // LHS matrix (tangent stiffness)
@@ -1414,8 +1681,21 @@ ASDSolidHex::ASDSolidHex(
     NDMaterial* mat,
     bool corotational,
     Damping* damping,
-    const double* body)
+    const double* body,
+    double eas_stab,
+    double eas_penalty,
+    bool eas_auto
+#ifdef ASDHEX_EAS_IMPERF
+    , double imperfection
+#endif
+    )
     : Element(tag, ELE_TAG_ASDSolidHex)
+    , m_eas_stab(eas_stab)
+    , m_eas_penalty(eas_penalty)
+    , m_eas_auto(eas_auto)
+#ifdef ASDHEX_EAS_IMPERF
+    , m_imperfection(imperfection)
+#endif
     , m_use_corotational(corotational)
     , m_transformation(corotational ? new ASDSolidHexCorotationalTransformation() : nullptr)
     , m_load(nullptr)
@@ -1627,6 +1907,15 @@ void  ASDSolidHex::setDomain(Domain* theDomain)
         }
     }
 
+#ifdef ASDHEX_EAS_IMPERF
+    // Filled here, not in the constructor: the FEM_ObjectBroker path builds the
+    // element with tag 0 and recvSelf installs the real tag afterwards, so a
+    // constructor-time hash would key off the wrong number on every process but
+    // the one that owns the element. setDomain runs after recvSelf in both paths.
+    for (int gp = 0; gp < NumGP; ++gp)
+        m_imperfection_f[gp] = 1.0 + m_imperfection * imperfectionUnit(this->getTag(), gp);
+#endif
+
     // only if not already initialized from recvSelf: recvSelf restores the
     // EAS state, the initial displacement offset and the transformation's
     // internal data, so re-initializing here would throw them away.
@@ -1703,6 +1992,16 @@ void ASDSolidHex::Print(OPS_Stream& s, int flag)
             s << m_node_ids(i) << " ";
         s << endln;
         s << "   Material: " << (m_material[0] ? m_material[0]->getTag() : -1) << endln;
+        s << "   EAS stabilization floor: " << m_eas_stab << endln;
+        s << "   EAS penalty: " << m_eas_penalty << endln;
+        s << "   EAS automatic arming: " << (m_eas_auto ? "on" : "off") << endln;
+#ifdef ASDHEX_EAS_IMPERF
+        s << "   imperfection amplitude: " << m_imperfection << endln;
+        s << "   imperfection factors (internal gauss order):";
+        for (int gp = 0; gp < NumGP; ++gp)
+            s << " " << m_imperfection_f[gp];
+        s << endln;
+#endif
     }
     else if (flag == OPS_PRINT_PRINTMODEL_JSON) {
         s << "\t\t\t{";
@@ -1715,6 +2014,9 @@ void ASDSolidHex::Print(OPS_Stream& s, int flag)
         }
         s << "], ";
         s << "\"corotational\": " << (m_use_corotational ? "true" : "false") << ", ";
+        s << "\"easStab\": " << m_eas_stab << ", ";
+        s << "\"easPenalty\": " << m_eas_penalty << ", ";
+        s << "\"easAuto\": " << (m_eas_auto ? "true" : "false") << ", ";
         s << "\"material\": \"" << (m_material[0] ? m_material[0]->getTag() : -1) << "\"}";
     }
 }
@@ -1863,6 +2165,13 @@ const Matrix& ASDSolidHex::getInitialStiff()
     saved_Kqq_inv = m_eas->Kqq_inv;
     saved_Kqu = m_eas->Kqu;
     saved_Kuq = m_eas->Kuq;
+    // the enhanced-solve diagnostics belong to the MATERIAL tangent evaluation
+    // too: this call would otherwise leave a perfectly healthy elastic rcond and
+    // pivot behind, and the 'easState' recorder would report them instead of the
+    // softening state that is the whole reason for looking.
+    const double saved_rcond = m_eas->rcond;
+    const double saved_min_pivot = m_eas->min_pivot;
+    const double saved_stab_used = m_eas->stab_used;
 
     calculateAll(LHS, RHS, (OPT_LHS | OPT_LHS_IS_INITIAL));
 
@@ -1870,6 +2179,9 @@ const Matrix& ASDSolidHex::getInitialStiff()
     m_eas->Kqq_inv = saved_Kqq_inv;
     m_eas->Kqu = saved_Kqu;
     m_eas->Kuq = saved_Kuq;
+    m_eas->rcond = saved_rcond;
+    m_eas->min_pivot = saved_min_pivot;
+    m_eas->stab_used = saved_stab_used;
 
     return LHS;
 }
@@ -2128,7 +2440,27 @@ const Vector& ASDSolidHex::getResistingForceIncInertia()
 //   alpha(12) + alpha_commit(12) + alpha_residual(12)
 // + U(24) + U_converged(24)
 // + Kqq_inv(12x12) + Kqu(12x24) + Kuq(24x12)
+//
+// EASData's rcond / min_pivot / stab_used are deliberately NOT in here. They are
+// diagnostics recomputed by every condensation, so there is nothing to restore:
+// the first evaluation after recvSelf refills them. Adding them would change this
+// constant, and therefore the message size, for no gain.
 static const int ASDSolidHex_EAS_DATA_SIZE = 12 + 12 + 12 + 24 + 24 + 144 + 288 + 288;
+
+// element level options that are neither EAS state nor Rayleigh/body data:
+//   m_eas_stab(1) + m_eas_penalty(1) + m_eas_auto(1, as a double: see the
+//   comment on ASDSolidHex::m_eas_auto for why it is not a flag in the ID)
+// Kept as its own named term so the two vectData sizes -- in sendSelf and in
+// recvSelf -- cannot drift apart, and so that adding an option here does not
+// silently redefine what ASDSolidHex_EAS_DATA_SIZE means. These are doubles
+// only: a new INT would instead have to grow the ID in BOTH sendSelf and
+// recvSelf, and recvSelf sizes its ID before recvID, so a mismatch there is
+// silent garbage rather than an error.
+#ifdef ASDHEX_EAS_IMPERF
+static const int ASDSolidHex_OPTS_DATA_SIZE = 4;  // + m_imperfection
+#else
+static const int ASDSolidHex_OPTS_DATA_SIZE = 3;
+#endif
 
 int ASDSolidHex::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -2203,13 +2535,21 @@ int ASDSolidHex::sendSelf(int commitTag, Channel& theChannel)
     // + (optional) transformation internal data
     int NLoad = has_load ? NDOF : 0;
     int NT = m_use_corotational ? m_transformation->internalDataSize() : 0;
-    Vector vectData(4 + 3 + NDOF + ASDSolidHex_EAS_DATA_SIZE + NLoad + NT);
+    Vector vectData(4 + 3 + NDOF + ASDSolidHex_EAS_DATA_SIZE + ASDSolidHex_OPTS_DATA_SIZE + NLoad + NT);
     counter = 0;
     vectData(counter++) = alphaM;
     vectData(counter++) = betaK;
     vectData(counter++) = betaK0;
     vectData(counter++) = betaKc;
     for (int i = 0; i < 3; ++i) vectData(counter++) = m_body[i];
+    vectData(counter++) = m_eas_stab;
+    vectData(counter++) = m_eas_penalty;
+    vectData(counter++) = m_eas_auto ? 1.0 : 0.0;
+#ifdef ASDHEX_EAS_IMPERF
+    // the 8 factors are NOT sent: setDomain recomputes them from the tag, which
+    // recvSelf has already installed by then
+    vectData(counter++) = m_imperfection;
+#endif
     for (int i = 0; i < NDOF; ++i) vectData(counter++) = m_U0(i);
     for (int i = 0; i < 12; ++i) vectData(counter++) = m_eas->alpha(i);
     for (int i = 0; i < 12; ++i) vectData(counter++) = m_eas->alpha_commit(i);
@@ -2339,7 +2679,7 @@ int  ASDSolidHex::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&
     // DOUBLE data
     int NLoad = has_load ? NDOF : 0;
     int NT = m_use_corotational ? m_transformation->internalDataSize() : 0;
-    Vector vectData(4 + 3 + NDOF + ASDSolidHex_EAS_DATA_SIZE + NLoad + NT);
+    Vector vectData(4 + 3 + NDOF + ASDSolidHex_EAS_DATA_SIZE + ASDSolidHex_OPTS_DATA_SIZE + NLoad + NT);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDSolidHex::recvSelf() - failed to receive Vector\n";
@@ -2352,6 +2692,12 @@ int  ASDSolidHex::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&
     betaK0 = vectData(counter++);
     betaKc = vectData(counter++);
     for (int i = 0; i < 3; ++i) m_body[i] = vectData(counter++);
+    m_eas_stab = vectData(counter++);
+    m_eas_penalty = vectData(counter++);
+    m_eas_auto = (vectData(counter++) != 0.0);
+#ifdef ASDHEX_EAS_IMPERF
+    m_imperfection = vectData(counter++);
+#endif
     for (int i = 0; i < NDOF; ++i) m_U0(i) = vectData(counter++);
     if (m_eas == nullptr)
         m_eas = new EASData();
@@ -2605,6 +2951,39 @@ ASDSolidHex::setResponse(const char** argv, int argc, OPS_Stream& output)
 
         theResponse = new ElementResponse(this, 7, Vector(6));
     }
+    // ------------------------------------------------------------------
+    // PG-EAS diagnostics. The enhanced solve is entirely internal to the
+    // element -- 12 parameters condensed out, one lagged step per global
+    // iteration, no residual check -- so without these there is no way to see
+    // what it is doing, and a softening analysis that misbehaves gives no
+    // evidence of WHY.
+    //
+    // No GP_REPORT_TO_INTERNAL permutation applies here: alpha and its residual
+    // are element quantities, not per-gauss-point ones.
+    // ------------------------------------------------------------------
+    else if (strcmp(argv[0], "easAlpha") == 0) {
+        for (int i = 0; i < 12; ++i)
+            output.tag("ResponseType", "alpha");
+        theResponse = new ElementResponse(this, 8, Vector(12));
+    }
+    else if (strcmp(argv[0], "easResidual") == 0) {
+        // h = -int(G_test^T sigma dV). NOTE: this has units of STRESS, not force:
+        // G_test carries a 1/jdet and dV carries a jdet, and they cancel (see the
+        // C3 weight note in metric_basis::orthogonalize). So h is NOT work
+        // conjugate to alpha, and no energy norm applies to it.
+        for (int i = 0; i < 12; ++i)
+            output.tag("ResponseType", "h");
+        theResponse = new ElementResponse(this, 9, Vector(12));
+    }
+    else if (strcmp(argv[0], "easState") == 0) {
+        output.tag("ResponseType", "hNorm2");
+        output.tag("ResponseType", "hNormInf");
+        output.tag("ResponseType", "rcond");
+        output.tag("ResponseType", "minPivot");
+        output.tag("ResponseType", "stab");
+        output.tag("ResponseType", "penalty");
+        theResponse = new ElementResponse(this, 10, Vector(6));
+    }
     output.endTag(); // ElementOutput
     return theResponse;
 }
@@ -2704,6 +3083,37 @@ ASDSolidHex::getResponse(int responseID, Information& eleInfo)
         tmpStrain /= 8.0;
 
         return eleInfo.setVector(tmpStrain);
+    }
+    else if (responseID == 8) {
+        return eleInfo.setVector(m_eas->alpha);
+    }
+    else if (responseID == 9) {
+        return eleInfo.setVector(m_eas->alpha_residual);
+    }
+    else if (responseID == 10) {
+
+        // rcond, min_pivot and stab_used are snapshots taken during the last
+        // condensation: they are read from EASData, never from the globals
+        // singleton, which the next element to be evaluated overwrites.
+        // NOTE: with -easPenalty on, hNorm2/hNormInf are the norms of the
+        // PENALIZED residual h - p*Kqq0_sym*alpha, which is the equation actually
+        // being solved. That is the right thing to watch converge; it is not the
+        // unpenalized int(G_test^T sigma dV), which no longer goes to zero.
+        static Vector eas_state(6);
+        const Vector& h = m_eas->alpha_residual;
+        double h_inf = 0.0;
+        for (int i = 0; i < h.Size(); ++i) {
+            double a = std::abs(h(i));
+            if (a > h_inf)
+                h_inf = a;
+        }
+        eas_state(0) = h.Norm();
+        eas_state(1) = h_inf;
+        eas_state(2) = m_eas->rcond;
+        eas_state(3) = m_eas->min_pivot;
+        eas_state(4) = m_eas->stab_used;
+        eas_state(5) = m_eas_penalty;
+        return eleInfo.setVector(eas_state);
     }
     else
         return -1;
@@ -2858,6 +3268,15 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
     // For PG-EAS: initialize the 4 stiffness blocks
     auto& k_uu = ASDSolidHexGlobals::instance().k_uu;
     auto& k_qq = ASDSolidHexGlobals::instance().k_qq;
+    auto& k_qq0 = ASDSolidHexGlobals::instance().k_qq0;
+    auto& k_qq0_sym = ASDSolidHexGlobals::instance().k_qq0_sym;
+
+    // A-op: worst material-tangent definiteness over the gauss points, and the
+    // regularization factor that worst point requires. See the EAS_MAT_PD_TOL
+    // comment: the decision is pointwise on C, never on the assembled block.
+    double mat_min_pivot = 0.0;      // min over GP of pivot(C) / meanDiag(C0)
+    double stab_needed = 0.0;
+    bool mat_pivot_seen = false;
 
     // =========================================================
     // Update the PG-EAS enhanced parameters alpha
@@ -2895,6 +3314,8 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
     if ((options & OPT_RHS) || (options & OPT_LHS)) {
         k_uu.Zero();
         k_qq.Zero();
+        k_qq0.Zero();
+        k_qq0_sym.Zero();
         m_eas->Kqu.Zero();
         m_eas->Kuq.Zero();
         m_eas->alpha_residual.Zero();
@@ -2956,6 +3377,16 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
             eps.addMatrixVector(0.0, B_trial, UL, 1.0);
             // add incompatble strain from EAS at the current GP
             eps.addMatrixVector(1.0, G_trial, m_eas->alpha, 1.0);
+            // never feed the material a non-finite strain: a trial state built
+            // on inf/nan can poison its internal variables even if this
+            // iteration is later discarded. Fail the update instead, so the
+            // algorithm cuts the step while the committed state is still good.
+            if (!isFinite(eps)) {
+                opserr << "ASDSolidHex::calculateAll() - element " << this->getTag()
+                    << ", gauss point " << igauss
+                    << ": non-finite trial strain\n";
+                return -1;
+            }
             // set the trial strain to the material allocated to the Gauss point
             result += m_material[igauss]->setTrialStrain(eps);
         }
@@ -2966,12 +3397,30 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         {
             // add the contribution of the current GP to the RHS: f_int = ∫ B_v^T sigma dV
             sig = m_material[igauss]->getStress();
+#ifdef ASDHEX_EAS_IMPERF
+            // EXPERIMENT: scale sigma BEFORE the damping force is added -- that
+            // force is a separate physical contribution and is not part of the
+            // material's constitutive response. The matching tangent scaling is
+            // applied below, so both the residual and its linearization see the
+            // same perturbed material.
+            sig *= m_imperfection_f[igauss];
+#endif
             // add the damping stress, same pattern as ASDShellQ4: the Damping
             // object is driven by the total stress and returns the additional
             // (rate dependent) stress to be integrated with it
             if (m_damping[igauss]) {
                 m_damping[igauss]->update(sig);
                 sig += m_damping[igauss]->getDampingForce();
+            }
+            // the stress goes into the RHS as it is: no tangent fallback can
+            // mask a non-finite value here (a division by zero inside the
+            // material, typically). Fail the evaluation instead of handing
+            // inf/nan to the solver, so the algorithm cuts the step.
+            if (!isFinite(sig)) {
+                opserr << "ASDSolidHex::calculateAll() - element " << this->getTag()
+                    << ", gauss point " << igauss << ", material " << m_material[igauss]->getTag()
+                    << ": non-finite stress\n";
+                return -1;
             }
             // add internal force contribution to the global RHS
             RHS.addMatrixTransposeVector(1.0, B_test, sig, dv);
@@ -2985,12 +3434,30 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
         if ((options & OPT_RHS) || (options & OPT_LHS)) {
 
             // check for the intila flag
-            const Matrix& Cmat = (options & OPT_LHS_IS_INITIAL)
-                ? m_material[igauss]->getInitialTangent()
-                : m_material[igauss]->getTangent();
+            const Matrix* Cmat = (options & OPT_LHS_IS_INITIAL)
+                ? &m_material[igauss]->getInitialTangent()
+                : &m_material[igauss]->getTangent();
+            // a non-finite material tangent (as opposed to a singular one,
+            // which the condensation below detects and handles) would poison
+            // every block it is integrated into before the inversion is even
+            // attempted: swap it for the initial tangent at this gauss point.
+            if (!(options & OPT_LHS_IS_INITIAL) && !isFinite(*Cmat)) {
+                opserr << "ASDSolidHex::calculateAll() - element " << this->getTag()
+                    << ", gauss point " << igauss << ", material " << m_material[igauss]->getTag()
+                    << ": non-finite material tangent, using the initial one\n";
+                Cmat = &m_material[igauss]->getInitialTangent();
+            }
 
+            C = *Cmat;
 
-            C = Cmat;
+#ifdef ASDHEX_EAS_IMPERF
+            // EXPERIMENT: the same factor that scaled sigma. Applied to the local
+            // C after the initial/tangent choice above, so it lands consistently on
+            // all four condensation blocks, on the OPT_LHS_IS_INITIAL path and on
+            // getInitialStiff(). Scaling sigma without this would destroy the
+            // consistency of the tangent.
+            C *= m_imperfection_f[igauss];
+#endif
 
             // the Damping object contributes a stiffness proportional term; it is
             // reported as a multiplier on the material tangent
@@ -3015,6 +3482,91 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
             // compute K_uu += B_v^T C B_u dV
             k_uu.addMatrixProduct(1.0, BtC, B_trial, dv);
 
+            // compute K_qq0 += Bq_test^T C0 Bq_trial dV, the A-op regularizer.
+            //
+            // Accumulated UNCONDITIONALLY, not only when the user asked for a
+            // non-zero s: the gate after the loop raises s from zero on its own
+            // when k_qq is not definite, and it cannot do that without this block
+            // in hand. Making it lazy would mean re-entering the gauss loop, which
+            // costs a whole material sweep -- 1296 mults per gauss point against
+            // k_uu's 3456 is the far cheaper end of that trade.
+            //
+            // NOT cached across calls: getInitialTangent() is constant in time for
+            // the ASD materials, but E and nu are live setParameter targets and
+            // ASDSolidHex::setParameter broadcasts to all 8 of them, so a cache
+            // would go silently stale. ASDSolidHexRefMetric is the wrong home for
+            // it anyway -- that struct is reference GEOMETRY only.
+            //
+            // The damping multiplier is applied here too, so that on the
+            // OPT_LHS_IS_INITIAL path, where C is already C0, k_qq0 comes out equal
+            // to k_qq and the regularization degenerates to a plain scaling.
+            auto& C0 = ASDSolidHexGlobals::instance().C0;
+            C0 = m_material[igauss]->getInitialTangent();
+#ifdef ASDHEX_EAS_IMPERF
+            // the regularizer must be the elastic block of the SAME perturbed
+            // material, or the gate would compare k_qq against a differently
+            // scaled reference
+            C0 *= m_imperfection_f[igauss];
+#endif
+            if (m_damping[igauss])
+                C0 *= m_damping[igauss]->getStiffnessMultiplier();
+            auto& C0tBq = ASDSolidHexGlobals::instance().C0tBq;
+            C0tBq.addMatrixProduct(0.0, C0, G_trial, 1.0);
+            k_qq0.addMatrixTransposeProduct(1.0, G_test, C0tBq, dv);
+
+            // A-pen needs a DIFFERENT regularizer: the SYMMETRIC one, tested with
+            // G_trial rather than G_test. That is not a stylistic choice -- it is
+            // the matrix that Pi_stab = (p/2)*int((G_trial*alpha)^T C0
+            // (G_trial*alpha) dV) actually differentiates to, so it is the only
+            // one for which the penalty is the gradient of a potential and the
+            // "energetic barrier" reading holds.
+            //
+            // It is also the only one with a definiteness guarantee, by
+            // construction: a^T k_qq0_sym a = int((G_trial*a)^T C0 (G_trial*a) dV)
+            // > 0 for any a != 0. The Petrov form k_qq0 has none -- measured,
+            // sym(k_qq0) is not positive definite even elastically -- which does
+            // not matter for A-op, where it is only a preconditioner, but would
+            // make a "penalty" built on it meaningless.
+            //
+            // Reuses C0tBq: the product C0*G_trial is the same one.
+            //
+            // Gated, so the default path costs exactly what it did before.
+            if (m_eas_penalty > 0.0)
+                k_qq0_sym.addMatrixTransposeProduct(1.0, G_trial, C0tBq, dv);
+
+            // How definite is the material tangent HERE, and how much of the
+            // elastic tangent would have to be added to make it definite?
+            //
+            // For symmetric matrices lambda_min(C + s*C0) >= lambda_min(C) +
+            // s*lambda_min(C0), so s >= (tol*scale - pivot(C)) / pivot(C0) is
+            // sufficient. Min pivots stand in for the extreme eigenvalues: not
+            // exact, but a cheap and conservative-in-practice surrogate, and C0 is
+            // an isotropic elastic tangent whose smallest pivot is its shear term.
+            //
+            // On the OPT_LHS_IS_INITIAL path C is C0, so the pivots coincide, the
+            // requirement is trivially met and no regularization is asked for.
+            const double c0_scale = meanDiagonal(C0);
+            const double c0_pivot = ldltMinPivot(C0);
+            const double c_pivot = ldltMinPivot(C);
+            const double c_pivot_rel = (c0_scale > 0.0) ? (c_pivot / c0_scale) : 0.0;
+            if (!mat_pivot_seen || c_pivot_rel < mat_min_pivot) {
+                mat_min_pivot = c_pivot_rel;
+                mat_pivot_seen = true;
+            }
+            // Once ANY gauss point has lost definiteness, go straight to the cap
+            // rather than to the smallest s that would fix THIS point.
+            //
+            // Grading s by the measured deficit was tried and is worse, for a
+            // reason worth recording: the deficit is measured AFTER the tangent
+            // has already degraded, so a graded s is applied one step too late and
+            // stays too small while the divergence builds. Measured on the brittle
+            // uniaxial test with -tangent: graded reached step 55 of 200 with the
+            // gauss points 17*ft apart, while a constant s = 1 from the start
+            // reached 199 of 200 with them 4e-11 apart -- and, because only the
+            // OPERATOR is regularized, the second costs nothing in accuracy.
+            if (m_eas_auto && c_pivot < EAS_MAT_PD_TOL * c0_scale)
+                stab_needed = EAS_STAB_MAX;
+
         }
 
     } // End of Gauss Loop
@@ -3022,18 +3574,186 @@ int ASDSolidHex::calculateAll(Matrix& LHS, Vector& RHS, int options)
     // AGQI: static condensation
     if ((options & OPT_RHS) || (options & OPT_LHS))
     {
-        // compute the inverse of k_qq for the condensation.
+        // ------------------------------------------------------------------
+        // A-op: adaptive regularization of the enhanced block.
+        //
+        //     Kqq_s = k_qq + s * k_qq0
+        //
+        // Kqq_s is the operator inverted here, so it drives BOTH the static
+        // condensation and -- through m_eas->Kqq_inv, which outlives this call --
+        // the next updatePG_EAS. alpha_residual is left EXACTLY at
+        // h = -int(G_test^T sigma dV), with no s term of any kind.
+        //
+        // THAT IS THE WHOLE POINT: at convergence h = 0, so the Kuq*Kqq_s^-1*h
+        // contribution to the residual vanishes and the converged state is
+        // INDEPENDENT of s. The patch tests and the bending accuracy are untouched
+        // at any s, s may change freely from one iteration to the next, and there
+        // is no new committed state to serialize. This is a Levenberg-Marquardt
+        // regularization of the internal solve: it changes the path, never the
+        // answer. What it buys is convergence -- for an enhanced mode with
+        // eigenvalue lambda < 0, s*mu > 2|lambda| brings the rate back below one.
+        //
+        // It is NOT a penalty on the enhanced modes. A penalty would also subtract
+        // s*k_qq0*alpha from h, which for an elastic material (where k_qq0 IS
+        // k_qq) gives Kqq_s = (1+s)*k_qq exactly, hence alpha_s = alpha_0/(1+s)
+        // and K_cond = Kuu - Kuq*Kqq^-1*Kqu/(1+s): s then interpolates smoothly to
+        // the pure displacement element, costing about 3% of the bending
+        // correction at s = 0.01 and 25% at s = 0.1, while a brittle softening
+        // branch needs s of O(10-100) to be definite. A fixed penalty cannot be
+        // both safe and accurate, which is why only the operator is touched here.
+        //
+        // s comes from the gauss loop, where it was sized pointwise on the
+        // MATERIAL tangent (see EAS_MAT_PD_TOL). It is NOT searched for by testing
+        // the assembled block: sym(k_qq) is not positive definite even elastically,
+        // so no amount of s would ever satisfy such a test.
+        //
+        // The initial-tangent fallback below is kept as the last resort, but with
+        // this in place it should essentially never be reached -- and that matters,
+        // because that path installs inv(k_qq_elastic) into Kqq_inv without
+        // correcting the residual, which is the divergent modified-Newton step
+        // documented in updatePG_EAS.
+        // ------------------------------------------------------------------
+        m_eas->min_pivot = mat_min_pivot;
+        if (stab_needed > EAS_STAB_MAX)
+            stab_needed = EAS_STAB_MAX;
+        // the user floor is NOT capped: -easStab is an explicit instruction
+        const double stab = (stab_needed > m_eas_stab) ? stab_needed : m_eas_stab;
+        m_eas->stab_used = stab;
+
+        // ------------------------------------------------------------------
+        // A-pen: the TRUE penalty, and the one line that separates it from A-op.
+        //
+        // The enhanced equation becomes int(G_test^T sigma dV) + p*Kqq0_sym*alpha
+        // = 0, so with this file's convention h = -int(G_test^T sigma dV):
+        //
+        //     h_p   = h     - p * Kqq0_sym * alpha        <-- HERE, the residual
+        //     Kqq_p = k_qq  + p * Kqq0_sym                <-- and below
+        //
+        // Kqq = -dh/dalpha, hence the plus on the operator against the minus on
+        // the residual. A-op adds only the second of those two lines; that is the
+        // entire difference between them, and everything else follows from it:
+        // because p enters the RESIDUAL, at convergence int(G_test^T sigma dV) is
+        // no longer zero, so the converged answer DEPENDS ON p. A-op's does not.
+        //
+        // Subtracted ONCE, after the gauss loop, not inside it: alpha is an
+        // element quantity, not a per-gauss-point one. It has to happen before the
+        // condensation feeds alpha_residual into the RHS below, and before the
+        // member is left behind for the next updatePG_EAS to consume -- which is
+        // what makes the lagged alpha step see the penalized residual too, as it
+        // must for the two to describe the same problem.
+        //
+        // Applied on the OPT_LHS_IS_INITIAL path as well: the penalty is part of
+        // the element's DEFINITION, not a property of the tangent, so an initial
+        // stiffness computed without it would be inconsistent with the residual.
+        // ------------------------------------------------------------------
+        if (m_eas_penalty > 0.0)
+            m_eas->alpha_residual.addMatrixVector(1.0, k_qq0_sym, m_eas->alpha, -m_eas_penalty);
+
+        const Matrix* Kqq_op = &k_qq;
+        if (stab > 0.0 || m_eas_penalty > 0.0) {
+            auto& k_qq_stab = ASDSolidHexGlobals::instance().k_qq_stab;
+            k_qq_stab = k_qq;
+            if (stab > 0.0)
+                k_qq_stab.addMatrix(1.0, k_qq0, stab);
+            if (m_eas_penalty > 0.0)
+                k_qq_stab.addMatrix(1.0, k_qq0_sym, m_eas_penalty);
+            Kqq_op = &k_qq_stab;
+        }
+
+        // compute the inverse of the (possibly regularized) enhanced block.
         // NOTE: Invert() overwrites its argument, so there is no need to seed it.
+        const double kqq_norm = normInf(*Kqq_op);
         auto& k_qq_inv = ASDSolidHexGlobals::instance().k_qq_inv;
-        int info = k_qq.Invert(k_qq_inv);
+        int info = Kqq_op->Invert(k_qq_inv);
+        // A nearly singular k_qq can pass Invert with info = 0 and still produce
+        // an inverse holding inf/nan, which then poisons LHS, RHS and -- through
+        // Kqq_inv, which outlives this call -- the alpha update of every later
+        // iteration. Catch it here, where the failure is still local.
+        if (info == 0 && !isFinite(k_qq_inv))
+            info = -1;
+        if (info != 0 && !(options & OPT_LHS_IS_INITIAL)) {
+            // k_qq is built from the MATERIAL tangent, so a damaging or perfectly
+            // softening material can make it singular while the element state is
+            // otherwise perfectly healthy. Instead of failing the evaluation,
+            // rebuild the condensation from the INITIAL tangent, which stays
+            // positive definite for the whole analysis.
+            //
+            // Everything is recomputed, not patched: keeping the material tangent
+            // Kuq/Kqu/Kuu and pairing them with an initial tangent Kqq^-1 would mix
+            // two different operators inside Kuq*Kqq^-1*Kqu. The internal force is
+            // unaffected either way -- the RHS integrates B^T*sigma from the
+            // material state, which no flag changes -- so the residual stays exact
+            // and only the operator that eliminates the enhanced modes becomes
+            // approximate: a modified Newton step on the enhanced equations. It
+            // converges to the same solution, with more global iterations.
+            //
+            // OPT_UPDATE is cleared on the retry: the strains have already been
+            // sent to the materials and updatePG_EAS has already advanced alpha for
+            // this iteration, so repeating either would corrupt the state.
+            opserr << "ASDSolidHex::calculateAll() - element " << this->getTag()
+                << ": PG-EAS failed to invert k_qq (info = " << info
+                << ") with the material tangent, retrying with the initial one\n";
+            int retry = this->calculateAll(LHS, RHS, (options & ~OPT_UPDATE) | OPT_LHS_IS_INITIAL);
+            // keep the material return codes collected by THIS pass: the retry
+            // does not run setTrialStrain, so its own result is always zero
+            return (retry < 0) ? retry : result;
+        }
         if (info != 0) {
+            // already on the initial tangent: nothing left to fall back to.
             // do NOT keep going with a garbage inverse: report the failure so the
             // algorithm can reduce the step instead of silently producing nonsense
             opserr << "ASDSolidHex::calculateAll() - element " << this->getTag()
-                << ": PG-EAS failed to invert k_qq (info = " << info << ")\n";
+                << ": PG-EAS failed to invert k_qq (info = " << info
+                << ") with the initial tangent too\n";
             return -1;
         }
+
         m_eas->Kqq_inv = k_qq_inv;
+
+        // reciprocal condition estimate, now that the inverse exists. Free: the
+        // expensive half was already paid by Invert().
+        const double kqq_inv_norm = normInf(k_qq_inv);
+        m_eas->rcond = (kqq_norm > 0.0 && kqq_inv_norm > 0.0)
+            ? 1.0 / (kqq_norm * kqq_inv_norm)
+            : 0.0;
+
+        // One warning per process, not per element per step: a softening material
+        // point is the NORMAL state of every element in a localizing band, and
+        // warning on each of them buries the analysis log. Nor does it fire merely
+        // because the regularization engaged -- that is the mechanism working. It
+        // fires when s has grown so large that the enhanced modes are effectively
+        // gone (the element has degenerated towards a displacement element, so
+        // whatever accuracy the EAS was there to provide is no longer there), or
+        // when the operator is genuinely ill conditioned.
+        //
+        // Per-element, per-step detail is what the 'easState' recorder is for.
+        //
+        // This fires long BEFORE the "failed to invert k_qq" message below, which
+        // by construction only reports the cases that already went singular.
+        // just under the cap: the automatic path cannot exceed EAS_STAB_MAX, so a
+        // threshold above it would only ever fire for an explicit -easStab
+        constexpr double EAS_STAB_WARN = 0.9 * EAS_STAB_MAX;
+        if (!(options & OPT_LHS_IS_INITIAL)) {
+            static bool eas_conditioning_warned = false;
+            if (!eas_conditioning_warned &&
+                (stab > EAS_STAB_WARN || (m_eas->rcond > 0.0 && m_eas->rcond < 1.0e-10)))
+            {
+                eas_conditioning_warned = true;
+                opserr << "ASDSolidHex::calculateAll() - element " << this->getTag()
+                    << ": the PG-EAS enhanced block needed a large regularization"
+                    << " (min pivot of the material tangent / elastic diagonal = "
+                    << m_eas->min_pivot
+                    << ", s = " << m_eas->stab_used
+                    << ", rcond = " << m_eas->rcond << ").\n"
+                    << "   A material tangent this far from definite is what an"
+                    << " indefinite enhanced block is made of. Regularizing the"
+                    << " operator bounds the damage but does not remove the cause:"
+                    << " prefer the material's default secant tangent (drop"
+                    << " -tangent) or -implex, both of which keep the tangent"
+                    << " positive semi-definite. Record 'easState' to follow it."
+                    << " Further warnings suppressed.\n";
+            }
+        }
 
         auto& K_uq_K_qq_inv = ASDSolidHexGlobals::instance().Kuq_Kqqinv;
         K_uq_K_qq_inv.addMatrixProduct(0.0, m_eas->Kuq, m_eas->Kqq_inv, 1.0);
@@ -3086,7 +3806,72 @@ void ASDSolidHex::updatePG_EAS(const Vector& U)
     static Vector tmp(12);
     tmp.addMatrixVector(0.0, m_eas->Kqu, dU, 1.0);
     tmp.addVector(1.0, m_eas->alpha_residual, -1.0);
-    m_eas->alpha.addMatrixVector(1.0, m_eas->Kqq_inv, tmp, -1.0);
+
+    static Vector dalpha(12);
+    dalpha.addMatrixVector(0.0, m_eas->Kqq_inv, tmp, -1.0);
+
+    // ------------------------------------------------------------------
+    // TRUST REGION on the enhanced increment.
+    //
+    // This is ONE lagged linear step per global iteration, and it is only a
+    // consistent Newton step while Kqq is positive definite. Under softening it
+    // is not: k_qq goes indefinite, and when it goes singular the condensation
+    // rebuilds Kqq_inv from the INITIAL tangent and that inverse outlives the
+    // call, so the next iteration lands here as a modified Newton step with
+    // convergence rate rho = |1 - C_t/C_0| -- which exceeds 1 for ANY negative
+    // material tangent, not merely a steep one. A single such step can throw
+    // alpha far enough that the materials are handed a meaningless strain and
+    // never recover, because nothing downstream bounds it: alpha is not a
+    // solver-owned unknown, so no line search or step reduction ever sees it.
+    //
+    // The cap does not change the converged answer: at convergence dalpha -> 0
+    // and the limit is inactive. It only stops one bad iterate from destroying
+    // the state, at worst costing a few extra global iterations, since alpha may
+    // still grow geometrically (GROWTH-fold per iteration).
+    //
+    // alpha is length-like (G_trial carries 1/length, exactly as B does), so
+    // both terms of the limit are lengths and the criterion is dimensionally
+    // consistent. The dU term lets alpha grow from zero at the start of the
+    // analysis; the U term keeps the limit finite when a commit moved the
+    // material state without moving the nodes, which is where a pure ||alpha||
+    // bound would leave dalpha unbounded.
+    //
+    // A zero limit means the element is completely undeformed: h is zero too,
+    // so let the (zero) increment through rather than scaling by 0/0.
+    //
+    // ARMED ONLY WHEN THE ENHANCED BLOCK IS ACTUALLY INDEFINITE, which is what
+    // min_pivot (measured on the raw k_qq by the last condensation) reports. While
+    // the block is positive definite this IS a consistent Newton step and clamping
+    // it would be wrong -- and, more practically, alpha starts every analysis at
+    // zero, so the ||alpha|| term vanishes on the first iteration and a cap left
+    // permanently armed could fire on a perfectly healthy elastic element, moving
+    // results that are currently correct. Linear and hardening analyses therefore
+    // never reach the body below.
+    //
+    // min_pivot is zero before the first condensation has run, but so is Kqq_inv
+    // (initializePG_EAS zeroes it), hence dalpha is zero there and the clamp is a
+    // no-op regardless.
+    // ------------------------------------------------------------------
+    constexpr double EAS_TRUST_GROWTH = 4.0;    // alpha may grow 5x per iteration
+    constexpr double EAS_TRUST_REL = 1.0e-3;    // floor: 0.1% of the current motion
+    const double dalpha_norm = dalpha.Norm();
+    const double trust = EAS_TRUST_GROWTH * m_eas->alpha.Norm()
+        + dU.Norm() + EAS_TRUST_REL * U.Norm();
+    if (m_eas->min_pivot <= 0.0 && trust > 0.0 && dalpha_norm > trust) {
+        dalpha *= (trust / dalpha_norm);
+        static bool eas_trust_warned = false;
+        if (!eas_trust_warned) {
+            eas_trust_warned = true;
+            opserr << "ASDSolidHex::updatePG_EAS() - element " << this->getTag()
+                << ": the enhanced increment was clamped by the trust region"
+                << " (|dalpha| = " << dalpha_norm << " > " << trust << ").\n"
+                << "   The enhanced solve is diverging, typically because k_qq is"
+                << " no longer positive definite. Record 'easState' to follow it."
+                << " Further warnings suppressed.\n";
+        }
+    }
+
+    m_eas->alpha += dalpha;
 }
 
 void ASDSolidHex::initializePG_EAS()
@@ -3115,6 +3900,14 @@ void ASDSolidHex::initializePG_EAS()
     m_eas->Kqq_inv.Zero();
     m_eas->Kqu.Zero();
     m_eas->Kuq.Zero();
+
+    // the diagnostics are not state, but a stale rcond / pivot / s surviving a
+    // revertToStart would be read by the 'easState' recorder as if it described
+    // the fresh element. m_eas_stab is deliberately NOT touched: that one IS a
+    // user parameter, not state.
+    m_eas->rcond = 0.0;
+    m_eas->min_pivot = 0.0;
+    m_eas->stab_used = 0.0;
 }
 
 
@@ -3150,8 +3943,8 @@ ASDSolidHex::displaySelf(Renderer& theViewer, int displayMode, float fact, const
     // and likewise for eta and zeta, so gauss point a sits in the corner of
     // node a. Note that this is the INTERNAL gauss order and the mapping must
     // NOT go through GP_REPORT_TO_INTERNAL: that permutation exists only for the
-    // recorder layer, which reports in the lexicographic i-j-k order STKO
-    // expects. Sending display values through it would rotate the colours around
+    // recorder layer, which reports in the lexicographic i-j-k order of the other
+    // bricks. Sending display values through it would rotate the colours around
     // the element.
     double nodeValue[NumNodes] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
     if (displayMode > 0 && displayMode <= 6) {

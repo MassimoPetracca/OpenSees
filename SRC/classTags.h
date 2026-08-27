@@ -922,6 +922,7 @@
 #define ELE_TAG_ASDTimoshenkoBeam2d        274 // ASDEA - reduced-integration Timoshenko beam
 #define ELE_TAG_ASDTimoshenkoBeam3d        275 // ASDEA - reduced-integration Timoshenko beam
 #define ELE_TAG_ASDTet                     276 // ASDEA - 4-node tetrahedron, linear or corotational
+#define ELE_TAG_ASDHinge                   277 // ASDEA - zero-length hinge, linear or corotational
 #define ELE_TAG_ZeroLength6D	        280 // Davide Noe Gorini
 
 #define FRN_TAG_Coulomb            1

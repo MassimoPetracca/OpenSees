@@ -42,6 +42,7 @@
 #include <math.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
+#include <ParallelAgreement.h>
 
 
 // reported once per process: a system with no unknowns is a legitimate state,
@@ -866,6 +867,11 @@ int
 MumpsParallelSOE::setChannels(int nChannels, Channel **theC)
 {
   numChannels = nChannels;
+
+  // this object only exists in a run whose equations are numbered globally, so its
+  // existence is what tells the agreement primitives that collectives are owed -
+  // see ParallelAgreement.h
+  OPS_setCoupledParallelRun();
 
   if (theChannels != 0)
     delete [] theChannels;

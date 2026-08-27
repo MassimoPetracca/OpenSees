@@ -37,6 +37,8 @@
 #include <elementAPI.h>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 
@@ -586,35 +588,91 @@ Response* ASDTet::setResponse(const char** argv, int argc, OPS_Stream& output)
 {
     Response* theResponse = nullptr;
 
+    if (argc < 1)
+        return theResponse;
+
+    char outputData[32];
+
     output.tag("ElementOutput");
     output.attr("eleType", "ASDTet");
     output.attr("eleTag", getTag());
-    for (int i = 0; i < 4; ++i) {
-        char nodeTag[32];
-        snprintf(nodeTag, 32, "node%d", i + 1);
-        output.attr(nodeTag, m_node_ids(i));
+    for (int i = 1; i <= 4; ++i) {
+        snprintf(outputData, 32, "node%d", i);
+        output.attr(outputData, m_node_ids(i - 1));
     }
 
     if (strcmp(argv[0], "force") == 0 || strcmp(argv[0], "forces") == 0 ||
         strcmp(argv[0], "globalForce") == 0 || strcmp(argv[0], "globalForces") == 0) {
+
+        for (int i = 1; i <= 4; ++i) {
+            snprintf(outputData, 32, "P1_%d", i);
+            output.tag("ResponseType", outputData);
+            snprintf(outputData, 32, "P2_%d", i);
+            output.tag("ResponseType", outputData);
+            snprintf(outputData, 32, "P3_%d", i);
+            output.tag("ResponseType", outputData);
+        }
         theResponse = new ElementResponse(this, 1, Vector(12));
+
     }
-    else if (strcmp(argv[0], "material") == 0 && argc > 1) {
-        // accept both "material <resp> ..." and "material 1 <resp> ..."
-        // (the single integration point)
-        if (argc > 2 && strcmp(argv[1], "1") == 0)
-            theResponse = m_material->setResponse(&argv[2], argc - 2, output);
-        else
-            theResponse = m_material->setResponse(&argv[1], argc - 1, output);
+    else if (strcmp(argv[0], "material") == 0 || strcmp(argv[0], "Material") == 0 ||
+             strcmp(argv[0], "integrPoint") == 0) {
+
+        // argv[1] is the 1-based integration point, argv[2..] the material's own
+        // request. This element has ONE integration point: any other index must be
+        // rejected WITHOUT writing anything to the output stream. Recorders probe
+        // the integration points by calling setResponse with 1, 2, 3, ... until it
+        // returns null, and a material that opens its own output tag before failing
+        // (as NDMaterial::setResponse does) would leave behind a spurious extra
+        // integration point, with no components, in the metadata a recorder builds
+        // from the tag stream.
+        if (argc > 2) {
+            int pointNum = atoi(argv[1]);
+            if (pointNum == 1 && m_material) {
+                output.tag("GaussPoint");
+                output.attr("number", 1);
+                output.attr("xi", 0.25);
+                output.attr("eta", 0.25);
+                output.attr("zeta", 0.25);
+
+                theResponse = m_material->setResponse(&argv[2], argc - 2, output);
+
+                output.endTag(); // GaussPoint
+            }
+        }
+
     }
-    else if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0) {
-        theResponse = m_material->setResponse(argv, argc, output);
-    }
-    else if (strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0) {
-        theResponse = m_material->setResponse(argv, argc, output);
+    else if (strcmp(argv[0], "stress") == 0 || strcmp(argv[0], "stresses") == 0 ||
+             strcmp(argv[0], "stress3D6") == 0 ||
+             strcmp(argv[0], "strain") == 0 || strcmp(argv[0], "strains") == 0 ||
+             strcmp(argv[0], "strain3D6") == 0) {
+
+        // element-level stress/strain: one integration point, so the *3D6 names
+        // (asked for by the vtkhdf recorder, which wants the element average)
+        // are the same response here
+        static const char* sig_names[6] = { "sigma11", "sigma22", "sigma33", "sigma12", "sigma23", "sigma13" };
+        static const char* eps_names[6] = { "eps11", "eps22", "eps33", "eps12", "eps23", "eps13" };
+        bool is_stress = (strncmp(argv[0], "stress", 6) == 0);
+
+        output.tag("GaussPoint");
+        output.attr("number", 1);
+        output.attr("xi", 0.25);
+        output.attr("eta", 0.25);
+        output.attr("zeta", 0.25);
+        output.tag("NdMaterialOutput");
+        output.attr("classType", m_material->getClassTag());
+        output.attr("tag", m_material->getTag());
+
+        for (int i = 0; i < 6; ++i)
+            output.tag("ResponseType", is_stress ? sig_names[i] : eps_names[i]);
+
+        output.endTag(); // NdMaterialOutput
+        output.endTag(); // GaussPoint
+        theResponse = new ElementResponse(this, is_stress ? 3 : 4, Vector(6));
+
     }
 
-    output.endTag();
+    output.endTag(); // ElementOutput
     return theResponse;
 }
 
@@ -622,5 +680,9 @@ int ASDTet::getResponse(int responseID, Information& eleInfo)
 {
     if (responseID == 1)
         return eleInfo.setVector(getResistingForce());
+    else if (responseID == 3)
+        return eleInfo.setVector(m_material->getStress());
+    else if (responseID == 4)
+        return eleInfo.setVector(m_material->getStrain());
     return -1;
 }

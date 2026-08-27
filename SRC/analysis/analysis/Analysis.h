@@ -111,6 +111,10 @@ class Analysis
     // mismatched collectives on the same communicator is undefined behaviour, not a
     // deadlock one can debug.
     //
+    // The reduction itself, and the predicate that decides whether a collective is
+    // owed at all, are in ParallelAgreement.h. That predicate is NOT `np > 1`: a run
+    // of N independent analyses, one per process, shares nothing and must not reduce.
+    //
     // `phase` names the phase in the diagnostic and is optional; pass a literal.
     int worstStepResult(int resultHere, const char *phase = 0);
 

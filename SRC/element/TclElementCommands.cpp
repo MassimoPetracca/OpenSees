@@ -129,6 +129,7 @@ extern void *OPS_ShellNLDKGT(void);   //Added by Shuhao Zhang and  Xinzheng Lu
 extern void *OPS_ASDShellQ4(void);   // Massimo Petracca (ASDEA)
 extern void *OPS_ASDSolidHex(void);  // ASDEA
 extern void *OPS_ASDTet(void);  // ASDEA
+extern void *OPS_ASDHinge(void);  // ASDEA
 extern void *OPS_ASDShellT3(void);   // Massimo Petracca (ASDEA)
 extern void *OPS_ASDTimoshenkoBeam2d(void);  // ASDEA
 extern void *OPS_ASDTimoshenkoBeam3d(void);  // ASDEA
@@ -1119,6 +1120,16 @@ TclModelBuilderElementCommand(ClientData clientData, Tcl_Interp *interp,
   } else if (strcmp(argv[1],"ASDTet") == 0) {
 
     void *theEle = OPS_ASDTet();
+    if (theEle != 0)
+      theElement = (Element *)theEle;
+    else {
+      opserr << "TclElementCommand -- unable to create element of type : " << argv[1] << endln;
+      return TCL_ERROR;
+    }
+
+  } else if (strcmp(argv[1],"ASDHinge") == 0) {
+
+    void *theEle = OPS_ASDHinge();
     if (theEle != 0)
       theElement = (Element *)theEle;
     else {

@@ -31,10 +31,15 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <ParallelAgreement.h>
 
 #if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
-extern bool OPS_PARTITIONED;
 #include <mpi.h>
+#endif
+#if defined(_PARALLEL_PROCESSING)
+// the PartitionedDomain flag, and ONLY the build that has a PartitionedDomain
+// may read it - see aggregateImplexError()
+extern bool OPS_PARTITIONED;
 #endif
 
 CTestImplexWrapper::CTestImplexWrapper()
@@ -44,10 +49,11 @@ CTestImplexWrapper::CTestImplexWrapper()
 }
 
 CTestImplexWrapper::CTestImplexWrapper(ConvergenceTest* test, double maxError,
-	double maxReduction, FloorPolicy floor, int print)
+	double maxFrac, double maxReduction, FloorPolicy floor, int print)
 	: ConvergenceTest(CONVERGENCE_TEST_CTestImplexWrapper)
 	, theTest(test)
 	, maxImplexError(maxError)
+	, maxFraction(maxFrac)
 	, maxReductionFactor(maxReduction)
 	, onFloor(floor)
 	, printFlag(print)
@@ -65,9 +71,14 @@ ConvergenceTest* CTestImplexWrapper::getCopy(int iterations)
 {
 	// the inner test is copied too, not shared: two wrappers that share one
 	// test would reset each other's iteration count on start()
+	// EVERY option travels, and maxFraction is the one that must: Broyden, BFGS
+	// and NewtonLineSearch keep a second test from getCopy(), so a copy that
+	// dropped it would run a different criterion - and, if the reduction below
+	// were ever gated on it, a different number of MPI collectives inside one
+	// process
 	ConvergenceTest* innerCopy = theTest ? theTest->getCopy(iterations) : 0;
-	return new CTestImplexWrapper(innerCopy, maxImplexError, maxReductionFactor,
-		onFloor, printFlag);
+	return new CTestImplexWrapper(innerCopy, maxImplexError, maxFraction,
+		maxReductionFactor, onFloor, printFlag);
 }
 
 int CTestImplexWrapper::setEquiSolnAlgo(EquiSolnAlgo& theAlgo)
@@ -93,14 +104,40 @@ int CTestImplexWrapper::start(void)
 	return theTest->start();
 }
 
-double CTestImplexWrapper::aggregateImplexError(double& minTimeRatio)
+CTestImplexWrapper::Measure CTestImplexWrapper::aggregateImplexError(void)
 {
+	Measure m;
+
 	// measure this rank's material points. Only the ones that took part in
 	// this step, and only those not measured yet: a second call in the same
-	// step costs nothing
-	const IMPLEXManager::Aggregate& agg = IMPLEXManager::instance().aggregate();
+	// step costs nothing.
+	//
+	// The tolerance goes IN so that the count of violations comes out of the
+	// one pass that is being paid for anyway. The registry does not decide
+	// anything with it - it compares.
+	const IMPLEXManager::Aggregate& agg =
+		IMPLEXManager::instance().aggregate(maxImplexError);
 	double e = agg.any_nan ? std::numeric_limits<double>::quiet_NaN() : agg.max;
-	minTimeRatio = agg.min_time_ratio;
+	// as doubles from here on: they are about to cross MPI, where one datatype
+	// is better than two, and a count is exact in a double up to 2^53
+	m.over = static_cast<double>(agg.count_over);
+	m.count = static_cast<double>(agg.count);
+
+	// HOW FAR THE SCHEDULE HAS CUT, measured against THIS analysis step's
+	// nominal - see nominalDt in the header for why the materials' own ratio
+	// cannot answer this once a second analysis step exists.
+	//
+	// ops_Dt is the same quantity the materials extrapolate with (they take
+	// dtime_n = ops_Dt), and Domain::update() has already set it for the
+	// current step by the time any convergence test runs. When it is not
+	// usable - no integrator has set a pseudo-time increment, or a driver has
+	// pinned the material's dt through a Parameter - fall back to what the
+	// registry reports, which is the previous behaviour.
+	double dtNow = ops_Dt;
+	if (dtNow > nominalDt)
+		nominalDt = dtNow;
+	double minTimeRatio = (dtNow > 0.0 && nominalDt > 0.0) ?
+		(dtNow / nominalDt) : agg.min_time_ratio;
 
 #if defined(_PARALLEL_PROCESSING) || defined(_PARALLEL_INTERPRETERS)
 	// THE REDUCTION LIVES HERE, not in the registry, because this is the only
@@ -108,12 +145,37 @@ double CTestImplexWrapper::aggregateImplexError(double& minTimeRatio)
 	// the same number of times, while the registry is just an accumulator with
 	// no business knowing about MPI.
 	//
-	// The guard is the one MPCORecorder uses for the same situation: before
-	// the model is partitioned the object exists on P0 only, and a collective
-	// would hang. Once partitioned, every rank has its own copy of this test -
-	// specifyCTest sends it to the subdomains - so all of them get here.
+	// WHO IS EXEMPT, and it is NOT the same in the two parallel builds - reading
+	// OPS_PARTITIONED in the wrong one is what used to leave rank 0 out of an
+	// Allreduce that every other rank had entered. MPI does not report that as a
+	// missing participant: it pairs rank 0's NEXT collective on the communicator
+	// - worstStepResult()'s MPI_2INT/MPI_MINLOC - with this MPI_DOUBLE/MPI_MAX
+	// and aborts on the datatype mismatch, naming the innocent call.
 	//
-	// NOTE for OpenSeesSP: this assumes master and subdomain analyses reach
+	//  * OpenSeesMP (_PARALLEL_INTERPRETERS): every rank runs the script and
+	//    builds its own copy of this test, so every rank gets here and the
+	//    reduction is UNCONDITIONAL. OPS_PARTITIONED is a PartitionedDomain flag
+	//    that nothing in this build ever sets - partitionModel() is compiled out
+	//    - so it is not just false, it is meaningless here.
+	//  * OpenSeesSP (_PARALLEL_PROCESSING): before the model is partitioned the
+	//    object exists on P0 only and a collective would hang, so P0 alone stays
+	//    out until then. Once partitioned every rank has its own copy -
+	//    specifyCTest sends it to the subdomains - so all of them get here.
+	//
+	// This is the shape AutoConstraintHandler uses for the same situation.
+	//
+	// PRECONDITION, and it belongs to the caller: test() must be reached the same
+	// number of times on every rank. It holds when the inner test's verdict is
+	// global, which is what the stock tests measure - MumpsParallelSOE
+	// broadcasts X and Allreduces B, so every rank sees the same norms - and the
+	// parallel Newton already depends on it. Three ways to break it, none of them
+	// detectable from in here: an inner test that measures rank-local data (one
+	// written in-house, CTestPFEM), the "N independent analyses, one per rank"
+	// use of OpenSeesMP, and the legacy -implexAbort, where a material returning
+	// EC_IMPLEX_Error_Control on ONE rank fails its element's update and that
+	// rank leaves the algorithm before ever reaching test().
+	//
+	// NOTE for OpenSeesSP: this also assumes master and subdomain analyses reach
 	// test() in lockstep. If they do not, this hangs - loudly, and never with
 	// a silently wrong answer, which is why it is worth trying rather than
 	// refusing to run. A partial maximum would be the bad outcome: ranks
@@ -121,7 +183,19 @@ double CTestImplexWrapper::aggregateImplexError(double& minTimeRatio)
 	int pid = 0, np = 1;
 	MPI_Comm_rank(MPI_COMM_WORLD, &pid);
 	MPI_Comm_size(MPI_COMM_WORLD, &np);
-	if (np > 1 && !(pid == 0 && !OPS_PARTITIONED)) {
+	bool do_allreduce = true;
+	if (np == 1) do_allreduce = false;
+#if defined(_PARALLEL_PROCESSING)
+	if (pid == 0 && !OPS_PARTITIONED) do_allreduce = false;
+#endif // defined(_PARALLEL_PROCESSING)
+#if defined(_PARALLEL_INTERPRETERS)
+	// and nobody is exempt in OpenSeesMP, but a run whose processes do not share a
+	// model owes no collective at all: that is the "N independent analyses, one per
+	// rank" case named above, where reducing would pair this test's maximum with an
+	// unrelated analysis's - see ParallelAgreement.h
+	if (!OPS_inCoupledParallelRun()) do_allreduce = false;
+#endif // defined(_PARALLEL_INTERPRETERS)
+	if (do_allreduce) {
 		double local[2] = { std::isnan(e) ? 1.0e300 : e, -minTimeRatio };
 		double global[2] = { 0.0, 0.0 };
 		if (MPI_Allreduce(local, global, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD) == MPI_SUCCESS) {
@@ -132,10 +206,43 @@ double CTestImplexWrapper::aggregateImplexError(double& minTimeRatio)
 		else {
 			opserr << "CTestImplexWrapper: MPI_Allreduce failed, the IMPL-EX error is this rank's only\n";
 		}
+
+		// THE COUNTS NEED A SUM, AND A SUM IS NOT A MAX. So they take a second
+		// collective, and three things about it are not free choices:
+		//
+		//  * it is INSIDE the same guard, right after the first, so the number
+		//    of collectives a rank performs depends on nothing but that guard.
+		//    A collective whose existence depended on a policy value - even one
+		//    as rank-uniform as maxFraction - is the exact shape of the bug
+		//    that left rank 0 out of the reduction above;
+		//  * there is no early return between the two, not even when the first
+		//    one fails. AutoConstraintHandler does four in a row this way, warn
+		//    and carry on, and that is the model. A return here would be a rank
+		//    leaving with a collective still owed;
+		//  * it runs even when e is NaN. isnan(e) is a RANK-LOCAL fact before
+		//    the reduction, so deciding anything on it before both collectives
+		//    are done is how the ranks stop agreeing.
+		//
+		// It costs two doubles per measured step - once per attempted step, not
+		// per iteration - and it changes no number when maxFraction is 0.
+		double lcount[2] = { m.over, m.count };
+		double gcount[2] = { 0.0, 0.0 };
+		if (MPI_Allreduce(lcount, gcount, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD) == MPI_SUCCESS) {
+			m.over = gcount[0];
+			m.count = gcount[1];
+		}
+		else {
+			opserr << "CTestImplexWrapper: MPI_Allreduce failed, the IMPL-EX point count is this rank's only\n";
+		}
 	}
 #endif
 
-	return e;
+	// after the reduction, never before: a fraction of a rank's own points is
+	// not the fraction of the model's
+	m.max = e;
+	m.minTimeRatio = minTimeRatio;
+	m.fraction = (m.count > 0.0) ? (m.over / m.count) : 0.0;
+	return m;
 }
 
 int CTestImplexWrapper::test(void)
@@ -154,8 +261,8 @@ int CTestImplexWrapper::test(void)
 		return result;                   // it failed on its own terms
 
 	// converged: now, and only now, the IMPL-EX criterion
-	double minTimeRatio = 1.0;
-	double e = aggregateImplexError(minTimeRatio);
+	Measure m = aggregateImplexError();
+	double e = m.max;
 	lastImplexError = e;
 
 	if (std::isnan(e)) {
@@ -166,22 +273,37 @@ int CTestImplexWrapper::test(void)
 		return -2;
 	}
 
-	if (e <= maxImplexError)
+	// HOW MANY points are over tolerance, not how bad the worst one is. At
+	// maxFraction 0 the two are the same question - the fraction is nonzero
+	// exactly when the maximum is over tolerance, and 'exactly' is not an
+	// approximation: the maximum IS one of the points that were counted, so
+	// there is no comparison here that the old 'e <= maxImplexError' answered
+	// differently. An empty population gives a fraction of zero and is
+	// accepted, as it always was
+	if (m.fraction <= maxFraction)
 		return result;                   // both criteria satisfied
 
-	if (onFloor == Floor_Accept && minTimeRatio <= maxReductionFactor) {
+	if (onFloor == Floor_Accept && m.minTimeRatio <= maxReductionFactor) {
 		// the step cannot be reduced any further: taking it is better than
 		// deadlocking. The other policy, which is the one to use under an
 		// external adaptive scheme, is to fail and let it decide
 		if (printFlag != 0)
 			opserr << "CTestImplexWrapper: IMPL-EX error " << e << " > " << maxImplexError
-			<< " but the step is at the floor (" << minTimeRatio << "), accepted\n";
+			<< " at " << m.over << " of " << m.count << " points"
+			<< " but the step is at the floor (" << m.minTimeRatio << "), accepted\n";
 		return result;
 	}
 
-	if (printFlag != 0)
+	if (printFlag != 0) {
+		// the counts, not just the worst value: 'over at 1 of 240000 points' and
+		// 'over at 900 of 240000' are the same fraction to nobody, and they are
+		// the two cases maxFraction exists to tell apart
 		opserr << "CTestImplexWrapper: IMPL-EX error " << e << " > " << maxImplexError
-		<< ", step rejected\n";
+			<< " at " << m.over << " of " << m.count << " points";
+		if (maxFraction > 0.0)
+			opserr << " (fraction " << m.fraction << " > " << maxFraction << ")";
+		opserr << ", step rejected\n";
+	}
 
 	// -2 and never -1: iterating does not fix a discretisation error
 	return -2;
@@ -222,13 +344,19 @@ const Vector& CTestImplexWrapper::getNorms(void)
 int CTestImplexWrapper::sendSelf(int cTag, Channel& theChannel)
 {
 	// own data, plus the class tag of the inner test so that the broker on the
-	// other side can build one to receive into
-	static Vector x(5);
+	// other side can build one to receive into.
+	//
+	// maxFraction travels because it is POLICY, and a subdomain running a
+	// different criterion from its master would reject different steps - the
+	// one failure mode this whole reduction exists to prevent. nominalDt does
+	// not travel, because it is state: see the header
+	static Vector x(6);
 	x(0) = maxImplexError;
-	x(1) = maxReductionFactor;
-	x(2) = static_cast<double>(static_cast<int>(onFloor));
-	x(3) = static_cast<double>(printFlag);
-	x(4) = static_cast<double>(theTest ? theTest->getClassTag() : -1);
+	x(1) = maxFraction;
+	x(2) = maxReductionFactor;
+	x(3) = static_cast<double>(static_cast<int>(onFloor));
+	x(4) = static_cast<double>(printFlag);
+	x(5) = static_cast<double>(theTest ? theTest->getClassTag() : -1);
 	if (theChannel.sendVector(this->getDbTag(), cTag, x) < 0) {
 		opserr << "CTestImplexWrapper::sendSelf() - failed to send data\n";
 		return -1;
@@ -244,16 +372,17 @@ int CTestImplexWrapper::sendSelf(int cTag, Channel& theChannel)
 
 int CTestImplexWrapper::recvSelf(int cTag, Channel& theChannel, FEM_ObjectBroker& theBroker)
 {
-	static Vector x(5);
+	static Vector x(6);
 	if (theChannel.recvVector(this->getDbTag(), cTag, x) < 0) {
 		opserr << "CTestImplexWrapper::recvSelf() - failed to receive data\n";
 		return -1;
 	}
 	maxImplexError = x(0);
-	maxReductionFactor = x(1);
-	onFloor = static_cast<FloorPolicy>(static_cast<int>(x(2)));
-	printFlag = static_cast<int>(x(3));
-	int innerClassTag = static_cast<int>(x(4));
+	maxFraction = x(1);
+	maxReductionFactor = x(2);
+	onFloor = static_cast<FloorPolicy>(static_cast<int>(x(3)));
+	printFlag = static_cast<int>(x(4));
+	int innerClassTag = static_cast<int>(x(5));
 	// rebuild the inner test only if what we have is not already of the right
 	// type, as the domain-decomposition analyses do with theirs
 	if (theTest != 0 && theTest->getClassTag() != innerClassTag) {

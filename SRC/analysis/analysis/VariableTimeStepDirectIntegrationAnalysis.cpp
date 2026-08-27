@@ -136,6 +136,9 @@ VariableTimeStepDirectIntegrationAnalysis::analyze(int numSteps, double dT, doub
 
     if (AnalysisCommitFilter::instance().isActive()) {
         result = AnalysisCommitFilter::instance().test();
+        // the filter evaluates a Tcl expression, so its verdict is rank-local by
+        // nature - the one phase here whose failure nothing else can reduce
+        result = this->worstStepResult(result, "commitFilter()");
         if (result < 0) {
             result = -6;
         }

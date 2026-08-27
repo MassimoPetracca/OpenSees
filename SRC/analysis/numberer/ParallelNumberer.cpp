@@ -50,6 +50,7 @@
 #include <unordered_set>
 #include <vector>
 #include <EquationPartition.h>
+#include <ParallelAgreement.h>
 
 
 ParallelNumberer::ParallelNumberer(int dTag, int numSub, Channel **theC) 
@@ -99,6 +100,11 @@ int
 ParallelNumberer::setChannels(int nChannels, Channel **theC)
 {
   numChannels = nChannels;
+
+  // this object only exists in a run whose equations are numbered globally, so its
+  // existence is what tells the agreement primitives that collectives are owed -
+  // see ParallelAgreement.h
+  OPS_setCoupledParallelRun();
 
   if (theChannels != 0)
     delete [] theChannels;
