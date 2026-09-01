@@ -103,6 +103,7 @@ OBJS       = NDMaterial.o \
 	ASDConcrete3DMaterial.o \
 	TIMSoilAbutment3D.o \
 	ASDPlasticDamageConcrete3DMaterial.o \
+	ASDSteel3DMaterial.o \
 	ASDConcrete3DMaterial.o
 
 

@@ -317,6 +317,7 @@
 #include "PluginNDMaterial.h"
 #include "TIMSoilAbutment3D.h"
 #include "ASDPlasticDamageConcrete3DMaterial.h"
+#include "ASDSteel3DMaterial.h"
 #include "PlasticDamageConcrete3d.h"
 #include "PlasticDamageConcretePlaneStress.h"
 #include "ConcreteS.h"
@@ -2509,6 +2510,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_ASDPlasticDamageConcrete3DMaterial:
       return new ASDPlasticDamageConcrete3DMaterial();
+
+  case ND_TAG_ASDSteel3DMaterial:
+      return new ASDSteel3DMaterial();
 
   case ND_TAG_PlasticDamageConcrete3d:
       return new PlasticDamageConcrete3d();

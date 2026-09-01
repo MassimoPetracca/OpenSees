@@ -123,6 +123,7 @@ extern void* OPS_Parallel3DMaterial(void);
 extern void* OPS_ASDConcrete3DMaterial(void);
 extern void* OPS_TIMSoilAbutment3D(void);
 extern void* OPS_ASDPlasticDamageConcrete3DMaterial(void);
+extern void* OPS_ASDSteel3DMaterial(void);
 #ifdef _EIGEN3
 extern void* OPS_AllASDPlasticMaterial3Ds(void);
 #endif // _EIGEN3
@@ -1302,6 +1303,15 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
 			return TCL_ERROR;
 	}
 
+
+	else if(strcmp(argv[1], "ASDSteel3D") == 0) {
+		void *theMat = OPS_ASDSteel3DMaterial();
+		if (theMat != 0)  {
+			theMaterial = (NDMaterial *)theMat;
+		}
+		else
+			return TCL_ERROR;
+	}
 #ifdef _EIGEN3
     else if(strcmp(argv[1], "ASDPlasticMaterial3D") == 0 ||
             strcmp(argv[1], "ASDPlasticMaterial") == 0) {

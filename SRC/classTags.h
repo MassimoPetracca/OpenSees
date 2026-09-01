@@ -578,6 +578,7 @@
 #define ND_TAG_ASDPlasticDamageConcrete3DMaterial 7021 // Massimo Petracca ASDEA Software
 
 #define ND_TAG_TIMSoilAbutment3D 7022 // Davide Noe Gorini
+#define ND_TAG_ASDSteel3DMaterial 7023 // Massimo Petracca ASDEA Software
 
 #define ND_TAG_ASDPlasticMaterial3D 10000 // For ASDPlasticity-class material
 

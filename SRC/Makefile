@@ -1089,6 +1089,7 @@ MATERIAL_LIBS   =  $(FE)/material/Material.o \
 	$(FE)/material/nD/PluginNDMaterial.o \
 	$(FE)/material/nD/ASDConcrete3DMaterial.o \
 	$(FE)/material/nD/TIMSoilAbutment3D.o \
+	$(FE)/material/nD/ASDSteel3DMaterial.o \
 	$(FE)/material/nD/stressDensityModel/stressDensity.o \
 	$(FE)/material/nD/stressDensityModel/SDM-UC.o \
 	$(FE)/material/nD/OrthotropicRotatingAngleConcreteT2DMaterial01/OrthotropicRotatingAngleConcreteT2DMaterial01.o \
