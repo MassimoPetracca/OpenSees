@@ -60,6 +60,54 @@ public:
 		double H2 = 0.0;
 		double gamma1 = 0.0;
 		double gamma2 = 0.0;
+		// THE BAUSCHINGER DIAL, in [0, 1]: 0 keeps the original calibration
+		// (bit-identical response), 1 is the recipe tuned on Menegotto-Pinto
+		// (OpenSees-Testing/asd-steel-3d, ex04/ex05). Each identity pair is a
+		// Voce softening term (amplitude pair_Q >= 0, rate pair_b) that ships
+		// with a kinematic twin at the SAME rate (H = Q*b, gamma = b), derived
+		// - never stored - so an unpaired softening cannot exist. On the
+		// monotonic backbone the twin cancels its softening identically, so
+		// the backbone is the original one for EVERY dial value; on reversal
+		// the twin must travel 2*Q to change sign while the softening only
+		// follows the accumulated p - the released difference IS the
+		// Bauschinger effect. The twin also protects the return mapping: it
+		// steepens the local Newton residual two to one where the softening
+		// flattens it, so -F'/E never drops below 1.
+		double bauschinger = 0.0;
+		static constexpr int NPAIRS = 3;
+		static constexpr int NKIN = 2 + NPAIRS;
+		double pair_Q[NPAIRS] = { 0.0, 0.0, 0.0 };
+		double pair_b[NPAIRS] = { 0.0, 0.0, 0.0 };
+		inline bool hasBauschinger() const { return bauschinger > 0.0; }
+		// the isotropic part of the yield radius, R(p) <= 0, and its
+		// derivative. Closed-form in the accumulated plastic multiplier: the
+		// pairs own no state of their own beyond their twin backstresses
+		inline double isoR(double p) const {
+			double r = 0.0;
+			for (int j = 0; j < NPAIRS; ++j)
+				r -= pair_Q[j] * (1.0 - std::exp(-pair_b[j] * p));
+			return r;
+		}
+		inline double isoRprime(double p) const {
+			double r = 0.0;
+			for (int j = 0; j < NPAIRS; ++j)
+				r -= pair_Q[j] * pair_b[j] * std::exp(-pair_b[j] * p);
+			return r;
+		}
+		// the kinematic terms, originals first, twins after. Fills H and g
+		// (sized NKIN) and returns how many are active: 2 when the dial is at
+		// zero, so the default pays nothing for the machinery
+		inline int kinTerms(double* H, double* g) const {
+			H[0] = H1; g[0] = gamma1;
+			H[1] = H2; g[1] = gamma2;
+			if (!hasBauschinger())
+				return 2;
+			for (int j = 0; j < NPAIRS; ++j) {
+				H[2 + j] = pair_Q[j] * pair_b[j];
+				g[2 + j] = pair_b[j];
+			}
+			return NKIN;
+		}
 		// misc
 		bool implex = false;
 		bool implex_control = false;
@@ -86,8 +134,9 @@ public:
 		double tolR = 0.0;
 		// counter: MUST match the number of fields sendSelf/recvSelf write and
 		// read here. It said 19 while 22 were being written, so the vector was
-		// undersized and the tail of the parameters was landing past its end
-		static constexpr int NDATA = 23;
+		// undersized and the tail of the parameters was landing past its end.
+		// 23 original + the dial + NPAIRS*(Q, b)
+		static constexpr int NDATA = 24 + 2 * NPAIRS;
 	};
 
 public:

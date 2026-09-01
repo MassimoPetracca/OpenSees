@@ -168,7 +168,8 @@ void* OPS_ASDSteel3DMaterial(void)
 		"<-rho $rho> "
 		"<-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> "
 		"<-implexAbort> <-implexAlpha $alpha> "
-		"<-tangent> <-fullTangent> <-elasticTangent>";
+		"<-tangent> <-fullTangent> <-elasticTangent> "
+		"<-bauschinger $beta>";
 
 	if (OPS_GetNumRemainingInputArgs() < 6) {
 		opserr << "nDMaterial ASDSteel3D Error: few arguments (< 6).\n" << msg << "\n";
@@ -248,6 +249,15 @@ void* OPS_ASDSteel3DMaterial(void)
 		else if (strcmp(value, "-elasticTangent") == 0) {
 			params.tangent_type = ASDSteel3DMaterial::Tangent_Elastic;
 		}
+		else if (strcmp(value, "-bauschinger") == 0) {
+			if (!lam_optional_double("bauschinger", params.bauschinger)) return nullptr;
+			if (params.bauschinger < 0.0 || params.bauschinger > 1.0) {
+				opserr << "nDMaterial ASDSteel3D Error: invalid '-bauschinger' (" << params.bauschinger
+					<< "). It should be in [0, 1]: 0 is the original calibration, 1 the recipe "
+					"tuned on Menegotto-Pinto.\n";
+				return nullptr;
+			}
+		}
 		else {
 			// a number here means a positional argument too many, which is a
 			// different mistake from a misspelled keyword and deserves to be
@@ -325,6 +335,25 @@ void* OPS_ASDSteel3DMaterial(void)
 		params.H2 = H2 * (1.0 - alpha);
 		params.gamma2 = gamma2;
 	}
+	// THE IDENTITY PAIRS of the Bauschinger dial, all from the same four
+	// numbers the Chaboche calibration reads. Copied from
+	// OPS_ASDSteel1DMaterial() and NOT re-derived, for the same reason the
+	// Chaboche block above is a verbatim copy: the isotropic term is identical
+	// in the two models, so the same numbers keep the uniaxial equivalence.
+	// Three time scales - the kink hider, the belly, the slow development -
+	// amplitudes scaled by the dial, rates fixed. The kinematic twins
+	// (H = Q*b, gamma = b) are derived in kinTerms(), never stored: an
+	// unpaired softening cannot be built. Tuned on Menegotto-Pinto in
+	// OpenSees-Testing/asd-steel-3d (ex04/ex05)
+	{
+		const double ey = sy / E;
+		const double q_frac[3] = { 0.15, 0.25, 0.20 };
+		const double b_eyfac[3] = { 0.2, 2.5, 18.0 };
+		for (int j = 0; j < ASDSteel3DMaterial::InputParameters::NPAIRS; ++j) {
+			params.pair_Q[j] = params.bauschinger * q_frac[j] * sy;
+			params.pair_b[j] = 1.0 / (b_eyfac[j] * ey);
+		}
+	}
 	params.E = E;
 	params.nu = nu;
 	params.rho = rho;
@@ -391,13 +420,21 @@ int ASDSteel3DMaterial::integrate(void)
 	// PlaneStressMaterial, whose static condensation calls setTrialStrain many
 	// times per outer call.
 	ep = ep_commit;
-	a1 = a1_commit;
-	a2 = a2_commit;
+	for (int k = 0; k < InputParameters::NKIN; ++k)
+		a[k] = a_commit[k];
 	p = p_commit;
 	plastic = false;
 	failed = false;
 	dgamma = 0.0;
 	n_flow.Zero();
+
+	// the kinematic terms: the 2 originals, plus the twins of the identity
+	// pairs when the Bauschinger dial is on (see the note in InputParameters).
+	// nkin is 2 at dial zero, so the default runs exactly the original loop
+	double Hk[InputParameters::NKIN];
+	double gk[InputParameters::NKIN];
+	const int nkin = params.kinTerms(Hk, gk);
+	const bool iso = params.hasBauschinger();
 
 	// elastic predictor
 	for (int i = 0; i < 6; ++i)
@@ -405,11 +442,18 @@ int ASDSteel3DMaterial::integrate(void)
 	elasticStress(lam, mu2, de, stress);
 	double pm = traceOf(stress) / 3.0;
 	deviatorOf(stress, s_tr);
-	for (int i = 0; i < 6; ++i)
-		xi_tr(i) = s_tr(i) - a1_commit(i) - a2_commit(i);
+	for (int i = 0; i < 6; ++i) {
+		xi_tr(i) = s_tr(i);
+		for (int k = 0; k < nkin; ++k)
+			xi_tr(i) -= a_commit[k](i);
+	}
+
+	// the yield radius at the committed plastic strain: sy, plus the
+	// (non-positive) Voce contraction of the identity pairs
+	double radius23 = iso ? SQ23 * (params.sy + params.isoR(p_commit)) : sy23;
 
 	double r = std::sqrt(std::max(0.0, contract(xi_tr, xi_tr)));
-	if (r - sy23 <= 0.0) {
+	if (r - radius23 <= 0.0) {
 		// elastic. stress already holds the answer
 		tg_r = r;
 		return 0;
@@ -426,23 +470,28 @@ int ASDSteel3DMaterial::integrate(void)
 	constexpr double L_ABS_TOL = 1.0e-8;   // absolute, on Dp
 
 	double Dp = 0.0;
-	double E1 = 1.0, E2 = 1.0, Phi1 = 0.0, Phi2 = 0.0, Psi1 = 0.0, Psi2 = 0.0;
+	double Ek[InputParameters::NKIN];
+	double Phik[InputParameters::NKIN];
+	double Psik[InputParameters::NKIN];
 	double beta = r, D = r, Rp = -1.0;
 	bool converged = false;
 
 	for (int iter = 0; iter < MAX_ITER; ++iter) {
-		double x1 = params.gamma1 * Dp;
-		double x2 = params.gamma2 * Dp;
-		double g1 = gfun(x1);
-		double g2 = gfun(x2);
-		Psi1 = x1 * g1;  E1 = 1.0 - Psi1;
-		Psi2 = x2 * g2;  E2 = 1.0 - Psi2;
-		Phi1 = SQ23 * params.H1 * Dp * g1;
-		Phi2 = SQ23 * params.H2 * Dp * g2;
+		double sumPhi = 0.0;
+		for (int k = 0; k < nkin; ++k) {
+			double x = gk[k] * Dp;
+			double g = gfun(x);
+			Psik[k] = x * g;  Ek[k] = 1.0 - Psik[k];
+			Phik[k] = SQ23 * Hk[k] * Dp * g;
+			sumPhi += Phik[k];
+		}
 
-		beta = r - G2 * SQ32 * Dp - (Phi1 + Phi2);
-		for (int i = 0; i < 6; ++i)
-			w(i) = Psi1 * a1_commit(i) + Psi2 * a2_commit(i);
+		beta = r - G2 * SQ32 * Dp - sumPhi;
+		for (int i = 0; i < 6; ++i) {
+			w(i) = 0.0;
+			for (int k = 0; k < nkin; ++k)
+				w(i) += Psik[k] * a_commit[k](i);
+		}
 
 		// ||xi||, with xi = beta*n + w and n a unit tensor
 		double c = contract(n, w);
@@ -453,7 +502,19 @@ int ASDSteel3DMaterial::integrate(void)
 			failed = true;
 			break;
 		}
-		double R = D - sy23;
+
+		// the yield radius and its derivative at p_commit + Dp. The isotropic
+		// term FLATTENS the residual, but each pair's twin (in the loops
+		// above, at the same rate) steepens it two to one, so the descent
+		// guard below never fires on account of the dial - see the note in
+		// InputParameters
+		double Rp_iso = 0.0;
+		if (iso) {
+			double pp = p_commit + Dp;
+			radius23 = SQ23 * (params.sy + params.isoR(pp));
+			Rp_iso = SQ23 * params.isoRprime(pp);
+		}
+		double R = D - radius23;
 
 		for (int i = 0; i < 6; ++i)
 			xi(i) = beta * n(i) + w(i);
@@ -462,12 +523,17 @@ int ASDSteel3DMaterial::integrate(void)
 		// d(w)/dDp = sum(gamma_i*E_i*a_i_commit), both exact for the exponential
 		// map, so this Newton is the exact one - as the 1D's is, for the same
 		// reason
-		double bp = -G2 * SQ32 - SQ23 * (params.H1 * E1 + params.H2 * E2);
-		for (int i = 0; i < 6; ++i)
-			wp(i) = params.gamma1 * E1 * a1_commit(i) + params.gamma2 * E2 * a2_commit(i);
+		double bp = -G2 * SQ32;
+		for (int k = 0; k < nkin; ++k)
+			bp -= SQ23 * Hk[k] * Ek[k];
+		for (int i = 0; i < 6; ++i) {
+			wp(i) = 0.0;
+			for (int k = 0; k < nkin; ++k)
+				wp(i) += gk[k] * Ek[k] * a_commit[k](i);
+		}
 		for (int i = 0; i < 6; ++i)
 			aux(i) = (bp * n(i) + wp(i)) / D;
-		Rp = contract(xi, aux);
+		Rp = contract(xi, aux) - Rp_iso;
 
 		if (!(Rp < -1.0e-12 * G2)) {
 			// no descent: the same guard the 1D writes as 'if (dF == 0) break'
@@ -492,15 +558,11 @@ int ASDSteel3DMaterial::integrate(void)
 	}
 
 	// re-evaluate the frozen-map quantities at the converged Dp and accept
-	{
-		double x1 = params.gamma1 * Dp;
-		double x2 = params.gamma2 * Dp;
-		double g1 = gfun(x1);
-		double g2 = gfun(x2);
-		Psi1 = x1 * g1;
-		Psi2 = x2 * g2;
-		Phi1 = SQ23 * params.H1 * Dp * g1;
-		Phi2 = SQ23 * params.H2 * Dp * g2;
+	for (int k = 0; k < nkin; ++k) {
+		double x = gk[k] * Dp;
+		double g = gfun(x);
+		Psik[k] = x * g;
+		Phik[k] = SQ23 * Hk[k] * Dp * g;
 	}
 	double Dg = SQ32 * Dp;
 
@@ -509,8 +571,8 @@ int ASDSteel3DMaterial::integrate(void)
 		// TENSOR storage: no weight matrix. In engineering storage this same
 		// line would need a factor two on the shears
 		ep(i) = ep_commit(i) + Dg * n(i);
-		a1(i) = a1_commit(i) + Phi1 * n(i) - Psi1 * a1_commit(i);
-		a2(i) = a2_commit(i) + Phi2 * n(i) - Psi2 * a2_commit(i);
+		for (int k = 0; k < nkin; ++k)
+			a[k](i) = a_commit[k](i) + Phik[k] * n(i) - Psik[k] * a_commit[k](i);
 		// the deviatoric part, assembled so the mean stress is EXACTLY the
 		// elastic one: plastic flow here is deviatoric by construction and
 		// tr(sigma) must not drift with it
@@ -565,20 +627,22 @@ void ASDSteel3DMaterial::extrapolate(void)
 	double Dg = timeFactor() * dgamma_commit;
 	if (Dg > 0.0) {
 		double Dp = SQ23 * Dg;
-		double x1 = params.gamma1 * Dp;
-		double x2 = params.gamma2 * Dp;
-		double g1 = gfun(x1);
-		double g2 = gfun(x2);
-		double Psi1 = x1 * g1;
-		double Psi2 = x2 * g2;
-		double Phi1 = SQ23 * params.H1 * Dp * g1;
-		double Phi2 = SQ23 * params.H2 * Dp * g2;
+		double Hk[InputParameters::NKIN];
+		double gk[InputParameters::NKIN];
+		const int nkin = params.kinTerms(Hk, gk);
 
+		// the isotropic term of the identity pairs needs no update of its
+		// own: it is closed-form in p, which is extrapolated right here
 		p = p_commit + Dp;
-		for (int i = 0; i < 6; ++i) {
+		for (int i = 0; i < 6; ++i)
 			ep(i) = ep_commit(i) + Dg * n_commit(i);
-			a1(i) = a1_commit(i) + Phi1 * n_commit(i) - Psi1 * a1_commit(i);
-			a2(i) = a2_commit(i) + Phi2 * n_commit(i) - Psi2 * a2_commit(i);
+		for (int k = 0; k < nkin; ++k) {
+			double x = gk[k] * Dp;
+			double g = gfun(x);
+			double Psi = x * g;
+			double Phi = SQ23 * Hk[k] * Dp * g;
+			for (int i = 0; i < 6; ++i)
+				a[k](i) = a_commit[k](i) + Phi * n_commit(i) - Psi * a_commit[k](i);
 		}
 		n_flow = n_commit;
 		plastic = true;
@@ -589,8 +653,8 @@ void ASDSteel3DMaterial::extrapolate(void)
 		// counterpart of the 1D's sg_commit == 0 - or the time factor clamped
 		p = p_commit;
 		ep = ep_commit;
-		a1 = a1_commit;
-		a2 = a2_commit;
+		for (int k = 0; k < InputParameters::NKIN; ++k)
+			a[k] = a_commit[k];
 		n_flow.Zero();
 		plastic = false;
 	}
@@ -904,8 +968,8 @@ int ASDSteel3DMaterial::commitState(void)
 	strain_commit = strain;
 	stress_commit = stress;
 	ep_commit = ep;
-	a1_commit = a1;
-	a2_commit = a2;
+	for (int k = 0; k < InputParameters::NKIN; ++k)
+		a_commit[k] = a[k];
 	p_commit = p;
 	commit_done = true;
 
@@ -917,8 +981,8 @@ int ASDSteel3DMaterial::revertToLastCommit(void)
 	strain = strain_commit;
 	stress = stress_commit;
 	ep = ep_commit;
-	a1 = a1_commit;
-	a2 = a2_commit;
+	for (int k = 0; k < InputParameters::NKIN; ++k)
+		a[k] = a_commit[k];
 	p = p_commit;
 	dgamma = 0.0;
 	n_flow.Zero();
@@ -937,10 +1001,10 @@ int ASDSteel3DMaterial::revertToStart(void)
 	stress_implex.Zero();
 	ep.Zero();
 	ep_commit.Zero();
-	a1.Zero();
-	a1_commit.Zero();
-	a2.Zero();
-	a2_commit.Zero();
+	for (int k = 0; k < InputParameters::NKIN; ++k) {
+		a[k].Zero();
+		a_commit[k].Zero();
+	}
 	p = 0.0;
 	p_commit = 0.0;
 	dgamma = 0.0;
@@ -1006,6 +1070,12 @@ void ASDSteel3DMaterial::Print(OPS_Stream& s, int flag)
 	s << "  sy = " << params.sy << "  su (implied) = " << stressReference() << "\n";
 	s << "  H1 = " << params.H1 << "  gamma1 = " << params.gamma1
 		<< "  H2 = " << params.H2 << "  gamma2 = " << params.gamma2 << "\n";
+	if (params.hasBauschinger()) {
+		s << "  bauschinger = " << params.bauschinger << "  identity pairs (Q, b):";
+		for (int j = 0; j < InputParameters::NPAIRS; ++j)
+			s << "  (" << params.pair_Q[j] << ", " << params.pair_b[j] << ")";
+		s << "\n";
+	}
 	s << "  implex = " << (params.implex ? 1 : 0) << "\n";
 }
 
@@ -1020,14 +1090,15 @@ void ASDSteel3DMaterial::Print(OPS_Stream& s, int flag)
 // undersized Vector, in silence. A hand-maintained count cannot be trusted; a
 // hand-maintained count that is asserted can.
 //
-//   12 six-vectors: strain, strain_commit, stress, stress_commit, stress_implex,
-//                   ep, ep_commit, a1, a1_commit, a2, a2_commit, n_commit  = 72
+//   18 six-vectors: strain, strain_commit, stress, stress_commit, stress_implex,
+//                   ep, ep_commit, a[5], a_commit[5], n_commit           = 108
 //   p, p_commit, dgamma_commit                                            =  3
 //   dtime_n, dtime_n_commit, dtime_0                                      =  3
 //   implex_error                                                          =  1
 //   E, nu, rho, sy, H1, gamma1, H2, gamma2,
-//   implex_error_tolerance, implex_time_redution_limit, implex_alpha      = 11
-static const int ASDSteel3D_NDATA_D = 90;
+//   bauschinger, pair_Q[3], pair_b[3],
+//   implex_error_tolerance, implex_time_redution_limit, implex_alpha      = 18
+static const int ASDSteel3D_NDATA_D = 133;
 
 int ASDSteel3DMaterial::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -1061,10 +1132,10 @@ int ASDSteel3DMaterial::sendSelf(int commitTag, Channel& theChannel)
 	put6(stress_implex);
 	put6(ep);
 	put6(ep_commit);
-	put6(a1);
-	put6(a1_commit);
-	put6(a2);
-	put6(a2_commit);
+	for (int k = 0; k < InputParameters::NKIN; ++k) {
+		put6(a[k]);
+		put6(a_commit[k]);
+	}
 	put6(n_commit);
 	ddata(c++) = p;
 	ddata(c++) = p_commit;
@@ -1081,6 +1152,11 @@ int ASDSteel3DMaterial::sendSelf(int commitTag, Channel& theChannel)
 	ddata(c++) = params.gamma1;
 	ddata(c++) = params.H2;
 	ddata(c++) = params.gamma2;
+	ddata(c++) = params.bauschinger;
+	for (int j = 0; j < InputParameters::NPAIRS; ++j) {
+		ddata(c++) = params.pair_Q[j];
+		ddata(c++) = params.pair_b[j];
+	}
 	ddata(c++) = params.implex_error_tolerance;
 	ddata(c++) = params.implex_time_redution_limit;
 	ddata(c++) = params.implex_alpha;
@@ -1136,10 +1212,10 @@ int ASDSteel3DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	get6(stress_implex);
 	get6(ep);
 	get6(ep_commit);
-	get6(a1);
-	get6(a1_commit);
-	get6(a2);
-	get6(a2_commit);
+	for (int k = 0; k < InputParameters::NKIN; ++k) {
+		get6(a[k]);
+		get6(a_commit[k]);
+	}
 	get6(n_commit);
 	p = ddata(c++);
 	p_commit = ddata(c++);
@@ -1156,6 +1232,11 @@ int ASDSteel3DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	params.gamma1 = ddata(c++);
 	params.H2 = ddata(c++);
 	params.gamma2 = ddata(c++);
+	params.bauschinger = ddata(c++);
+	for (int j = 0; j < InputParameters::NPAIRS; ++j) {
+		params.pair_Q[j] = ddata(c++);
+		params.pair_b[j] = ddata(c++);
+	}
 	params.implex_error_tolerance = ddata(c++);
 	params.implex_time_redution_limit = ddata(c++);
 	params.implex_alpha = ddata(c++);
@@ -1336,13 +1417,13 @@ const Vector& ASDSteel3DMaterial::getEquivalentPlasticStrain() const
 
 const Vector& ASDSteel3DMaterial::getBackStress1() const
 {
-	out_a1 = a1;
+	out_a1 = a[0];
 	return out_a1;
 }
 
 const Vector& ASDSteel3DMaterial::getBackStress2() const
 {
-	out_a2 = a2;
+	out_a2 = a[1];
 	return out_a2;
 }
 
@@ -1361,9 +1442,17 @@ const Vector& ASDSteel3DMaterial::getYieldFunction() const
 	static Vector s(6);
 	static Vector xi(6);
 	deviatorOf(stress, s);
-	for (int i = 0; i < 6; ++i)
-		xi(i) = s(i) - a1(i) - a2(i);
-	out_yield(0) = std::sqrt(std::max(0.0, contract(xi, xi))) - SQ23 * params.sy;
+	for (int i = 0; i < 6; ++i) {
+		xi(i) = s(i);
+		for (int k = 0; k < InputParameters::NKIN; ++k)
+			xi(i) -= a[k](i);
+	}
+	// the radius carries the Voce contraction of the identity pairs, so this
+	// response reads zero ON the shrunken surface, exactly as the 1D would
+	double radius = params.sy;
+	if (params.hasBauschinger())
+		radius += params.isoR(p);
+	out_yield(0) = std::sqrt(std::max(0.0, contract(xi, xi))) - SQ23 * radius;
 	return out_yield;
 }
 
@@ -1401,6 +1490,10 @@ double ASDSteel3DMaterial::stressReference(void) const
 	// saturation (gamma = 0) the hardening is unbounded and the yield stress is
 	// the only scale there is.
 	//
+	// THE BAUSCHINGER DIAL DOES NOT MOVE THIS NUMBER: each twin saturates at
+	// +Q_j and its Voce term at -Q_j, so the pairs cancel on the asymptote
+	// exactly as they cancel on the backbone.
+	//
 	// IDENTICAL to ASDSteel1DMaterial::stressReference(), and that is a
 	// requirement, not a coincidence: the numerator of the metric may differ
 	// between models (an absolute value in 1D, the largest Voigt component here)
@@ -1426,8 +1519,8 @@ void ASDSteel3DMaterial::saveTrialState(TrialState& x) const
 {
 	x.stress = stress;
 	x.ep = ep;
-	x.a1 = a1;
-	x.a2 = a2;
+	for (int k = 0; k < InputParameters::NKIN; ++k)
+		x.a[k] = a[k];
 	x.n_flow = n_flow;
 	x.C = C;
 	x.p = p;
@@ -1440,8 +1533,8 @@ void ASDSteel3DMaterial::restoreTrialState(const TrialState& x)
 {
 	stress = x.stress;
 	ep = x.ep;
-	a1 = x.a1;
-	a2 = x.a2;
+	for (int k = 0; k < InputParameters::NKIN; ++k)
+		a[k] = x.a[k];
 	n_flow = x.n_flow;
 	C = x.C;
 	p = x.p;

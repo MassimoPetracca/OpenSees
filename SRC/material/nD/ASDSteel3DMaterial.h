@@ -82,6 +82,7 @@
 #include <Vector.h>
 #include <Matrix.h>
 #include <IMPLEXManager.h>
+#include <cmath>
 
 // This material runs an IMPL-EX scheme, so it takes part in the IMPL-EX error
 // control: it registers itself, says when it took part in a step, and measures
@@ -126,8 +127,9 @@ public:
 		double E = 0.0;
 		double nu = 0.0;
 		double rho = 0.0;
-		// yield stress. CONSTANT - there is no isotropic hardening in this
-		// model, exactly as there is none in the 1D
+		// yield stress. The VIRGIN radius: with the Bauschinger dial at zero it
+		// is constant, exactly as in the 1D; with the dial on, the identity
+		// pairs below contract it with the accumulated plastic strain
 		double sy = 0.0;
 		// Chaboche / Armstrong-Frederick kinematic hardening, two backstresses.
 		// Calibrated by the parser from (E, sy, su, eu) with the same formula
@@ -136,6 +138,58 @@ public:
 		double gamma1 = 0.0;
 		double H2 = 0.0;
 		double gamma2 = 0.0;
+		// THE BAUSCHINGER DIAL, in [0, 1]: 0 keeps the original calibration
+		// (bit-identical response), 1 is the recipe tuned on Menegotto-Pinto
+		// (OpenSees-Testing/asd-steel-3d, ex04/ex05). Each identity pair is a
+		// Voce softening term (amplitude pair_Q >= 0, rate pair_b) that ships
+		// with a kinematic twin at the SAME rate (H = Q*b, gamma = b), derived
+		// - never stored - so an unpaired softening cannot exist. On the
+		// monotonic backbone the twin cancels its softening identically, so
+		// the backbone is the original one for EVERY dial value; on reversal
+		// the twin must travel 2*Q to change sign while the softening only
+		// follows the accumulated p - the released difference IS the
+		// Bauschinger effect. The twin also protects the return mapping: it
+		// steepens the scalar Newton residual two to one where the softening
+		// flattens it, so the monotonicity margin never drops below the
+		// elastic unit. Same numbers, same names, same meaning as in
+		// ASDSteel1DMaterial::InputParameters - the isotropic term is
+		// IDENTICAL in the two models (f = ||xi|| - sqrt(2/3)*(sy + R(p)), and
+		// the 3D p maps one-to-one onto the 1D lambda), so the uniaxial
+		// equivalence holds with no new proof
+		double bauschinger = 0.0;
+		static constexpr int NPAIRS = 3;
+		static constexpr int NKIN = 2 + NPAIRS;
+		double pair_Q[NPAIRS] = { 0.0, 0.0, 0.0 };
+		double pair_b[NPAIRS] = { 0.0, 0.0, 0.0 };
+		inline bool hasBauschinger() const { return bauschinger > 0.0; }
+		// the isotropic part of the yield radius (uniaxial measure, the
+		// sqrt(2/3) is applied where sy gets its own), and its derivative
+		inline double isoR(double p) const {
+			double r = 0.0;
+			for (int j = 0; j < NPAIRS; ++j)
+				r -= pair_Q[j] * (1.0 - std::exp(-pair_b[j] * p));
+			return r;
+		}
+		inline double isoRprime(double p) const {
+			double r = 0.0;
+			for (int j = 0; j < NPAIRS; ++j)
+				r -= pair_Q[j] * pair_b[j] * std::exp(-pair_b[j] * p);
+			return r;
+		}
+		// the kinematic terms, originals first, twins after. Fills H and g
+		// (sized NKIN) and returns how many are active: 2 when the dial is at
+		// zero, so the default pays nothing for the machinery
+		inline int kinTerms(double* H, double* g) const {
+			H[0] = H1; g[0] = gamma1;
+			H[1] = H2; g[1] = gamma2;
+			if (!hasBauschinger())
+				return 2;
+			for (int j = 0; j < NPAIRS; ++j) {
+				H[2 + j] = pair_Q[j] * pair_b[j];
+				g[2 + j] = pair_b[j];
+			}
+			return NKIN;
+		}
 		// IMPL-EX
 		bool implex = false;
 		bool implex_control = false;
@@ -169,8 +223,7 @@ public:
 	struct TrialState {
 		Vector stress = Vector(6);
 		Vector ep = Vector(6);
-		Vector a1 = Vector(6);
-		Vector a2 = Vector(6);
+		Vector a[InputParameters::NKIN] = { Vector(6), Vector(6), Vector(6), Vector(6), Vector(6) };
 		Vector n_flow = Vector(6);
 		Matrix C = Matrix(6, 6);
 		double p = 0.0;
@@ -277,13 +330,12 @@ private:
 	// place, at the end of setTrialStrain, covering every branch
 	Vector stress_implex = Vector(6);
 
-	// state variables - plasticity
+	// state variables - plasticity. The backstresses: the 2 originals first,
+	// then the twins of the identity pairs (zero, and untouched, at dial zero)
 	Vector ep = Vector(6);
 	Vector ep_commit = Vector(6);
-	Vector a1 = Vector(6);
-	Vector a1_commit = Vector(6);
-	Vector a2 = Vector(6);
-	Vector a2_commit = Vector(6);
+	Vector a[InputParameters::NKIN] = { Vector(6), Vector(6), Vector(6), Vector(6), Vector(6) };
+	Vector a_commit[InputParameters::NKIN] = { Vector(6), Vector(6), Vector(6), Vector(6), Vector(6) };
 	double p = 0.0;
 	double p_commit = 0.0;
 	double dgamma = 0.0;

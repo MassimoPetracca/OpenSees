@@ -69,6 +69,20 @@ namespace {
 
 	inline double sign(double x) { return x == 0.0 ? 0.0 : (x > 0.0 ? 1.0 : -1.0); }
 
+	// (1 - exp(-x))/x, continued to 1 at x = 0 - the same helper
+	// ASDSteel3DMaterial.cpp carries, for the same reason. The exact integral
+	// of the AF law over a step is a_i = sg*H_i/gamma_i - (sg*H_i/gamma_i -
+	// a_i_commit)*exp(-gamma_i*dl), which divides by gamma_i and therefore has
+	// to branch when a backstress does not saturate. Written through this
+	// function the same expression is a_i = a_i_commit*exp(-gamma_i*dl) +
+	// sg*H_i*dl*g(gamma_i*dl), which at gamma_i = 0 gives linear Prager
+	// hardening, the correct limit, reached continuously
+	inline double gfun(double x) {
+		if (std::abs(x) < 1.0e-4)
+			return 1.0 - x * (0.5 - x * (1.0 / 6.0 - x / 24.0));
+		return -std::expm1(-x) / x;
+	}
+
 	/**
 	A simple 2D vector
 	*/
@@ -294,8 +308,7 @@ namespace {
 		revertToLastCommit() cannot help with, which is why this struct exists.
 		*/
 		struct TrialState {
-			double alpha1 = 0.0;
-			double alpha2 = 0.0;
+			double alpha[ASDSteel1DMaterial::InputParameters::NKIN] = { 0.0 };
 			double epl = 0.0;
 			double lambda = 0.0;
 			double strain = 0.0;
@@ -305,13 +318,14 @@ namespace {
 
 	public:
 		using param_t = ASDSteel1DMaterial::InputParameters;
+		static constexpr int NKIN = param_t::NKIN;
 		SteelComponent() = default;
 		int serializationDataSize() const;
 		void serialize(Vector& data, int& pos);
 		void deserialize(Vector& data, int& pos);
 		inline void saveTrialState(TrialState& x) const {
-			x.alpha1 = alpha1;
-			x.alpha2 = alpha2;
+			for (int k = 0; k < NKIN; ++k)
+				x.alpha[k] = alpha[k];
 			x.epl = epl;
 			x.lambda = lambda;
 			x.strain = strain;
@@ -319,8 +333,8 @@ namespace {
 			x.sg_commit = sg_commit;
 		}
 		inline void restoreTrialState(const TrialState& x) {
-			alpha1 = x.alpha1;
-			alpha2 = x.alpha2;
+			for (int k = 0; k < NKIN; ++k)
+				alpha[k] = x.alpha[k];
 			epl = x.epl;
 			lambda = x.lambda;
 			strain = x.strain;
@@ -332,19 +346,19 @@ namespace {
 			lambda_commit_old = lambda_commit;
 			// state variables
 			epl_commit = epl;
-			alpha1_commit = alpha1;
-			alpha2_commit = alpha2;
+			for (int k = 0; k < NKIN; ++k)
+				alpha_commit[k] = alpha[k];
 			lambda_commit = lambda;
 			strain_commit = strain;
 			stress_commit = stress;
-			// done 
+			// done
 			return 0;
 		}
 		inline void revertToLastCommit() {
 			// state variables
 			epl = epl_commit;
-			alpha1 = alpha1_commit;
-			alpha2 = alpha2_commit;
+			for (int k = 0; k < NKIN; ++k)
+				alpha[k] = alpha_commit[k];
 			lambda = lambda_commit;
 			strain = strain_commit;
 			stress = stress_commit;
@@ -353,10 +367,10 @@ namespace {
 			// state variables
 			epl = 0.0;
 			epl_commit = 0.0;
-			alpha1 = 0.0;
-			alpha1_commit = 0.0;
-			alpha2 = 0.0;
-			alpha2_commit = 0.0;
+			for (int k = 0; k < NKIN; ++k) {
+				alpha[k] = 0.0;
+				alpha_commit[k] = 0.0;
+			}
 			lambda = 0.0;
 			lambda_commit = 0.0;
 			lambda_commit_old = 0.0;
@@ -374,10 +388,18 @@ namespace {
 			constexpr double F_REL_TOL = 1.0e-6;
 			constexpr double L_ABS_TOL = 1.0e-8;
 			// base steel response
-			alpha1 = alpha1_commit;
-			alpha2 = alpha2_commit;
+			for (int k = 0; k < NKIN; ++k)
+				alpha[k] = alpha_commit[k];
 			lambda = lambda_commit;
 			epl = epl_commit;
+			// the kinematic terms: the 2 originals, plus the twins of the
+			// identity pairs when the Bauschinger dial is on (see the note in
+			// InputParameters). nkin is 2 at dial zero, so the default runs
+			// exactly the original loop
+			double Hk[NKIN];
+			double gk[NKIN];
+			const int nkin = params.kinTerms(Hk, gk);
+			const bool iso = params.hasBauschinger();
 			// elastic predictor
 			strain = _strain;
 			double dstrain = strain - strain_commit;
@@ -385,30 +407,53 @@ namespace {
 			tangent = params.E;
 			// plastic utilities
 			double sg = 0.0; // plastic flow direction
-			auto lam_rel_stress = [this, &sigma]() -> double {
-				return sigma - alpha1 - alpha2;
+			// the accumulated plastic multiplier the isotropic term is
+			// evaluated at: lambda_commit + delta_lambda, tracked by the update
+			double p_new = lambda_commit;
+			auto lam_rel_stress = [this, &sigma, nkin]() -> double {
+				double rel = sigma;
+				for (int k = 0; k < nkin; ++k)
+					rel -= alpha[k];
+				return rel;
 				};
-			auto lam_yield_function = [&params, &lam_rel_stress]() -> double {
-				return std::abs(lam_rel_stress()) - params.sy;
+			auto lam_yield_function = [&params, &lam_rel_stress, &p_new, iso]() -> double {
+				// yield radius: sy, plus the (non-positive) Voce contraction
+				// driven by the accumulated plastic multiplier
+				double radius = params.sy;
+				if (iso)
+					radius += params.isoR(p_new);
+				return std::abs(lam_rel_stress()) - radius;
 				};
-			auto lam_yield_derivative = [this, &lam_rel_stress, &params](double dlambda) -> double {
+			auto lam_yield_derivative = [this, &lam_rel_stress, &params, &Hk, &gk, nkin, &p_new, iso](double dlambda) -> double {
 				// plastic flow direction
 				double sg = sign(lam_rel_stress());
 				// d stress / d lambda
 				double dsigma = -params.E * sg;
 				// d backstress / d lambda
-				double dalpha1 = params.H1 * sg - params.gamma1 * alpha1;
-				double dalpha2 = params.H2 * sg - params.gamma2 * alpha2;
-				return sg * (dsigma - dalpha1 - dalpha2);
+				double dF = sg * dsigma;
+				for (int k = 0; k < nkin; ++k)
+					dF -= sg * (Hk[k] * sg - gk[k] * alpha[k]);
+				// d radius / d lambda: the softening FLATTENS the residual, but
+				// each pair's twin (in the loop above, at the same rate) steepens
+				// it two to one, so -dF/E never drops below 1 - see the note in
+				// InputParameters
+				if (iso)
+					dF -= params.isoRprime(p_new);
+				return dF;
 				};
-			auto lam_yield_update = [this, &sigma, &lam_rel_stress, &params](double dlambda, double delta_lambda) {
+			auto lam_yield_update = [this, &sigma, &lam_rel_stress, &params, &Hk, &gk, nkin, &p_new](double dlambda, double delta_lambda) {
 				// plastic flow direction
 				double sg = sign(lam_rel_stress());
 				// update stress
 				sigma -= sg * dlambda * params.E;
-				// update backstress
-				alpha1 = sg * params.H1 / params.gamma1 - (sg * params.H1 / params.gamma1 - alpha1_commit) * std::exp(-params.gamma1 * delta_lambda);
-				alpha2 = sg * params.H2 / params.gamma2 - (sg * params.H2 / params.gamma2 - alpha2_commit) * std::exp(-params.gamma2 * delta_lambda);
+				// update backstress (exact exponential map, division-free form:
+				// admits gamma = 0 with no special case)
+				for (int k = 0; k < nkin; ++k) {
+					double x = gk[k] * delta_lambda;
+					alpha[k] = alpha_commit[k] * std::exp(-x) + sg * Hk[k] * delta_lambda * gfun(x);
+				}
+				// update the accumulated plastic multiplier the radius reads
+				p_new = lambda_commit + delta_lambda;
 				};
 			// plastic corrector
 			if (params.implex && do_implex) {
@@ -423,9 +468,12 @@ namespace {
 					epl = epl_commit + sg * delta_lambda;
 				// update stress
 				sigma -= sg * delta_lambda * params.E;
-				// update backstress
-				alpha1 = sg * params.H1 / params.gamma1 - (sg * params.H1 / params.gamma1 - alpha1_commit) * std::exp(-params.gamma1 * delta_lambda);
-				alpha2 = sg * params.H2 / params.gamma2 - (sg * params.H2 / params.gamma2 - alpha2_commit) * std::exp(-params.gamma2 * delta_lambda);
+				// update backstress. The isotropic term needs no update of its
+				// own: it is closed-form in lambda
+				for (int k = 0; k < nkin; ++k) {
+					double x = gk[k] * delta_lambda;
+					alpha[k] = alpha_commit[k] * std::exp(-x) + sg * Hk[k] * delta_lambda * gfun(x);
+				}
 			}
 			else {
 				// standard implicit evaluation of lambda
@@ -454,10 +502,13 @@ namespace {
 							// update plastic strain
 							if (sg > 0.0)
 								epl += sg * delta_lambda;
-							// compute tangent
-							double PE =
-								params.gamma1 * (params.H1 / params.gamma1 - sg * alpha1) +
-								params.gamma2 * (params.H2 / params.gamma2 - sg * alpha2);
+							// compute tangent: the kinematic moduli plus the
+							// (non-positive) isotropic one
+							double PE = 0.0;
+							for (int k = 0; k < nkin; ++k)
+								PE += Hk[k] - gk[k] * sg * alpha[k];
+							if (iso)
+								PE += params.isoRprime(p_new);
 							tangent = params.K_alpha*((params.E * PE) / (params.E + PE))+(1-params.K_alpha)*params.E;  //tangent correction (K_alpha =1 -> computed tangent, K_alpha=0 -> tangent=E)
 							break;
 						}
@@ -480,11 +531,10 @@ namespace {
 		}
 
 	public:
-		// state variables - backstresses
-		double alpha1 = 0.0;
-		double alpha1_commit = 0.0;
-		double alpha2 = 0.0;
-		double alpha2_commit = 0.0;
+		// state variables - backstresses: the 2 originals first, then the
+		// twins of the identity pairs (zero, and untouched, at dial zero)
+		double alpha[NKIN] = { 0.0 };
+		double alpha_commit[NKIN] = { 0.0 };
 		// positive plastic strain (for fracture)
 		double epl = 0.0;
 		double epl_commit = 0.0;
@@ -499,21 +549,21 @@ namespace {
 		double stress = 0.0;
 		double stress_commit = 0.0;
 		// methods
-		static constexpr int NDATA = 14;
+		static constexpr int NDATA = 8 + 2 * NKIN;
 	};
 	int SteelComponent::serializationDataSize() const
 	{
-		return NDATA; //= 14
+		return NDATA;
 	}
 
 	void SteelComponent::serialize(Vector& data, int& pos)
 	{
 		data(pos++) = epl;
 		data(pos++) = epl_commit;
-		data(pos++) = alpha1;
-		data(pos++) = alpha1_commit;
-		data(pos++) = alpha2;
-		data(pos++) = alpha2_commit;
+		for (int k = 0; k < NKIN; ++k) {
+			data(pos++) = alpha[k];
+			data(pos++) = alpha_commit[k];
+		}
 		data(pos++) = lambda;
 		data(pos++) = lambda_commit;
 		data(pos++) = lambda_commit_old;
@@ -528,10 +578,10 @@ namespace {
 	{
 		epl = data(pos++);
 		epl_commit = data(pos++);
-		alpha1 = data(pos++);
-		alpha1_commit = data(pos++);
-		alpha2 = data(pos++);
-		alpha2_commit = data(pos++);
+		for (int k = 0; k < NKIN; ++k) {
+			alpha[k] = data(pos++);
+			alpha_commit[k] = data(pos++);
+		}
 		lambda = data(pos++);
 		lambda_commit = data(pos++);
 		lambda_commit_old = data(pos++);
@@ -1931,7 +1981,7 @@ void* OPS_ASDSteel1DMaterial()
 		opserr << "Using ASDSteel1D - Developed by: Alessia Casalucci, Massimo Petracca, Guido Camata, ASDEA Software Technology\n";
 		first_done = true;
 	} 
-	static const char* msg = "uniaxialMaterial ASDSteel1D $tag $E $sy $su $eu  <-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> <-implexAbort> <-auto_regularization> <-buckling  $lch < $r>> <-fracture  <$r>> <-slip $matTag <$r>> <-K_alpha $K_alpha> <-max_iter $max_iter> <-tolU $tolU> <-tolR $tolR>";
+	static const char* msg = "uniaxialMaterial ASDSteel1D $tag $E $sy $su $eu  <-implex> <-implexControl $implexErrorTolerance $implexTimeReductionLimit> <-implexAbort> <-auto_regularization> <-buckling  $lch < $r>> <-fracture  <$r>> <-slip $matTag <$r>> <-K_alpha $K_alpha> <-max_iter $max_iter> <-tolU $tolU> <-tolR $tolR> <-bauschinger $beta>";
 
 	// check arguments
 	int numArgs = OPS_GetNumRemainingInputArgs();
@@ -1965,6 +2015,7 @@ void* OPS_ASDSteel1DMaterial()
 	double max_iter= 100;
 	double tolU = 1.0e-6;
 	double tolR = 1.0e-6;
+	double bauschinger = 0.0;
 	bool have_K_alpha = false;
 	bool have_max_iter = false;
 	bool have_tolU = false;
@@ -2154,6 +2205,16 @@ void* OPS_ASDSteel1DMaterial()
 				return nullptr;
 			have_tolR = true;
 		}
+		if (strcmp(value, "-bauschinger") == 0) {
+			if (!lam_optional_double("bauschinger", bauschinger))
+				return nullptr;
+			if (bauschinger < 0.0 || bauschinger > 1.0) {
+				opserr << "UniaxialMaterial ASDSteel1D Error: invalid value for '-bauschinger' ("
+					<< bauschinger << "). It should be in [0, 1]: 0 is the original calibration, "
+					"1 the recipe tuned on Menegotto-Pinto.\n";
+				return nullptr;
+			}
+		}
 	}
 
 	// checks
@@ -2198,6 +2259,22 @@ void* OPS_ASDSteel1DMaterial()
 	params.gamma1 = gamma1;
 	params.H2 = H2 * (1.0 - alpha);
 	params.gamma2 = gamma2;
+	// THE IDENTITY PAIRS of the Bauschinger dial, all from the same four
+	// numbers the Chaboche calibration reads. Three time scales: the kink
+	// hider, the belly, the slow development - amplitudes scaled by the dial,
+	// rates fixed. The kinematic twins (H = Q*b, gamma = b) are derived in
+	// kinTerms(), never stored: an unpaired softening cannot be built. Tuned
+	// on Menegotto-Pinto in OpenSees-Testing/asd-steel-3d (ex04/ex05)
+	{
+		const double ey = sy / E;
+		const double q_frac[3] = { 0.15, 0.25, 0.20 };
+		const double b_eyfac[3] = { 0.2, 2.5, 18.0 };
+		params.bauschinger = bauschinger;
+		for (int j = 0; j < ASDSteel1DMaterial::InputParameters::NPAIRS; ++j) {
+			params.pair_Q[j] = bauschinger * q_frac[j] * sy;
+			params.pair_b[j] = 1.0 / (b_eyfac[j] * ey);
+		}
+	}
 	params.implex = implex;
 	params.implex_control = implex_control;
 	params.implex_abort_on_error = implex_abort_on_error;
@@ -2575,6 +2652,11 @@ int ASDSteel1DMaterial::sendSelf(int commitTag, Channel &theChannel)
 	ddata(counter++) = params.H2;
 	ddata(counter++) = params.gamma1;
 	ddata(counter++) = params.gamma2;
+	ddata(counter++) = params.bauschinger;
+	for (int j = 0; j < ASDSteel1DMaterial::InputParameters::NPAIRS; ++j) {
+		ddata(counter++) = params.pair_Q[j];
+		ddata(counter++) = params.pair_b[j];
+	}
 	ddata(counter++) = static_cast<double>(params.implex);
 	ddata(counter++) = static_cast<int>(params.implex_control);
 	ddata(counter++) = static_cast<double>(params.implex_abort_on_error);
@@ -2665,6 +2747,11 @@ int ASDSteel1DMaterial::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectB
 	params.H2 = ddata(counter++);
 	params.gamma1 = ddata(counter++);
 	params.gamma2 = ddata(counter++);
+	params.bauschinger = ddata(counter++);
+	for (int j = 0; j < ASDSteel1DMaterial::InputParameters::NPAIRS; ++j) {
+		params.pair_Q[j] = ddata(counter++);
+		params.pair_b[j] = ddata(counter++);
+	}
 	params.implex = static_cast<bool>(ddata(counter++));
 	params.implex_control = static_cast<bool>(ddata(counter++));
 	params.implex_abort_on_error = static_cast<bool>(ddata(counter++));
@@ -2957,7 +3044,13 @@ double ASDSteel1DMaterial::stressReference(void) const
 	// 'su' the user typed. Recovering it from the parameters instead of storing
 	// it keeps the serialization alone and stays right if the calibration
 	// changes. With no saturation (gamma = 0) the hardening is unbounded and the
-	// yield stress is the only scale there is
+	// yield stress is the only scale there is.
+	//
+	// THE BAUSCHINGER DIAL DOES NOT MOVE THIS NUMBER: each twin saturates at
+	// +Q_j and its Voce term at -Q_j, so the pairs cancel on the asymptote
+	// exactly as they cancel on the backbone. The reference stays su, and it
+	// MUST stay the same expression here and in ASDSteel3DMaterial or the same
+	// IMPL-EX tolerance stops meaning the same thing in 1D and in 3D
 	double ref = params.sy;
 	if (params.gamma1 > 0.0)
 		ref += params.H1 / params.gamma1;
