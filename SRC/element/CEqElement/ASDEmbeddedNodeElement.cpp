@@ -580,7 +580,7 @@ OPS_ASDEmbeddedNodeElement(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape> <-slip $slipMatTag $realNodeTag $KS $Xx $Xy $Xz>\n"
+    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape> <-slip $slipMatTag $realNodeTag $KS $Xx $Xy $Xz> <-slipArea $A>\n"
         "   3 retained nodes = triangle (2D or 3D)\n"
         "   4 retained nodes = quadrilateral in 2D; in 3D a tetrahedron, or a\n"
         "                      quadrilateral face with -shape quad\n"
@@ -602,7 +602,15 @@ OPS_ASDEmbeddedNodeElement(void)
         "                      the reference configuration) and by the stiff\n"
         "                      elastic constant $KS [F/L] on every other\n"
         "                      relative dof. With -corotational the bar axis\n"
-        "                      rotates with the host frame.\n";
+        "                      rotates with the host frame.\n"
+        "   -slipArea: the bond area of the embedded node (the rebar node's\n"
+        "                      tributary length times the bar circumference).\n"
+        "                      The element multiplies the -slip material's\n"
+        "                      stress and tangent by it, so that material is\n"
+        "                      the tau-slip (bond STRESS vs slip) law itself\n"
+        "                      and 'slipStress' reports its raw tau. Default\n"
+        "                      1.0: the material is then a FORCE-slip law\n"
+        "                      (the pre-slipArea convention).\n";
 
     int numArgs = OPS_GetNumRemainingInputArgs();
     if (numArgs < 5) {
@@ -639,6 +647,8 @@ OPS_ASDEmbeddedNodeElement(void)
     UniaxialMaterial* slip_mat = nullptr;
     int slip_node = 0;
     double slip_KS = 0.0;
+    double slip_area = 1.0;
+    bool slip_area_set = false;
     Vector slip_x(3);
     for (int i = 5; i < numArgs; i++) {
         const char* what = OPS_GetString();
@@ -733,6 +743,25 @@ OPS_ASDEmbeddedNodeElement(void)
             }
             slip_x.Normalize();
         }
+        else if (strcmp(what, "-slipArea") == 0) {
+            keywords_started = true;
+            if (i == numArgs - 1) {
+                opserr << "ASDEmbeddedNodeElement ERROR: The -slipArea keyword should be followed by a floating point number.\n" << descr;
+                return 0;
+            }
+            ++i;
+            numData = 1;
+            if (OPS_GetDouble(&numData, &slip_area) != 0) {
+                opserr << "ASDEmbeddedNodeElement ERROR invalid floating point number for -slipArea keyword.\n";
+                return 0;
+            }
+            if (slip_area <= 0.0) {
+                opserr << "ASDEmbeddedNodeElement ERROR: -slipArea wants a positive bond area, got "
+                    << slip_area << ".\n";
+                return 0;
+            }
+            slip_area_set = true;
+        }
         else if (strcmp(what, "-shape") == 0) {
             keywords_started = true;
             if (i == numArgs - 1) {
@@ -812,6 +841,11 @@ OPS_ASDEmbeddedNodeElement(void)
             << "rebar-slip assembly is not defined on u-p nodes.\n" << descr;
         return 0;
     }
+    if (slip_area_set && slip_mat == nullptr) {
+        opserr << "ASDEmbeddedNodeElement ERROR: -slipArea only makes sense together with -slip: "
+            << "it scales the -slip material's stress and tangent.\n" << descr;
+        return 0;
+    }
     if (slip_mat && (slip_node == iData[1] || rNodes.getLocation(slip_node) >= 0)) {
         opserr << "ASDEmbeddedNodeElement ERROR: -slip $realNodeTag (" << slip_node
             << ") must be a node OUTSIDE the element: not the constrained (AUX) node "
@@ -838,7 +872,7 @@ OPS_ASDEmbeddedNodeElement(void)
 
     // done
     return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear, corot,
-        slip_mat, slip_node, slip_KS, slip_mat ? &slip_x : nullptr);
+        slip_mat, slip_node, slip_KS, slip_mat ? &slip_x : nullptr, slip_area);
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement() 
@@ -847,7 +881,7 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement()
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag, bool corot_flag,
-    UniaxialMaterial* slip_mat, int slip_node, double KS, const Vector* slip_x)
+    UniaxialMaterial* slip_mat, int slip_node, double KS, const Vector* slip_x, double slip_area)
     : Element(tag, ELE_TAG_ASDEmbeddedNodeElement)
     , m_shape_request(shape_request)
     , m_rot_c_flag(rot_flag)
@@ -857,6 +891,7 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNo
     , m_K(K)
     , m_KP(KP)
     , m_KS(KS)
+    , m_slip_area(slip_area)
 {
     int nn = rNodes.Size();
     m_slip = (slip_mat != nullptr);
@@ -1276,7 +1311,8 @@ void ASDEmbeddedNodeElement::Print(OPS_Stream& s, int flag)
         }
         s << "]";
         if (m_slip && m_slip_mat)
-            s << ", \"slipMaterial\": " << m_slip_mat->getTag();
+            s << ", \"slipMaterial\": " << m_slip_mat->getTag()
+              << ", \"slipArea\": " << m_slip_area;
         s << "}";
     }
 }
@@ -2145,7 +2181,7 @@ const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
         WB.resize(nrows, nred);
         for (int i = 0; i < nrows; ++i) {
             double w = (i < 6) ? m_ciK :
-                (i == 6 ? m_slip_mat->getTangent() : m_KS);
+                (i == 6 ? m_slip_area * m_slip_mat->getTangent() : m_KS);
             for (int j = 0; j < nred; ++j)
                 WB(i, j) = w * B(i, j);
         }
@@ -2233,7 +2269,7 @@ const Vector& ASDEmbeddedNodeElement::getResistingForce()
         q.resize(nrows);
         for (int i = 0; i < nrows; ++i)
             q(i) = (i < 6) ? m_ciK * g(i) :
-                (i == 6 ? m_slip_mat->getStress() : m_KS * g(i));
+                (i == 6 ? m_slip_area * m_slip_mat->getStress() : m_KS * g(i));
         static Vector fr;
         fr.resize(nred);
         fr.addMatrixTransposeVector(0.0, B, q, 1.0);
@@ -2348,11 +2384,11 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
 
     // DOUBLE data: K, KP, the corotational slave-rotation state, the
     // per-retained-node rotation state (-corotational + -shearDeformable:
-    // 14 doubles per retained node), the -slip data (KS, x0, and the real
-    // node rotation state when the corotational tie is rotational), and the
-    // initial displacement vector
+    // 14 doubles per retained node), the -slip data (KS, the bond area, x0,
+    // and the real node rotation state when the corotational tie is
+    // rotational), and the initial displacement vector
     int NQA = (m_corot && m_shear) ? 14 * NRET : 0;
-    int NSLIP = m_slip ? 4 : 0;
+    int NSLIP = m_slip ? 5 : 0;
     int NQR = (m_slip && m_corot && m_slip_rot) ? 14 : 0;
     Vector vectData(16 + NQA + NSLIP + NQR + NU0);
     pos = 0;
@@ -2372,6 +2408,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     }
     if (m_slip) {
         vectData(pos++) = m_KS;
+        vectData(pos++) = m_slip_area;
         for (int i = 0; i < 3; ++i) vectData(pos++) = m_slip_x0(i);
         if (NQR > 0) {
             for (int i = 0; i < 4; ++i) vectData(pos++) = m_qr[i];
@@ -2470,7 +2507,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
 
     // DOUBLE data
     int NQA = (m_corot && m_shear) ? 14 * NRET : 0;
-    int NSLIP = m_slip ? 4 : 0;
+    int NSLIP = m_slip ? 5 : 0;
     int NQR = (m_slip && m_corot && m_slip_rot) ? 14 : 0;
     Vector vectData(16 + NQA + NSLIP + NQR + NU0);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
@@ -2499,6 +2536,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     }
     if (m_slip) {
         m_KS = vectData(pos++);
+        m_slip_area = vectData(pos++);
         m_slip_x0.resize(3);
         for (int i = 0; i < 3; ++i) m_slip_x0(i) = vectData(pos++);
         if (NQR > 0) {
@@ -2545,9 +2583,16 @@ Response* ASDEmbeddedNodeElement::setResponse(const char** argv, int argc, OPS_S
         theResponse = new ElementResponse(this, 1, Vector(1));
     }
     else if (strcmp(argv[0], "slipForce") == 0 || strcmp(argv[0], "bondForce") == 0) {
-        // the scalar bond force: the stress of the tau-slip law
+        // the scalar bond FORCE actually assembled on the bar axis: the
+        // stress of the tau-slip law times the bond area (-slipArea)
         output.tag("ResponseType", "slipForce");
         theResponse = new ElementResponse(this, 2, Vector(1));
+    }
+    else if (strcmp(argv[0], "slipStress") == 0 || strcmp(argv[0], "bondStress") == 0) {
+        // the scalar bond STRESS: the raw tau of the tau-slip law, i.e.
+        // slipForce / slipArea (the same number 'slipMaterial stress' gives)
+        output.tag("ResponseType", "slipStress");
+        theResponse = new ElementResponse(this, 6, Vector(1));
     }
     else if (strcmp(argv[0], "gap") == 0) {
         // local relative displacement AUX - real: [slip, t1, (t2)]
@@ -2591,7 +2636,7 @@ int ASDEmbeddedNodeElement::getResponse(int responseID, Information& eleInfo)
         r1(0) = m_slip_mat->getStrain();
         return eleInfo.setVector(r1);
     case 2:
-        r1(0) = m_slip_mat->getStress();
+        r1(0) = m_slip_area * m_slip_mat->getStress();
         return eleInfo.setVector(r1);
     case 3: {
         slipComputeGap();
@@ -2605,7 +2650,7 @@ int ASDEmbeddedNodeElement::getResponse(int responseID, Information& eleInfo)
         slipComputeGap();
         static Vector rf;
         rf.resize(m_ndm);
-        rf(0) = m_slip_mat->getStress();
+        rf(0) = m_slip_area * m_slip_mat->getStress();
         for (int i = 1; i < m_ndm; ++i)
             rf(i) = m_KS * m_slip_g(i);
         return eleInfo.setVector(rf);
@@ -2617,6 +2662,9 @@ int ASDEmbeddedNodeElement::getResponse(int responseID, Information& eleInfo)
             ra(i) = m_slip_axis(i);
         return eleInfo.setVector(ra);
     }
+    case 6:
+        r1(0) = m_slip_mat->getStress();
+        return eleInfo.setVector(r1);
     default:
         return Element::getResponse(responseID, eleInfo);
     }
@@ -2678,10 +2726,12 @@ void ASDEmbeddedNodeElement::slipAddLinear(Matrix* K, Vector* F)
     int rpos = m_num_dofs - m_nodes.back()->getNumberDOF();
     int nrot = m_slip_rot ? ((m_ndm == 2) ? 1 : 3) : 0;
     if (K) {
-        // C = k_mat * x (x) x + KS * (t_r (x) t_r) on the translations
+        // C = A*k_mat * x (x) x + KS * (t_r (x) t_r) on the translations
+        // (A = the bond area: the material is a tau-slip law, its tangent a
+        // stress per slip; KS is a raw [F/L] stiffness and stays unscaled)
         static Matrix C(3, 3);
         C.Zero();
-        double kmat = m_slip_mat->getTangent();
+        double kmat = m_slip_area * m_slip_mat->getTangent();
         for (int r = 0; r < m_ndm; ++r) {
             double kr = (r == 0) ? kmat : m_KS;
             for (int i = 0; i < m_ndm; ++i)
@@ -2706,12 +2756,13 @@ void ASDEmbeddedNodeElement::slipAddLinear(Matrix* K, Vector* F)
     }
     if (F) {
         // refresh the local gap (a recorder can ask for forces outside the
-        // update sequence) and assemble f = B^T q with q = [sigma, KS * g...]
+        // update sequence) and assemble f = B^T q with q = [A*sigma, KS * g...]
         slipComputeGap();
         static Vector fv(3);
         fv.Zero();
         for (int r = 0; r < m_ndm; ++r) {
-            double qr = (r == 0) ? m_slip_mat->getStress() : m_KS * m_slip_g(r);
+            double qr = (r == 0) ? m_slip_area * m_slip_mat->getStress()
+                                 : m_KS * m_slip_g(r);
             for (int i = 0; i < m_ndm; ++i)
                 fv(i) += qr * m_slip_T0(r, i);
         }

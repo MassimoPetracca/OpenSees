@@ -68,7 +68,8 @@ public:
     // life cycle
     ASDEmbeddedNodeElement();
     ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false, bool corot_flag = false,
-        UniaxialMaterial* slip_mat = nullptr, int slip_node = 0, double KS = 0.0, const Vector* slip_x = nullptr);
+        UniaxialMaterial* slip_mat = nullptr, int slip_node = 0, double KS = 0.0, const Vector* slip_x = nullptr,
+        double slip_area = 1.0);
     virtual ~ASDEmbeddedNodeElement();
 
     // domain
@@ -263,6 +264,14 @@ private:
     bool m_slip_rot = false;        // both AUX and real node carry rotations
     UniaxialMaterial* m_slip_mat = nullptr; // owned copy of the tau-slip law
     double m_KS = 0.0;              // rigid-tie stiffness, used raw
+    // bond area of the embedded node (the rebar node's tributary length times
+    // the bar circumference): the slip material's stress AND tangent are
+    // multiplied by it wherever they enter the mechanics, so the material can
+    // be the tau-slip (bond STRESS vs slip) law itself, queried raw through
+    // the 'slipStress' response. 1.0 by default = the material is a
+    // force-slip law (the pre--slipArea scripts, which wrapped the tau law in
+    // a 'Parallel ... -factors <area>', keep meaning what they meant).
+    double m_slip_area = 1.0;
     Vector m_slip_x0;               // bar axis in the reference configuration
     // local triad (rows x0,y0,z0): y0/z0 are an arbitrary stable completion
     // built with the same rule STKO's frame_from_x uses, so the reported
