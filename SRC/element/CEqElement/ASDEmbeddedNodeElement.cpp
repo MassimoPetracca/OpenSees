@@ -449,6 +449,36 @@ namespace
     }
 
     // ------------------------------------------------------------------
+    // Penalty assembler shared by every kernel: K = B^T C B with C = kU * I,
+    // or, with -rotAxis (krot != nullptr), the rank-1 rotational weight
+    // kU * (k (x) k) on the LAST 3 rows of B. That weight IS the single
+    // projected row, exactly:
+    //     B_rot^T (k k^T) B_rot == (k^T B_rot)^T (k^T B_rot)
+    // (and the same identity holds for the force, f = B^T C g), so the five
+    // UR kernels keep their 3 rotational rows untouched and only the weight
+    // changes. *krot must be resolved in the SAME frame those rows are
+    // written in: global components on a volume host, LOCAL face components
+    // on a surface host (k_loc = R * k). Gated by verify_rot_axis.py.
+    // ------------------------------------------------------------------
+    void addEmbedPenalty(Matrix& K, const Matrix& B, double kU, const double* krot)
+    {
+        if (krot == nullptr) {
+            K.addMatrixTransposeProduct(0.0, B, B, kU);
+            return;
+        }
+        int nrows = B.noRows();
+        static Matrix C;
+        C.resize(nrows, nrows);
+        C.Zero();
+        for (int i = 0; i < nrows - 3; ++i)
+            C(i, i) = kU;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                C(nrows - 3 + i, nrows - 3 + j) = kU * krot[i] * krot[j];
+        K.addMatrixTripleProduct(0.0, B, C, 1.0);
+    }
+
+    // ------------------------------------------------------------------
     // Generic assembler shared by the isoparametric families.
     // Builds B for the requested constraint mode and returns K = B^T C B on
     // the reduced dofset, whose ordering matches the one used by the legacy
@@ -457,7 +487,7 @@ namespace
     // ------------------------------------------------------------------
     const Matrix& assembleConstraint(
         int ndm, int nn, const Vector& N, const Matrix& dNdX,
-        int mode, double kU, double kP)
+        int mode, double kU, double kP, const double* krot = nullptr)
     {
         int nrot = (ndm == 2) ? 1 : 3;
         int nc = ndm;                 // dofs of the constrained node
@@ -516,7 +546,10 @@ namespace
             K.addMatrixTripleProduct(0.0, B, C, 1.0);
         }
         else {
-            K.addMatrixTransposeProduct(0.0, B, B, kU);
+            // krot can only be non-null in Mode_UR (the accepted -rotAxis
+            // requires the rotational tie); the guard keeps Mode_U honest
+            addEmbedPenalty(K, B, kU,
+                mode == ASDEmbeddedNodeElement::Mode_UR ? krot : nullptr);
         }
         return K;
     }
@@ -580,7 +613,7 @@ OPS_ASDEmbeddedNodeElement(void)
         first_done = true;
     }
 
-    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape> <-slip $slipMatTag $realNodeTag $KS $Xx $Xy $Xz> <-slipArea $A>\n"
+    const char* descr = "Want: element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4 ... $Rnode8> <-rot> <-rotAxis $Xx $Xy $Xz> <-shearDeformable> <-corotational> <-p> <-K $K> <-KP $KP> <-shape $shape> <-slip $slipMatTag $realNodeTag $KS $Xx $Xy $Xz> <-slipArea $A>\n"
         "   3 retained nodes = triangle (2D or 3D)\n"
         "   4 retained nodes = quadrilateral in 2D; in 3D a tetrahedron, or a\n"
         "                      quadrilateral face with -shape quad\n"
@@ -595,6 +628,14 @@ OPS_ASDEmbeddedNodeElement(void)
         "                      where rotation = slope + shear deformation).\n"
         "   -corotational: with -rot on a 3D host, make the constraint exact\n"
         "                      under finite rotations of the host patch.\n"
+        "   -rotAxis: with -rot on a 3D host, tie ONLY the rotation about\n"
+        "                      the given axis ($Xx $Xy $Xz, reference config;\n"
+        "                      e.g. the axis of an embedded bar). No bending\n"
+        "                      clamp - the full -rot reads the skew part of\n"
+        "                      the HOST element's displacement gradient, which\n"
+        "                      invents bending on a bar between two cells -\n"
+        "                      while the rigid twist of the bar, otherwise a\n"
+        "                      zero-energy mode, stays held.\n"
         "   -slip: absorb the rebar-slip zeroLength: $Cnode is the AUX node\n"
         "                      embedded in the host, $realNodeTag is the real\n"
         "                      rebar node, tied to it by the uniaxial material\n"
@@ -638,6 +679,8 @@ OPS_ASDEmbeddedNodeElement(void)
     bool rot = false;
     bool shear = false;
     bool corot = false;
+    bool rot_axis = false;
+    Vector rot_axis_v(3);
     bool pressure = false;
     bool keywords_started = false;
     double K = 1.0e18;
@@ -663,6 +706,34 @@ OPS_ASDEmbeddedNodeElement(void)
         else if (strcmp(what, "-corotational") == 0) {
             corot = true;
             keywords_started = true;
+        }
+        else if (strcmp(what, "-rotAxis") == 0) {
+            keywords_started = true;
+            if (numArgs - i - 1 < 3) {
+                opserr << "ASDEmbeddedNodeElement ERROR: the -rotAxis keyword wants "
+                    << "$Xx $Xy $Xz.\n" << descr;
+                return 0;
+            }
+            double axisDouble[3];
+            numData = 3;
+            if (OPS_GetDouble(&numData, axisDouble) != 0) {
+                opserr << "ASDEmbeddedNodeElement ERROR: invalid floating point values for the "
+                    << "-rotAxis keyword: it wants $Xx $Xy $Xz.\n" << descr;
+                return 0;
+            }
+            i += 3;
+            rot_axis_v(0) = axisDouble[0];
+            rot_axis_v(1) = axisDouble[1];
+            rot_axis_v(2) = axisDouble[2];
+            // measure BEFORE normalizing: Vector::Normalize on a zero vector
+            // is not protected and would turn the check into a NaN pass-through
+            if (rot_axis_v.Norm() < 1.0e-12) {
+                opserr << "ASDEmbeddedNodeElement ERROR: -rotAxis wants a non-zero axis "
+                    << "($Xx $Xy $Xz).\n";
+                return 0;
+            }
+            rot_axis_v.Normalize();
+            rot_axis = true;
         }
         else if (strcmp(what, "-p") == 0) {
             pressure = true;
@@ -857,6 +928,11 @@ OPS_ASDEmbeddedNodeElement(void)
             << "constraint, so it requires -rot.\n" << descr;
         return 0;
     }
+    if (rot_axis && !rot) {
+        opserr << "ASDEmbeddedNodeElement ERROR: -rotAxis only projects the rotational "
+            << "constraint, so it requires -rot.\n" << descr;
+        return 0;
+    }
     if (corot) {
         if (!rot || pressure) {
             opserr << "ASDEmbeddedNodeElement ERROR: -corotational requires -rot and cannot be "
@@ -872,7 +948,8 @@ OPS_ASDEmbeddedNodeElement(void)
 
     // done
     return new ASDEmbeddedNodeElement(iData[0], iData[1], rNodes, rot, pressure, K, KP, shape, shear, corot,
-        slip_mat, slip_node, slip_KS, slip_mat ? &slip_x : nullptr, slip_area);
+        slip_mat, slip_node, slip_KS, slip_mat ? &slip_x : nullptr, slip_area,
+        rot_axis ? &rot_axis_v : nullptr);
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement() 
@@ -881,7 +958,8 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement()
 }
 
 ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request, bool shear_flag, bool corot_flag,
-    UniaxialMaterial* slip_mat, int slip_node, double KS, const Vector* slip_x, double slip_area)
+    UniaxialMaterial* slip_mat, int slip_node, double KS, const Vector* slip_x, double slip_area,
+    const Vector* rot_axis)
     : Element(tag, ELE_TAG_ASDEmbeddedNodeElement)
     , m_shape_request(shape_request)
     , m_rot_c_flag(rot_flag)
@@ -893,6 +971,12 @@ ASDEmbeddedNodeElement::ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNo
     , m_KS(KS)
     , m_slip_area(slip_area)
 {
+    if (rot_axis) {
+        // already normalized by the parser; reference configuration
+        m_rot_axis_flag = true;
+        for (int i = 0; i < 3; ++i)
+            m_rot_axis_v[i] = (*rot_axis)(i);
+    }
     int nn = rNodes.Size();
     m_slip = (slip_mat != nullptr);
     int extra = m_slip ? 2 : 1; // constrained node (+ the real rebar node)
@@ -1084,6 +1168,10 @@ void ASDEmbeddedNodeElement::setDomain(Domain* theDomain)
                 // with -shearDeformable, whose own checks above already
                 // guarantee the surface host and the 6-dof retained nodes.
                 m_corot = m_corot_flag && m_rot_c;
+                // -rotAxis: same downgrade rule. This branch is already the 3D
+                // one; in 2D the rotational row is a single one (Rz), so there
+                // would be nothing to project anyway.
+                m_rot_axis = m_rot_axis_flag && m_rot_c;
                 if (m_p_flag && ndf == 4) {
                     // all others should have same ndf (u-p)
                     m_up = true;
@@ -1685,6 +1773,24 @@ void ASDEmbeddedNodeElement::corotSetup()
     m_corot_init = true;
 }
 
+void ASDEmbeddedNodeElement::rotAxisRowFrame(double* kr) const
+{
+    // The -rotAxis axis resolved in the frame the rotational rows of
+    // corotComputeBg are written in: global components on a volume host,
+    // E0-local ones on a surface host (the same resolution thloc gets).
+    // Valid after corotSetup - both callers run corotComputeBg first.
+    if (m_corot_surf) {
+        for (int i = 0; i < 3; ++i)
+            kr[i] = m_cE0(0, i) * m_rot_axis_v[0]
+                  + m_cE0(1, i) * m_rot_axis_v[1]
+                  + m_cE0(2, i) * m_rot_axis_v[2];
+    }
+    else {
+        for (int i = 0; i < 3; ++i)
+            kr[i] = m_rot_axis_v[i];
+    }
+}
+
 void ASDEmbeddedNodeElement::corotComputeBg(Matrix& B, Vector& g)
 {
     corotSetup();
@@ -2185,6 +2291,17 @@ const Matrix& ASDEmbeddedNodeElement::getTangentStiff()
             for (int j = 0; j < nred; ++j)
                 WB(i, j) = w * B(i, j);
         }
+        if (m_rot_axis) {
+            // rank-1 weight on the 3 rotational rows (see addEmbedPenalty):
+            // WB_rot = m_ciK * k (k^T B_rot), the axis in the row frame
+            double kr[3];
+            rotAxisRowFrame(kr);
+            for (int j = 0; j < nred; ++j) {
+                double sB = kr[0] * B(3, j) + kr[1] * B(4, j) + kr[2] * B(5, j);
+                for (int i = 0; i < 3; ++i)
+                    WB(3 + i, j) = m_ciK * kr[i] * sB;
+            }
+        }
         static Matrix KL;
         KL.resize(nred, nred);
         KL.addMatrixTransposeProduct(0.0, B, WB, 1.0);
@@ -2270,6 +2387,14 @@ const Vector& ASDEmbeddedNodeElement::getResistingForce()
         for (int i = 0; i < nrows; ++i)
             q(i) = (i < 6) ? m_ciK * g(i) :
                 (i == 6 ? m_slip_area * m_slip_mat->getStress() : m_KS * g(i));
+        if (m_rot_axis) {
+            // q_rot = m_ciK * k (k . g_rot): a pure torque about the axis
+            double kr[3];
+            rotAxisRowFrame(kr);
+            double sg = kr[0] * g(3) + kr[1] * g(4) + kr[2] * g(5);
+            for (int i = 0; i < 3; ++i)
+                q(3 + i) = m_ciK * kr[i] * sg;
+        }
         static Vector fr;
         fr.resize(nred);
         fr.addMatrixTransposeVector(0.0, B, q, 1.0);
@@ -2322,7 +2447,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     int NU0 = m_U0_computed ? m_U0.Size() : 0;
 
     // INT data 1: header with every size needed to read the rest
-    static ID idData1(22);
+    static ID idData1(24);
     idData1(0) = getTag();
     idData1(1) = NN;
     idData1(2) = NMAP;
@@ -2363,6 +2488,8 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     // activation state: an element deactivated before the transfer must come
     // back deactivated
     idData1(21) = is_this_element_active ? 1 : 0;
+    idData1(22) = m_rot_axis_flag ? 1 : 0;
+    idData1(23) = m_rot_axis ? 1 : 0;
     res = theChannel.sendID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::sendSelf() - " << this->getTag() << " failed to send ID 1\n";
@@ -2390,7 +2517,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     int NQA = (m_corot && m_shear) ? 14 * NRET : 0;
     int NSLIP = m_slip ? 5 : 0;
     int NQR = (m_slip && m_corot && m_slip_rot) ? 14 : 0;
-    Vector vectData(16 + NQA + NSLIP + NQR + NU0);
+    Vector vectData(19 + NQA + NSLIP + NQR + NU0);
     pos = 0;
     vectData(pos++) = m_K;
     vectData(pos++) = m_KP;
@@ -2398,6 +2525,7 @@ int ASDEmbeddedNodeElement::sendSelf(int commitTag, Channel& theChannel)
     for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv[i];
     for (int i = 0; i < 4; ++i) vectData(pos++) = m_qs_conv[i];
     for (int i = 0; i < 3; ++i) vectData(pos++) = m_rv_conv[i];
+    for (int i = 0; i < 3; ++i) vectData(pos++) = m_rot_axis_v[i];
     if (NQA > 0) {
         for (int a = 0; a < NRET; ++a) {
             for (int i = 0; i < 4; ++i) vectData(pos++) = m_qa[4 * a + i];
@@ -2444,7 +2572,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int dataTag = this->getDbTag();
 
     // INT data 1: header
-    static ID idData1(22);
+    static ID idData1(24);
     res = theChannel.recvID(dataTag, commitTag, idData1);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive ID 1\n";
@@ -2487,6 +2615,8 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     // activation state: an element deactivated before the transfer must come
     // back deactivated
     is_this_element_active = idData1(21) == 1;
+    m_rot_axis_flag = idData1(22) == 1;
+    m_rot_axis = idData1(23) == 1;
     int NRET = NN - 1 - (m_slip ? 1 : 0);
 
     // INT data 2: node ids and dof mapping
@@ -2509,7 +2639,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     int NQA = (m_corot && m_shear) ? 14 * NRET : 0;
     int NSLIP = m_slip ? 5 : 0;
     int NQR = (m_slip && m_corot && m_slip_rot) ? 14 : 0;
-    Vector vectData(16 + NQA + NSLIP + NQR + NU0);
+    Vector vectData(19 + NQA + NSLIP + NQR + NU0);
     res = theChannel.recvVector(dataTag, commitTag, vectData);
     if (res < 0) {
         opserr << "WARNING ASDEmbeddedNodeElement::recvSelf() - " << this->getTag() << " failed to receive Vector\n";
@@ -2522,6 +2652,7 @@ int ASDEmbeddedNodeElement::recvSelf(int commitTag, Channel& theChannel, FEM_Obj
     for (int i = 0; i < 3; ++i) m_rv[i] = vectData(pos++);
     for (int i = 0; i < 4; ++i) m_qs_conv[i] = vectData(pos++);
     for (int i = 0; i < 3; ++i) m_rv_conv[i] = vectData(pos++);
+    for (int i = 0; i < 3; ++i) m_rot_axis_v[i] = vectData(pos++);
     if (NQA > 0) {
         m_qa.resize(4 * static_cast<std::size_t>(NRET));
         m_rva.resize(3 * static_cast<std::size_t>(NRET));
@@ -3169,10 +3300,16 @@ const Matrix& ASDEmbeddedNodeElement::TRI_3D_UR()
     // Penalty stiffness
     double iK = m_K * std::sqrt(V);
 
-    // compute stiffness
+    // compute stiffness. The rows of B are in LOCAL face components, so the
+    // -rotAxis weight wants the axis on the same frame: k_loc = R * k.
+    double kl[3];
+    if (m_rot_axis)
+        for (int i = 0; i < 3; ++i)
+            kl[i] = R(i, 0) * m_rot_axis_v[0] + R(i, 1) * m_rot_axis_v[1]
+                  + R(i, 2) * m_rot_axis_v[2];
     K.resize(ncols, ncols);
     K.Zero();
-    K.addMatrixTransposeProduct(0.0, B, B, iK);
+    addEmbedPenalty(K, B, iK, m_rot_axis ? kl : nullptr);
 
     // done
     return K;
@@ -3419,10 +3556,17 @@ const Matrix& ASDEmbeddedNodeElement::QUAD_3D(int mode)
         }
     }
 
+    // The rows of B are in LOCAL face components, so the -rotAxis weight
+    // wants the axis on the same frame: k_loc = R * k.
+    double kl[3];
+    if (m_rot_axis)
+        for (int i = 0; i < 3; ++i)
+            kl[i] = R(i, 0) * m_rot_axis_v[0] + R(i, 1) * m_rot_axis_v[1]
+                  + R(i, 2) * m_rot_axis_v[2];
     static Matrix K;
     K.resize(ncols, ncols);
     K.Zero();
-    K.addMatrixTransposeProduct(0.0, B, B, iK);
+    addEmbedPenalty(K, B, iK, m_rot_axis ? kl : nullptr);
     return K;
 }
 
@@ -3463,7 +3607,8 @@ const Matrix& ASDEmbeddedNodeElement::HEX_3D(int mode)
     double iK = m_K * std::cbrt(V);
     double iKP = m_KP * std::cbrt(V);
 
-    return assembleConstraint(3, 8, N, dNdX, mode, iK, iKP);
+    return assembleConstraint(3, 8, N, dNdX, mode, iK, iKP,
+        m_rot_axis ? m_rot_axis_v : nullptr);
 }
 
 const Matrix& ASDEmbeddedNodeElement::TET_3D_U()
@@ -3589,8 +3734,9 @@ const Matrix& ASDEmbeddedNodeElement::TET_3D_UR()
     // Penalty stiffness
     double iK = m_K * std::cbrt(V);
 
-    // compute stiffness
-    K.addMatrixTransposeProduct(0.0, B, B, iK);
+    // compute stiffness (rows 3..5 are the rotational ones; global frame on a
+    // volume host)
+    addEmbedPenalty(K, B, iK, m_rot_axis ? m_rot_axis_v : nullptr);
 
     // done
     return K;

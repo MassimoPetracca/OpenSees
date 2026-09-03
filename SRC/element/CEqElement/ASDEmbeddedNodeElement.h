@@ -69,7 +69,7 @@ public:
     ASDEmbeddedNodeElement();
     ASDEmbeddedNodeElement(int tag, int cNode, const ID& rNodes, bool rot_flag, bool p_flag, double K, double KP, int shape_request = Fam_Unknown, bool shear_flag = false, bool corot_flag = false,
         UniaxialMaterial* slip_mat = nullptr, int slip_node = 0, double KS = 0.0, const Vector* slip_x = nullptr,
-        double slip_area = 1.0);
+        double slip_area = 1.0, const Vector* rot_axis = nullptr);
     virtual ~ASDEmbeddedNodeElement();
 
     // domain
@@ -162,6 +162,11 @@ private:
     // OpenSees-Testing/new-asd-elements/ASDEmbeddedNodeElement/corot/.
     void corotSetup();
     void corotComputeBg(Matrix& B, Vector& g);
+    // -rotAxis, corotational path: the axis resolved in the frame the
+    // rotational rows of corotComputeBg are written in (global components on
+    // a volume host, E0-local on a surface host). The LINEAR kernels resolve
+    // it per call instead, each on its own face frame.
+    void rotAxisRowFrame(double* kr) const;
 
 private:
 
@@ -190,6 +195,21 @@ private:
     bool m_p_flag = false;
     // true if the constrained node has rotational DOFs and the user flag is true
     bool m_rot_c = false;
+    // -rotAxis (a modifier of -rot): tie ONLY the rotation about this axis
+    // (unit, reference configuration - e.g. the axis of an embedded bar).
+    // Implemented as a rank-1 weight on the 3 rotational rows of every kernel,
+    // kU*(k (x) k), which equals the single projected row exactly:
+    //     B_rot^T (k k^T) B_rot == (k^T B_rot)^T (k^T B_rot)
+    // (same identity for the force), so the five UR kernels keep their rows
+    // and only the weight changes. No bending clamp anywhere - the full -rot
+    // reads the skew part of the HOST element's displacement gradient, which
+    // is element-wise and invents bending on a bar between two cells - while
+    // the rigid twist of the bar, otherwise a zero-energy mode (every bar
+    // node lies on its own axis), stays held. Gated by verify_rot_axis.py in
+    // OpenSees-Testing/new-asd-elements/ASDEmbeddedNodeElement/rotaxis/.
+    bool m_rot_axis_flag = false;                  // user input
+    bool m_rot_axis = false;                       // accepted: -rot active, 3D
+    double m_rot_axis_v[3] = { 0.0, 0.0, 0.0 };
     // user input (-shearDeformable): on a surface host in 3D, tie the two
     // bending rotations of the constrained node to the interpolated nodal
     // rotations of the host instead of the slope of the transverse
