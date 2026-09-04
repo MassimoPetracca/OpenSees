@@ -91,6 +91,7 @@ private:
 	int writeModelActivation();
 	int writeSections();
 	int writeSets();
+	int mapEmbeddedSlip();
 
 	int initNodeRecorders();
 	int clearNodeRecorders();

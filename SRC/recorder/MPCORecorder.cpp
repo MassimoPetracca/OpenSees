@@ -33,6 +33,17 @@ NDMaterial in setResponse gives unknownStress for stress components if type == P
 todo: add auto-component naming in case of duplicated components!
 in STKO components are assumed all different!
 
+note 6:
+ASDEmbeddedNodeElement is a constraint: it is skipped by mapElements and never
+appears as geometry. With its -slip option it does however carry a result, the
+bond slip. That result is written as a NODAL result on the REAL rebar node the
+element holds in its own connectivity (a node of the rebar element), which is
+in the same process by construction, so nothing has to be communicated in
+OpenSeesMP. Unlike every other nodal result it exists only on SOME nodes: the
+ones mapEmbeddedSlip detects at each model stage. The ID dataset of a nodal
+result is per-result, so a subset is legal, and an empty subset writes no group
+at all (see mpco::node::ResultRecorder::selectNodes).
+
 **************************************************************************************/
 
 // some definitions
@@ -96,6 +107,7 @@ change, not a bug fix.
 #include "Vector.h"
 #include "Matrix.h"
 #include "Response.h"
+#include "DummyStream.h"
 #include "Message.h"
 #include "CompositeResponse.h"
 #include "section/SectionForceDeformation.h"
@@ -1338,7 +1350,13 @@ namespace mpco {
 			VelocitySensitivity,
 			AngularVelocitySensitivity,
 			AccelerationSensitivity,
-			AngularAccelerationSensitivity
+			AngularAccelerationSensitivity,
+			// element-derived: the bond-slip of the embedded rebars, reported
+			// on the real rebar node (see mpco::node::BondSlipItem). Appended
+			// at the end because these values travel through sendSelf/recvSelf.
+			BondSlip,
+			BondStress,
+			BondForce
 		};
 	};
 
@@ -1534,6 +1552,22 @@ namespace mpco {
 
 	namespace node {
 
+		/*
+		one embedded rebar carrying a -slip assembly, and the REAL rebar node it
+		reports its bond-slip on. ASDEmbeddedNodeElement is a constraint and is
+		deliberately never written as geometry (see ElementCollection::mapElements),
+		but it does carry a result: the slip is attributed to the bar node instead,
+		which is a node of the rebar element and lives in the same process by
+		construction (it is one of the embedded element's own external nodes).
+		*/
+		struct BondSlipItem
+		{
+			BondSlipItem() : elem(0), node(0) {}
+			BondSlipItem(Element *e, Node *n) : elem(e), node(n) {}
+			Element *elem;
+			Node *node;
+		};
+
 		class ResultRecorder
 		{
 		public:
@@ -1551,6 +1585,12 @@ namespace mpco {
 			{}
 			virtual ~ResultRecorder() {}
 			virtual int getReactionFlag()const { return -1; }
+			/*
+			the nodes this result is actually defined on. By default every recorded
+			node; an element-derived result (the embedded rebar bond-slip) narrows it
+			to its own detected list, and an empty list writes nothing at all.
+			*/
+			virtual std::vector<Node*> &selectNodes(std::vector<Node*> &all) { return all; }
 			virtual int record(mpco::ProcessInfo &info, std::vector<Node*> &nodes)
 			{
 				/*
@@ -1562,6 +1602,14 @@ namespace mpco {
 				quick return
 				*/
 				if (m_num_components < 1)
+					return retval;
+				/*
+				the nodes this result is defined on. Note that an empty selection returns
+				before the result group is created, so a result with nothing to say does
+				not even appear in the file
+				*/
+				std::vector<Node*> &used = selectNodes(nodes);
+				if (used.size() == 0)
 					return retval;
 				/*
 				operations performed only once
@@ -1577,9 +1625,9 @@ namespace mpco {
 					/*
 					create the id dataset
 					*/
-					std::vector<int> buffer_id(nodes.size());
-					for (size_t i = 0; i < nodes.size(); i++)
-						buffer_id[i] = nodes[i]->getTag();
+					std::vector<int> buffer_id(used.size());
+					for (size_t i = 0; i < used.size(); i++)
+						buffer_id[i] = used[i]->getTag();
 					hid_t h_dset_id = h5::dataset::createAndWrite(h_gp_result, "ID", buffer_id, buffer_id.size(), 1);
 					/*
 					create the data group
@@ -1596,12 +1644,12 @@ namespace mpco {
 				/*
 				create the dataset for this timestep
 				*/
-				std::vector<double> buffer_data(nodes.size() * m_num_components);
-				bufferResponse(info, nodes, buffer_data);
+				std::vector<double> buffer_data(used.size() * m_num_components);
+				bufferResponse(info, used, buffer_data);
 				std::stringstream ss_dset_name;
 				ss_dset_name << m_result_name << "/DATA/STEP_" << info.current_time_step_id;
 				std::string dset_name = ss_dset_name.str();
-				hid_t h_dset_data = h5::dataset::createAndWrite(info.h_file_id, dset_name.c_str(), buffer_data, nodes.size(), m_num_components);
+				hid_t h_dset_data = h5::dataset::createAndWrite(info.h_file_id, dset_name.c_str(), buffer_data, used.size(), m_num_components);
 				status = h5::attribute::write(h_dset_data, "STEP", info.current_time_step_id);
 				status = h5::attribute::write(h_dset_data, "TIME", info.current_time_step);
 				status = h5::dataset::close(h_dset_data);
@@ -1729,6 +1777,119 @@ namespace mpco {
 					}
 					buffer[i] = pressure;
 				}
+			}
+		};
+
+		/*
+		the element-derived bond-slip results. ASDEmbeddedNodeElement is a
+		constraint and is never written as geometry, but with -slip it does carry a
+		result. That result is reported on the REAL rebar node the element already
+		holds in its own connectivity, so it is read on the bar itself, needs no
+		connectivity of its own, and needs no communication in OpenSeesMP: the
+		value and the node are in the same process by construction.
+		The node list is the detected one (see MPCORecorder::mapEmbeddedSlip), never
+		the whole model: on a model without embedded rebars it stays empty and the
+		base class then writes nothing at all, not even the result group.
+		*/
+		class ResultRecorderBond : public ResultRecorder
+		{
+		public:
+			ResultRecorderBond(const mpco::ProcessInfo &info,
+				const std::vector<BondSlipItem> &items, const char *response_name)
+				: ResultRecorder(info)
+				, m_own_nodes()
+				, m_responses()
+			{
+				m_num_components = 1;
+				m_result_data_type = mpco::ResultDataType::Scalar;
+				m_result_type = mpco::ResultType::Generic;
+				/*
+				one Response per detected element, created once here and reused at
+				every step, the same way the elemental recorders work. An element
+				that does not answer this particular name is simply left out.
+				*/
+				const char *argv[1] = { response_name };
+				for (size_t i = 0; i < items.size(); i++) {
+					const BondSlipItem &item = items[i];
+					if (item.elem == 0 || item.node == 0)
+						continue;
+					DummyStream dummy_stream;
+					Response *response = item.elem->setResponse(argv, 1, dummy_stream);
+					if (response == 0)
+						continue;
+					m_own_nodes.push_back(item.node);
+					m_responses.push_back(response);
+				}
+			}
+			virtual ~ResultRecorderBond() {
+				for (size_t i = 0; i < m_responses.size(); i++)
+					delete m_responses[i];
+			}
+			virtual std::vector<Node*> &selectNodes(std::vector<Node*> &all) {
+				/*
+				not on every node: only on the rebar nodes we detected
+				*/
+				return m_own_nodes;
+			}
+		protected:
+			virtual void bufferResponse(mpco::ProcessInfo &info, std::vector<Node*> &nodes, std::vector<double> &buffer)const {
+				for (size_t i = 0; i < m_responses.size(); i++) {
+					Response *response = m_responses[i];
+					response->getResponse();
+					const Vector &data = response->getInformation().getData();
+					buffer[i] = data.Size() > 0 ? data(0) : 0.0;
+				}
+			}
+		protected:
+			std::vector<Node*> m_own_nodes;
+			std::vector<Response*> m_responses;
+		};
+
+		class ResultRecorderBondSlip : public ResultRecorderBond
+		{
+		public:
+			ResultRecorderBondSlip(const mpco::ProcessInfo &info, const std::vector<BondSlipItem> &items)
+				: ResultRecorderBond(info, items, "bondSlip")
+			{
+				std::stringstream ss_buffer;
+				ss_buffer << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES/BOND_SLIP";
+				m_result_name = ss_buffer.str();
+				m_result_display_name = "Bond slip";
+				m_components_name = "bondSlip";
+				m_dimension = "L";
+				m_description = "Bond slip of the embedded rebars, on the rebar node";
+			}
+		};
+
+		class ResultRecorderBondStress : public ResultRecorderBond
+		{
+		public:
+			ResultRecorderBondStress(const mpco::ProcessInfo &info, const std::vector<BondSlipItem> &items)
+				: ResultRecorderBond(info, items, "bondStress")
+			{
+				std::stringstream ss_buffer;
+				ss_buffer << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES/BOND_STRESS";
+				m_result_name = ss_buffer.str();
+				m_result_display_name = "Bond stress";
+				m_components_name = "bondStress";
+				m_dimension = "F/L^2";
+				m_description = "Bond stress of the embedded rebars, on the rebar node";
+			}
+		};
+
+		class ResultRecorderBondForce : public ResultRecorderBond
+		{
+		public:
+			ResultRecorderBondForce(const mpco::ProcessInfo &info, const std::vector<BondSlipItem> &items)
+				: ResultRecorderBond(info, items, "bondForce")
+			{
+				std::stringstream ss_buffer;
+				ss_buffer << "MODEL_STAGE[" << info.current_model_stage_id << "]/RESULTS/ON_NODES/BOND_FORCE";
+				m_result_name = ss_buffer.str();
+				m_result_display_name = "Bond force";
+				m_components_name = "bondForce";
+				m_dimension = "F";
+				m_description = "Bond force of the embedded rebars, on the rebar node";
 			}
 		};
 
@@ -4516,6 +4677,14 @@ public:
 	std::vector<Node*> nodes;
 	mpco::element::ElementCollection elements;
 
+	/*
+	the embedded rebars carrying a -slip assembly, paired with the real rebar
+	node each one reports its bond-slip on. Detected once per model stage by
+	mapEmbeddedSlip, because those elements are constraints and are skipped by
+	ElementCollection::mapElements, so their result cannot go on the element.
+	*/
+	std::vector<mpco::node::BondSlipItem> bond_slip_items;
+
 	// nodal recorders
 	std::vector<mpco::NodalResultType::Enum> nodal_results_requests;
 	std::vector<int> sens_grad_indices;
@@ -5110,6 +5279,13 @@ int MPCORecorder::writeModel()
 	if (retval)
 		return retval;
 	/*
+	detect the embedded rebars with a bond-slip assembly. BEFORE initNodeRecorders():
+	the bond-slip recorders take their node list and their responses from it.
+	*/
+	retval = mapEmbeddedSlip();
+	if (retval)
+		return retval;
+	/*
 	initialize node recorders
 	*/
 	retval = initNodeRecorders();
@@ -5124,6 +5300,110 @@ int MPCORecorder::writeModel()
 	/*
 	return
 	*/
+	return retval;
+}
+
+int MPCORecorder::mapEmbeddedSlip()
+{
+#ifdef MPCO_TIMING
+	mpco::Timer timer("mapEmbeddedSlip"); timer.start();
+#endif // MPCO_TIMING
+	/*
+	error flags
+	*/
+	int retval = 0;
+	/*
+	clear the previous mapping: this runs again at every new model stage
+	*/
+	m_data->bond_slip_items.clear();
+	/*
+	quick return: nobody asked for a bond-slip result, so do not walk the domain
+	*/
+	bool wanted = false;
+	for (size_t i = 0; i < m_data->nodal_results_requests.size(); i++) {
+		mpco::NodalResultType::Enum rtype = m_data->nodal_results_requests[i];
+		if (rtype == mpco::NodalResultType::BondSlip ||
+			rtype == mpco::NodalResultType::BondStress ||
+			rtype == mpco::NodalResultType::BondForce)
+		{
+			wanted = true;
+			break;
+		}
+	}
+	if (!wanted)
+		return retval;
+	Domain *domain = m_data->info.domain;
+	if (domain == 0)
+		return retval;
+	/*
+	walk the (possibly region-restricted) elements exactly like
+	ElementCollection::mapElements does, and ask each embedded element for the
+	'slipNode' response: it answers only with a -slip assembly, and its value is
+	the tag of the REAL rebar node. That keeps the node layout of the element an
+	implementation detail of the element.
+	*/
+	std::set<int> seen_nodes;
+	bool duplicate_reported = false;
+	size_t subset_elem_counter = 0;
+	ElementIter *element_iter = &(domain->getElements());
+	Element *current_element = 0;
+	while (true) {
+		/*
+		get next element
+		*/
+		if (m_data->has_region) {
+			if (subset_elem_counter == m_data->elem_set.size())
+				break;
+			current_element = domain->getElement(m_data->elem_set[subset_elem_counter++]);
+			if (current_element == 0)
+				continue;
+		}
+		else {
+			current_element = (*element_iter)();
+			if (current_element == 0)
+				break;
+		}
+		if (current_element->getClassTag() != ELE_TAG_ASDEmbeddedNodeElement)
+			continue;
+		/*
+		ask for the rebar node
+		*/
+		const char *argv[1] = { "slipNode" };
+		DummyStream dummy_stream;
+		Response *response = current_element->setResponse(argv, 1, dummy_stream);
+		if (response == 0)
+			continue; // no -slip on this one: a pure penalty constraint
+		response->getResponse();
+		const Vector &response_data = response->getInformation().getData();
+		int node_tag = response_data.Size() > 0 ? static_cast<int>(response_data(0)) : 0;
+		delete response;
+		Node *rebar_node = domain->getNode(node_tag);
+		if (rebar_node == 0) {
+			opserr << "MPCORecorder warning: the embedded element " << current_element->getTag()
+				<< " reports its bond-slip on node " << node_tag << ", which is not in this domain. "
+				<< "Its slip will not be recorded.\n";
+			continue;
+		}
+		/*
+		one embedded element per rebar node is the only meaningful topology (a node
+		embedded twice is a modelling error): keep the first and say so once
+		*/
+		if (!seen_nodes.insert(node_tag).second) {
+			if (!duplicate_reported) {
+				opserr << "MPCORecorder warning: node " << node_tag << " is the rebar node of more "
+					<< "than one embedded element with -slip. Only the first one is recorded.\n";
+				duplicate_reported = true;
+			}
+			continue;
+		}
+		m_data->bond_slip_items.push_back(mpco::node::BondSlipItem(current_element, rebar_node));
+	}
+	/*
+	return
+	*/
+#ifdef MPCO_TIMING
+	timer.stop();
+#endif // MPCO_TIMING
 	return retval;
 }
 
@@ -6226,6 +6506,15 @@ int MPCORecorder::initNodeRecorders()
 		case mpco::NodalResultType::Pressure:
 			m_data->nodal_recorders[rtype] = new mpco::node::ResultRecorderPressure(m_data->info);
 			break;
+		case mpco::NodalResultType::BondSlip:
+			m_data->nodal_recorders[rtype] = new mpco::node::ResultRecorderBondSlip(m_data->info, m_data->bond_slip_items);
+			break;
+		case mpco::NodalResultType::BondStress:
+			m_data->nodal_recorders[rtype] = new mpco::node::ResultRecorderBondStress(m_data->info, m_data->bond_slip_items);
+			break;
+		case mpco::NodalResultType::BondForce:
+			m_data->nodal_recorders[rtype] = new mpco::node::ResultRecorderBondForce(m_data->info, m_data->bond_slip_items);
+			break;
 		case mpco::NodalResultType::ReactionForce:
 			m_data->nodal_recorders[rtype] = new mpco::node::ResultRecorderReactionForce(m_data->info);
 			break;
@@ -7024,6 +7313,17 @@ void* OPS_MPCORecorder()
 					nodal_results_requests.push_back(mpco::NodalResultType::UnbalancedMomentIncludingInertia);
 				else if (strcmp(data, "pressure") == 0)
 					nodal_results_requests.push_back(mpco::NodalResultType::Pressure);
+				/*
+				the bond-slip of the embedded rebars. Not a nodal quantity of the node
+				itself: it comes from the embedded element and is reported on the rebar
+				node, and only on the rebar nodes (see mapEmbeddedSlip)
+				*/
+				else if (strcmp(data, "bondSlip") == 0)
+					nodal_results_requests.push_back(mpco::NodalResultType::BondSlip);
+				else if (strcmp(data, "bondStress") == 0)
+					nodal_results_requests.push_back(mpco::NodalResultType::BondStress);
+				else if (strcmp(data, "bondForce") == 0)
+					nodal_results_requests.push_back(mpco::NodalResultType::BondForce);
 				else if (strcmp(data, "modesOfVibration") == 0)
 					nodal_results_requests.push_back(mpco::NodalResultType::ModesOfVibration);
 				else if (strcmp(data, "modesOfVibrationRotational") == 0)

@@ -288,7 +288,7 @@ private:
     // the bar circumference): the slip material's stress AND tangent are
     // multiplied by it wherever they enter the mechanics, so the material can
     // be the tau-slip (bond STRESS vs slip) law itself, queried raw through
-    // the 'slipStress' response. 1.0 by default = the material is a
+    // the 'bondStress' response. 1.0 by default = the material is a
     // force-slip law (the pre--slipArea scripts, which wrapped the tau law in
     // a 'Parallel ... -factors <area>', keep meaning what they meant).
     double m_slip_area = 1.0;

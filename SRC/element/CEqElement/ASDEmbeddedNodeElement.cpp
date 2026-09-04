@@ -649,7 +649,7 @@ OPS_ASDEmbeddedNodeElement(void)
         "                      The element multiplies the -slip material's\n"
         "                      stress and tangent by it, so that material is\n"
         "                      the tau-slip (bond STRESS vs slip) law itself\n"
-        "                      and 'slipStress' reports its raw tau. Default\n"
+        "                      and 'bondStress' reports its raw tau. Default\n"
         "                      1.0: the material is then a FORCE-slip law\n"
         "                      (the pre-slipArea convention).\n";
 
@@ -2708,33 +2708,33 @@ Response* ASDEmbeddedNodeElement::setResponse(const char** argv, int argc, OPS_S
     output.attr("eleType", this->getClassType());
     output.attr("eleTag", this->getTag());
 
-    if (strcmp(argv[0], "slip") == 0) {
+    if (strcmp(argv[0], "slip") == 0 || strcmp(argv[0], "bondSlip") == 0) {
         // the scalar slip: the strain of the tau-slip law
-        output.tag("ResponseType", "slip");
+        output.tag("ResponseType", "bondSlip");
         theResponse = new ElementResponse(this, 1, Vector(1));
     }
     else if (strcmp(argv[0], "slipForce") == 0 || strcmp(argv[0], "bondForce") == 0) {
         // the scalar bond FORCE actually assembled on the bar axis: the
         // stress of the tau-slip law times the bond area (-slipArea)
-        output.tag("ResponseType", "slipForce");
+        output.tag("ResponseType", "bondForce");
         theResponse = new ElementResponse(this, 2, Vector(1));
     }
     else if (strcmp(argv[0], "slipStress") == 0 || strcmp(argv[0], "bondStress") == 0) {
         // the scalar bond STRESS: the raw tau of the tau-slip law, i.e.
-        // slipForce / slipArea (the same number 'slipMaterial stress' gives)
-        output.tag("ResponseType", "slipStress");
+        // bondForce / slipArea (the same number 'slipMaterial stress' gives)
+        output.tag("ResponseType", "bondStress");
         theResponse = new ElementResponse(this, 6, Vector(1));
     }
     else if (strcmp(argv[0], "gap") == 0) {
         // local relative displacement AUX - real: [slip, t1, (t2)]
-        output.tag("ResponseType", "slip");
+        output.tag("ResponseType", "bondSlip");
         for (int i = 1; i < m_ndm; ++i)
             output.tag("ResponseType", i == 1 ? "t1" : "t2");
         theResponse = new ElementResponse(this, 3, Vector(m_ndm));
     }
     else if (strcmp(argv[0], "gapForce") == 0) {
         // conjugate local forces: [bond force, KS*t1, (KS*t2)]
-        output.tag("ResponseType", "slipForce");
+        output.tag("ResponseType", "bondForce");
         for (int i = 1; i < m_ndm; ++i)
             output.tag("ResponseType", i == 1 ? "Ft1" : "Ft2");
         theResponse = new ElementResponse(this, 4, Vector(m_ndm));
@@ -2745,6 +2745,14 @@ Response* ASDEmbeddedNodeElement::setResponse(const char** argv, int argc, OPS_S
         output.tag("ResponseType", "x2");
         output.tag("ResponseType", "x3");
         theResponse = new ElementResponse(this, 5, Vector(3));
+    }
+    else if (strcmp(argv[0], "slipNode") == 0) {
+        // the REAL rebar node this element reports its slip on. A recorder
+        // that wants the slip as a NODAL result needs it, and must not have
+        // to know this element's node layout. Only -slip answers, so this
+        // doubles as the "does it carry a bond-slip assembly?" probe.
+        output.tag("ResponseType", "slipNode");
+        theResponse = new ElementResponse(this, 7, Vector(1));
     }
     else if (strcmp(argv[0], "slipMaterial") == 0 && argc > 1) {
         // forward to the tau-slip law (e.g. stress/strain/tangent of the
@@ -2795,6 +2803,13 @@ int ASDEmbeddedNodeElement::getResponse(int responseID, Information& eleInfo)
     }
     case 6:
         r1(0) = m_slip_mat->getStress();
+        return eleInfo.setVector(r1);
+    case 7:
+        // the node tag as a double: exact for any realistic tag, and it
+        // keeps the caller on the same getInformation().getData() path as
+        // every other response here. Read from m_node_ids (filled by the
+        // constructor) so it answers even before setDomain.
+        r1(0) = static_cast<double>(m_node_ids(m_node_ids.Size() - 1));
         return eleInfo.setVector(r1);
     default:
         return Element::getResponse(responseID, eleInfo);
