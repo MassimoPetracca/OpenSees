@@ -203,6 +203,7 @@ private:
 	const Vector& getBucklingIndicator() const;
 	const Vector& getDamage() const;
 	const Vector& getEqPlStrain() const;
+	const Vector& getAccumulatedPlasticStrain() const;
 	const Vector& getSlipResponse() const;
 	const Vector& getSteelResponse() const;
 	const Vector& getTimeIncrements() const;

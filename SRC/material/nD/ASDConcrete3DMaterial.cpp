@@ -1685,24 +1685,28 @@ Response* ASDConcrete3DMaterial::setResponse(const char** argv, int argc, OPS_St
 			}
 		}
 		if (strcmp(argv[0], "crackStrain") == 0 || strcmp(argv[0], "CrackStrain") == 0) {
+			double user_lch_ref = this->lch_ref; // by default the input one
 			if (argc > 2 && strcmp(argv[1], "-lchRef") == 0) {
-				double lch_ref = 0.0;
-				if (string_to_double(argv[2], lch_ref)) {
-					Cinfo(1) = lch_ref;
-					Cinfo(0) = getMaxCrackWidth()(0) / lch_ref;
-					return make_resp(2012, Cinfo, &lb_crack_strain);
+				double trial_lch_ref = 0.0;
+				if (string_to_double(argv[2], trial_lch_ref)) {
+					user_lch_ref = trial_lch_ref;
 				}
 			}
+			Cinfo(1) = user_lch_ref;
+			Cinfo(0) = getMaxCrackWidth()(0) / user_lch_ref;
+			return make_resp(2012, Cinfo, &lb_crack_strain);
 		}
 		if (strcmp(argv[0], "crushStrain") == 0 || strcmp(argv[0], "CrushStrain") == 0) {
+			double user_lch_ref = this->lch_ref; // by default the input one
 			if (argc > 2 && strcmp(argv[1], "-lchRef") == 0) {
-				double lch_ref = 0.0;
-				if (string_to_double(argv[2], lch_ref)) {
-					Cinfo(1) = lch_ref;
-					Cinfo(0) = getMaxCrushWidth()(0) / lch_ref;
-					return make_resp(2013, Cinfo, &lb_crush_strain);
+				double trial_lch_ref = 0.0;
+				if (string_to_double(argv[2], trial_lch_ref)) {
+					user_lch_ref = trial_lch_ref;
 				}
 			}
+			Cinfo(1) = user_lch_ref;
+			Cinfo(0) = getMaxCrushWidth()(0) / user_lch_ref;
+			return make_resp(2013, Cinfo, &lb_crush_strain);
 		}
 		// 3000 - implex error
 		if (strcmp(argv[0], "implexError") == 0 || strcmp(argv[0], "ImplexError") == 0) {
@@ -1767,15 +1771,15 @@ int ASDConcrete3DMaterial::getResponse(int responseID, Information& matInformati
 		break;
 	case 2012:
 		if (matInformation.theVector && matInformation.theVector->Size() == 2) {
-			double lch_ref = matInformation.theVector->operator()(1);
-			matInformation.theVector->operator()(0) = getMaxCrackWidth()(0) / lch_ref;
+			double user_lch_ref = matInformation.theVector->operator()(1);
+			matInformation.theVector->operator()(0) = getMaxCrackWidth()(0) / user_lch_ref;
 			return 0;
 		}
 		break;
 	case 2013:
 		if (matInformation.theVector && matInformation.theVector->Size() == 2) {
-			double lch_ref = matInformation.theVector->operator()(1);
-			matInformation.theVector->operator()(0) = getMaxCrushWidth()(0) / lch_ref;
+			double user_lch_ref = matInformation.theVector->operator()(1);
+			matInformation.theVector->operator()(0) = getMaxCrushWidth()(0) / user_lch_ref;
 			return 0;
 		}
 		break;

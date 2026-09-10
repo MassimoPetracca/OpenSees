@@ -2846,6 +2846,7 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 	static std::vector<std::string> lb_buckling_ratio = { "BI" };
 	static std::vector<std::string> lb_damage = { "D" };
 	static std::vector<std::string> lb_eqpl_strain = { "PLE" };
+	static std::vector<std::string> lb_acc_pl_strain = { "EQPL" };
 	static std::vector<std::string> lb_slip_resp = { "Slip", "Tau" };
 	static std::vector<std::string> lb_time = { "dTime", "dTimeCommit", "dTimeInitial" };
 	static std::vector<std::string> lb_implex_error = { "Error" };
@@ -2865,6 +2866,13 @@ Response* ASDSteel1DMaterial::setResponse(const char** argv, int argc, OPS_Strea
 		}
 		if (strcmp(argv[0], "PLE") == 0 || strcmp(argv[0], "EquivalentPlasticStrain") == 0) {
 			return make_resp(1003, getEqPlStrain(), &lb_eqpl_strain);
+		}
+		if (strcmp(argv[0], "EQPL") == 0 || strcmp(argv[0], "AccumulatedPlasticStrain") == 0) {
+			// the plastic multiplier: PLE's counterpart that also grows in
+			// compression (see getAccumulatedPlasticStrain). 'PLE' and
+			// 'EquivalentPlasticStrain' keep their meaning - they are the
+			// fracture driver and existing models record them.
+			return make_resp(1010, getAccumulatedPlasticStrain(), &lb_acc_pl_strain);
 		}
 		if (strcmp(argv[0], "SlipResponse") == 0){
 			return make_resp(1004, getSlipResponse(), &lb_slip_resp);
@@ -2920,6 +2928,8 @@ int ASDSteel1DMaterial::getResponse(int responseID, Information& matInformation)
 		return matInformation.setVector(getImplexErrorU());
 	case 1009:
 		return matInformation.setVector(getImplexStress());
+	case 1010:
+		return matInformation.setVector(getAccumulatedPlasticStrain());
 	default:
 		break;
 	}
@@ -2935,7 +2945,18 @@ const Vector& ASDSteel1DMaterial::getBucklingIndicator() const
 {
 	static Vector d(1);
 	d.Zero();
-	d(0) = pdata->rve_m.sv.UG(6);
+	// WHICH state vector the RVE solved on. When the element is longer than one
+	// buckling half-wave the RVE gains an extra ELASTIC segment and the whole
+	// solve moves to UG_el (BC at 'sv.UG_el(10) = U', Newton at 'sv.UG_el(i) -='),
+	// leaving UG at its initial zero. This getter used to read UG
+	// unconditionally, so it reported 0 for every element longer than lch - i.e.
+	// for practically every real model, and for the M-chi tester probe.
+	// The predicate is the SAME one commitState and computeImplexErrorMetric
+	// already recompute; dof 6 is the top node's LATERAL translation in both
+	// layouts (ETypeTraits<EType_Top>::DOFs = {3,4,5, 6,10,11}).
+	bool elastic_layout = params.buckling && params.auto_regularization &&
+		(params.lch_element > params.length);
+	d(0) = elastic_layout ? pdata->rve_m.sv.UG_el(6) : pdata->rve_m.sv.UG(6);
 	return d;
 }
 
@@ -2967,6 +2988,23 @@ const Vector& ASDSteel1DMaterial::getEqPlStrain() const
 	static Vector d(1);
 	d.Zero();
 	d(0) = params.buckling ? pdata->rve_m.e2.section.series.steel_material.epl : pdata->steel_comp.steel_material.epl;
+	return d;
+}
+
+const Vector& ASDSteel1DMaterial::getAccumulatedPlasticStrain() const
+{
+	static Vector d(1);
+	d.Zero();
+	// The plastic MULTIPLIER, read from the same place as getEqPlStrain. The two
+	// differ in what they accumulate: 'epl' only grows in TENSION ('if (sg >
+	// 0.0)' in the corrector, because it is the fracture model's driver), while
+	// 'lambda' grows on every plastic step. So this is the one that answers
+	// "has this bar yielded?" for a bar yielding in COMPRESSION, which epl
+	// cannot see at all.
+	// Note it stays 0 for a bar that buckles BEFORE yielding: the RVE's axial
+	// fibre never reaches the yield surface, which is the physically right
+	// answer (it did not yield, it buckled).
+	d(0) = params.buckling ? pdata->rve_m.e2.section.series.steel_material.lambda : pdata->steel_comp.steel_material.lambda;
 	return d;
 }
 
