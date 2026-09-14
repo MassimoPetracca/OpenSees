@@ -10,7 +10,10 @@
 
 double OPS_ContinuationLambda::theValue[OPS_ContinuationLambda::numChannels] = { 0.0 };
 bool OPS_ContinuationLambda::theValid[OPS_ContinuationLambda::numChannels] = { false };
-int OPS_ContinuationLambda::theOwner[OPS_ContinuationLambda::numChannels] = { -1 };
+// theOwner is diagnostic only, and a braced initialiser sets just the FIRST
+// element: the other 255 would be 0, a plausible integrator tag. Zero the
+// whole array honestly and let invalidate() be the one place that says -1.
+int OPS_ContinuationLambda::theOwner[OPS_ContinuationLambda::numChannels] = { 0 };
 
 bool
 OPS_ContinuationLambda::inRange(int channel)

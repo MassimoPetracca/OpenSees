@@ -50,7 +50,17 @@
 class OPS_ContinuationLambda
 {
   public:
-    enum { numChannels = 8 };
+    // One channel per continuation STAGE of a model: a stage's reference load
+    // keeps reading its own channel for as long as it stays applied, so two
+    // stages may never share one. There is no cost to being generous -- three
+    // fixed arrays of this length, a few kB -- and the number is in no
+    // protocol: ContinuationTimeSeries::sendSelf carries the channel INDEX,
+    // never the count. It was 8, which a long staged model reaches; the failure
+    // was silent in both directions (the earlier stage's held load started
+    // following the new factor, and the new stage inherited the old lambda
+    // instead of starting from zero), so the cap is now well out of reach
+    // rather than merely checked.
+    enum { numChannels = 256 };
 
     // written by the continuation integrator, before applyLoadDomain()
     static void set(int channel, double value);
